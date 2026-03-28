@@ -1,0 +1,114 @@
+@import "tailwindcss";
+
+/* ── Conduut Design System ── */
+
+:root {
+  --background: #ffffff;
+  --foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --border: #e4e4e7;
+  --ring: #534ab7;
+  --input: #e4e4e7;
+  --card: #ffffff;
+  --card-foreground: #18181b;
+}
+
+.dark {
+  --background: #09090b;
+  --foreground: #fafafa;
+  --muted: #18181b;
+  --muted-foreground: #a1a1aa;
+  --border: #27272a;
+  --ring: #afa9ec;
+  --input: #27272a;
+  --card: #0f0f11;
+  --card-foreground: #fafafa;
+}
+
+@theme inline {
+  /* Fonts */
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-mono);
+
+  /* Conduut Purple Scale */
+  --color-conduut-50: #eeedfe;
+  --color-conduut-100: #cecbf6;
+  --color-conduut-200: #afa9ec;
+  --color-conduut-400: #7f77dd;
+  --color-conduut-500: #534ab7;
+  --color-conduut-700: #3c3489;
+  --color-conduut-900: #26215c;
+
+  /* Neutrals */
+  --color-charcoal: #18181b;
+  --color-gray-50: #fafafa;
+  --color-gray-100: #f4f4f5;
+  --color-gray-200: #e4e4e7;
+  --color-gray-300: #d4d4d8;
+  --color-gray-400: #a1a1aa;
+  --color-gray-500: #71717a;
+  --color-gray-600: #52525b;
+  --color-gray-700: #3f3f46;
+  --color-gray-800: #27272a;
+  --color-gray-900: #18181b;
+  --color-gray-950: #09090b;
+
+  /* Semantic Colors */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+
+  /* Status Colors */
+  --color-success: #0f6e56;
+  --color-success-light: #e1f5ee;
+  --color-warning: #ba7517;
+  --color-warning-light: #faeeda;
+  --color-error: #a32d2d;
+  --color-error-light: #fcebeb;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Focus ring — only on buttons and links, not inputs (inputs handle their own ring) */
+button:focus-visible,
+a:focus-visible,
+[role="switch"]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Disable focus ring on inputs — they use their own ring-2 via Tailwind classes */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+}

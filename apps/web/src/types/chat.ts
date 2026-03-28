@@ -1,0 +1,23 @@
+export type MessageRole = "user" | "agent";
+
+export interface Message {
+  id: string;
+  conversationId: string;
+  role: MessageRole;
+  content: string;
+  createdAt: string;
+  attachments?: MessageAttachment[];
+}
+
+export interface MessageAttachment {
+  type: "workflow_preview" | "oauth_prompt";
+  data: Record<string, unknown>;
+}
+
+export interface Conversation {
+  id: string;
+  title: string;
+  lastMessageAt: string;
+  messageCount: number;
+  createdAt: string;
+}
