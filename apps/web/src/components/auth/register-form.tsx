@@ -1,23 +1,59 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import { useAuth } from "@/hooks/use-auth";
+import { getFirebaseErrorMessage } from "@/lib/firebase-errors";
 
 export function RegisterForm() {
+  const router = useRouter();
+  const { register } = useAuth();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [agreed, setAgreed] = useState(false);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    setError("");
+
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      await register(email, password, fullName);
+      router.push("/dashboard");
+    } catch (err) {
+      setError(getFirebaseErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      {error && (
+        <div className="rounded-lg bg-error-light px-4 py-3 text-sm text-error">
+          {error}
+        </div>
+      )}
+
       <div>
         <label
           htmlFor="fullName"
@@ -33,6 +69,7 @@ export function RegisterForm() {
           value={fullName}
           onChange={(e) => setFullName(e.target.value)}
           required
+          disabled={loading}
         />
       </div>
 
@@ -51,6 +88,7 @@ export function RegisterForm() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
+          disabled={loading}
         />
       </div>
 
@@ -69,6 +107,7 @@ export function RegisterForm() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
+          disabled={loading}
         />
       </div>
 
@@ -87,6 +126,7 @@ export function RegisterForm() {
           value={confirmPassword}
           onChange={(e) => setConfirmPassword(e.target.value)}
           required
+          disabled={loading}
         />
       </div>
 
@@ -97,6 +137,7 @@ export function RegisterForm() {
           onChange={(e) => setAgreed(e.target.checked)}
           className="mt-0.5 h-4 w-4 rounded border-input accent-conduut-500 cursor-pointer"
           required
+          disabled={loading}
         />
         <span className="text-sm text-muted-foreground leading-relaxed">
           I agree to the{" "}
@@ -116,8 +157,8 @@ export function RegisterForm() {
         </span>
       </label>
 
-      <Button type="submit" size="lg" className="w-full mt-1">
-        Create account
+      <Button type="submit" size="lg" className="w-full mt-1" disabled={loading}>
+        {loading ? <Spinner size="sm" className="text-white" /> : "Create account"}
       </Button>
 
       <p className="text-sm text-center text-muted-foreground">

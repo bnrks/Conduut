@@ -1,20 +1,45 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import { useAuth } from "@/hooks/use-auth";
+import { getFirebaseErrorMessage } from "@/lib/firebase-errors";
 
 export function LoginForm() {
+  const router = useRouter();
+  const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    try {
+      await login(email, password);
+      router.push("/dashboard");
+    } catch (err) {
+      setError(getFirebaseErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      {error && (
+        <div className="rounded-lg bg-error-light px-4 py-3 text-sm text-error">
+          {error}
+        </div>
+      )}
+
       <div>
         <label
           htmlFor="email"
@@ -30,6 +55,7 @@ export function LoginForm() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
+          disabled={loading}
         />
       </div>
 
@@ -56,11 +82,12 @@ export function LoginForm() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
+          disabled={loading}
         />
       </div>
 
-      <Button type="submit" size="lg" className="w-full mt-1">
-        Sign in
+      <Button type="submit" size="lg" className="w-full mt-1" disabled={loading}>
+        {loading ? <Spinner size="sm" className="text-white" /> : "Sign in"}
       </Button>
 
       <p className="text-sm text-center text-muted-foreground">

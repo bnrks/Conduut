@@ -3,6 +3,7 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Sidebar } from "@/components/layout/sidebar";
 import { DashboardHeader } from "@/components/layout/dashboard-header";
+import { AuthGuard } from "@/components/auth/auth-guard";
 import { useUIStore } from "@/lib/stores/ui-store";
 
 export default function DashboardLayout({
@@ -13,6 +14,7 @@ export default function DashboardLayout({
   const { sidebarCollapsed, toggleSidebar } = useUIStore();
 
   return (
+    <AuthGuard mode="protected">
     <div className="flex h-screen overflow-hidden bg-background">
       {/* Sidebar wrapper — relative + overflow-visible so the toggle button can poke out */}
       <div className="relative shrink-0" style={{ zIndex: 20 }}>
@@ -38,5 +40,6 @@ export default function DashboardLayout({
         <main className="flex-1 overflow-y-auto p-6">{children}</main>
       </div>
     </div>
+    </AuthGuard>
   );
 }
