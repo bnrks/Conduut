@@ -1,0 +1,47 @@
+services:
+  agent:
+    build:
+      context: ./apps/agent
+      dockerfile: Dockerfile
+    container_name: conduut-agent
+    volumes:
+      - ./apps/agent/serviceAccount.json:/app/serviceAccount.json:ro
+    environment:
+      CONDUUT_ENVIRONMENT: development
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - app-net
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: conduut-web
+    depends_on:
+      agent:
+        condition: service_healthy
+    env_file:
+      - ./apps/web/.env.local
+    environment:
+      AGENT_API_BASE_URL: http://agent:8000
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - app-net
+
+networks:
+  app-net:
+    name: conduut-app-net

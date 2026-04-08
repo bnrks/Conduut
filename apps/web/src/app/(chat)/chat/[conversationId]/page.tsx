@@ -1,101 +1,150 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useParams } from "next/navigation";
+import { toast } from "sonner";
 import { MessageList } from "@/components/chat/message-list";
 import { ChatInput } from "@/components/chat/chat-input";
 import { EmptyState } from "@/components/chat/empty-state";
-import { useChatStore } from "@/lib/stores/chat-store";
-import type { Message } from "@/types/chat";
+import { useAuth } from "@/hooks/use-auth";
+import { useModelSelector } from "@/hooks/use-model-selector";
+import { streamChat } from "@/lib/chat/sse";
+import type { Conversation, Message, MessageAttachment } from "@/types/chat";
 
-// Realistic mock conversation
-const MOCK_MESSAGES: Message[] = [
-  {
-    id: "msg-1",
-    conversationId: "conv-1",
-    role: "user",
-    content:
-      "I want to get Slack notifications when someone stars my GitHub repo",
-    createdAt: new Date(Date.now() - 1000 * 60 * 8).toISOString(),
-  },
-  {
-    id: "msg-2",
-    conversationId: "conv-1",
-    role: "agent",
-    content:
-      "I'll create that workflow for you! Let me set up a GitHub trigger connected to Slack.\n\nThis workflow will:\n• Watch for new stars on your GitHub repository\n• Send a formatted message to your chosen Slack channel\n• Include the stargazer's username and a link to your repo",
-    createdAt: new Date(Date.now() - 1000 * 60 * 7).toISOString(),
-    attachments: [
-      {
-        type: "workflow_preview",
-        data: {
-          name: "GitHub Stars → Slack Notification",
-          nodeCount: 3,
-          status: "inactive",
-          id: "wf-001",
-        },
-      },
-    ],
-  },
-  {
-    id: "msg-3",
-    conversationId: "conv-1",
-    role: "agent",
-    content:
-      "To proceed, I need to connect your GitHub account so I can access your repositories.",
-    createdAt: new Date(Date.now() - 1000 * 60 * 6).toISOString(),
-    attachments: [
-      {
-        type: "oauth_prompt",
-        data: {
-          service: "GitHub",
-          description: "Required to listen for star events on your repositories",
-        },
-      },
-    ],
-  },
-  {
-    id: "msg-4",
-    conversationId: "conv-1",
-    role: "user",
-    content: "Sure, connect it",
-    createdAt: new Date(Date.now() - 1000 * 60 * 4).toISOString(),
-  },
-  {
-    id: "msg-5",
-    conversationId: "conv-1",
-    role: "agent",
-    content:
-      "GitHub is now connected! Your workflow is active.\n\nYou'll get a Slack message whenever someone stars your repo. The notification will look like this:\n\n⭐ **@username** just starred **your-repo**\n\nWould you like to customize the Slack channel or the message format?",
-    createdAt: new Date(Date.now() - 1000 * 60 * 2).toISOString(),
-    attachments: [
-      {
-        type: "workflow_preview",
-        data: {
-          name: "GitHub Stars → Slack Notification",
-          nodeCount: 3,
-          status: "active",
-          id: "wf-001",
-        },
-      },
-    ],
-  },
-];
+interface ConversationDetailResponse extends Conversation {
+  messages: Message[];
+}
+
+function createId(prefix: string) {
+  return `${prefix}-${crypto.randomUUID()}`;
+}
 
 export default function ConversationPage() {
-  const [messages, setMessages] = useState<Message[]>(MOCK_MESSAGES);
-  const [inputValue, setInputValue] = useState("");
-  const { isAgentTyping } = useChatStore();
+  const params = useParams<{ conversationId: string | string[] }>();
+  const conversationId = useMemo(() => {
+    const value = params.conversationId;
+    return Array.isArray(value) ? value[0] || "" : value;
+  }, [params.conversationId]);
 
-  const handleSend = (content: string) => {
+  const { user } = useAuth();
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputValue, setInputValue] = useState("");
+  const [isAgentTyping, setIsAgentTyping] = useState(false);
+  const { providers, selectedProvider, setSelectedProvider, models, selectedModel, setSelectedModel, loadingModels, isFavorite, toggleFavorite } = useModelSelector();
+
+  useEffect(() => {
+    const loadConversation = async () => {
+      if (!user) return;
+
+      const token = await user.getIdToken();
+      const response = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        toast.error("Conversation could not be loaded.");
+        return;
+      }
+
+      const data = (await response.json()) as ConversationDetailResponse;
+      setMessages(data.messages || []);
+    };
+
+    void loadConversation();
+  }, [conversationId, user]);
+
+  const handleSend = async (content: string) => {
+    if (!user || isAgentTyping) return;
+
+    const token = await user.getIdToken();
+    const now = new Date().toISOString();
     const userMessage: Message = {
-      id: `msg-${Date.now()}`,
-      conversationId: "conv-1",
+      id: createId("user"),
+      conversationId,
       role: "user",
       content,
-      createdAt: new Date().toISOString(),
+      createdAt: now,
     };
+
+    const assistantMessageId = createId("assistant");
+    let assistantContent = "";
+    let assistantAttachments: MessageAttachment[] = [];
+    const assistantCreatedAt = now;
+    let assistantVisible = false;
+
     setMessages((prev) => [...prev, userMessage]);
-    setInputValue("");
+    setIsAgentTyping(true);
+
+    try {
+      await streamChat({
+        token,
+        body: { content, conversation_id: conversationId, provider: selectedProvider || undefined, model: selectedModel || undefined },
+        onEvent: ({ event, data }) => {
+          if (event === "error") {
+            const message = typeof data.message === "string" ? data.message : "Agent error";
+            toast.error(message);
+            return;
+          }
+
+          if (event === "done") {
+            const doneProvider = typeof data.provider === "string" ? data.provider : undefined;
+            const doneModel = typeof data.model === "string" ? data.model : undefined;
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === assistantMessageId
+                  ? { ...msg, provider: doneProvider, model: doneModel }
+                  : msg
+              )
+            );
+            return;
+          }
+
+          if (event === "token") {
+            const text = typeof data.text === "string" ? data.text : "";
+            if (!text) return;
+            assistantContent += text;
+          } else if (event === "attachment") {
+            assistantAttachments = [
+              ...assistantAttachments,
+              {
+                type: data.type as MessageAttachment["type"],
+                data: (data.data || {}) as Record<string, unknown>,
+              },
+            ];
+          } else {
+            return;
+          }
+
+          setMessages((prev) => {
+            const assistantMessage: Message = {
+              id: assistantMessageId,
+              conversationId,
+              role: "agent",
+              content: assistantContent,
+              attachments: assistantAttachments,
+              createdAt: assistantCreatedAt,
+            };
+
+            const base: Message[] = assistantVisible
+              ? prev.map((msg) =>
+                  msg.id === assistantMessageId
+                    ? { ...msg, content: assistantContent, attachments: assistantAttachments }
+                    : msg
+                )
+              : [...prev, assistantMessage];
+            assistantVisible = true;
+            return base;
+          });
+        },
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Message could not be sent.");
+    } finally {
+      setIsAgentTyping(false);
+    }
   };
 
   const handlePromptClick = (prompt: string) => {
@@ -112,8 +161,17 @@ export default function ConversationPage() {
       <ChatInput
         value={inputValue}
         onChange={setInputValue}
-        onSend={handleSend}
-        isAgentTyping={isAgentTyping}
+        onSend={(content) => { void handleSend(content); }}
+        disabled={!user}
+        providers={providers}
+        selectedProvider={selectedProvider}
+        onProviderChange={setSelectedProvider}
+        models={models}
+        selectedModel={selectedModel}
+        onModelChange={setSelectedModel}
+        loadingModels={loadingModels}
+        isFavorite={isFavorite}
+        onToggleFavorite={(p, m) => void toggleFavorite(p, m)}
       />
     </>
   );

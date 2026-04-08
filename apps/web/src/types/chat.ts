@@ -7,6 +7,8 @@ export interface Message {
   content: string;
   createdAt: string;
   attachments?: MessageAttachment[];
+  provider?: string;
+  model?: string;
 }
 
 export interface MessageAttachment {

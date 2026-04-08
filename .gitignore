@@ -4,3 +4,15 @@ bower_components/
 
 build/
 dist/
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.egg-info/
+.pytest_cache/
+*.pyc
+
+# Copilot
+copilot-instructions.md

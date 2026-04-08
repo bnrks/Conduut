@@ -1,59 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { Plus, Search, PanelLeftClose, PanelLeft } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
+import { useChatStore } from "@/lib/stores/chat-store";
 import { useUIStore } from "@/lib/stores/ui-store";
 import { cn } from "@/lib/utils";
 import type { Conversation } from "@/types/chat";
-
-// Mock conversations
-const MOCK_CONVERSATIONS: Conversation[] = [
-  {
-    id: "conv-1",
-    title: "GitHub stars to Slack notifications",
-    lastMessageAt: new Date().toISOString(),
-    messageCount: 5,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "conv-2",
-    title: "Weekly Google Sheets sales report",
-    lastMessageAt: new Date(Date.now() - 3600 * 1000 * 2).toISOString(),
-    messageCount: 8,
-    createdAt: new Date(Date.now() - 3600 * 1000 * 2).toISOString(),
-  },
-  {
-    id: "conv-3",
-    title: "Gmail to Notion inbox",
-    lastMessageAt: new Date(Date.now() - 86400 * 1000).toISOString(),
-    messageCount: 3,
-    createdAt: new Date(Date.now() - 86400 * 1000).toISOString(),
-  },
-  {
-    id: "conv-4",
-    title: "Slack standup reminder",
-    lastMessageAt: new Date(Date.now() - 86400 * 1000 * 2).toISOString(),
-    messageCount: 6,
-    createdAt: new Date(Date.now() - 86400 * 1000 * 2).toISOString(),
-  },
-  {
-    id: "conv-5",
-    title: "Invoice PDF to Google Drive",
-    lastMessageAt: new Date(Date.now() - 86400 * 1000 * 5).toISOString(),
-    messageCount: 4,
-    createdAt: new Date(Date.now() - 86400 * 1000 * 5).toISOString(),
-  },
-  {
-    id: "conv-6",
-    title: "Discord alert on server errors",
-    lastMessageAt: new Date(Date.now() - 86400 * 1000 * 6).toISOString(),
-    messageCount: 7,
-    createdAt: new Date(Date.now() - 86400 * 1000 * 6).toISOString(),
-  },
-];
 
 function groupConversationsByDate(conversations: Conversation[]) {
   const now = new Date();
@@ -91,11 +47,38 @@ function groupConversationsByDate(conversations: Conversation[]) {
 
 export function ConversationSidebar() {
   const { sidebarCollapsed, toggleSidebar } = useUIStore();
+  const { conversations, setConversations } = useChatStore();
+  const { user } = useAuth();
   const [search, setSearch] = useState("");
   const pathname = usePathname();
 
-  const filtered = MOCK_CONVERSATIONS.filter((c) =>
-    c.title.toLowerCase().includes(search.toLowerCase())
+  useEffect(() => {
+    const loadConversations = async () => {
+      if (!user) return;
+
+      const token = await user.getIdToken();
+      const response = await fetch("/api/conversations", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) return;
+
+      const data = (await response.json()) as { conversations?: Conversation[] };
+      setConversations(data.conversations || []);
+    };
+
+    void loadConversations();
+  }, [setConversations, user, pathname]);
+
+  const filtered = useMemo(
+    () =>
+      conversations.filter((c) =>
+        c.title.toLowerCase().includes(search.toLowerCase())
+      ),
+    [conversations, search]
   );
 
   const grouped = groupConversationsByDate(filtered);
