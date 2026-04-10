@@ -1,88 +1,100 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { Plus, Search, Workflow as WorkflowIcon } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
 import { WorkflowCard } from "@/components/dashboard/workflow-card";
+import { useAuth } from "@/hooks/use-auth";
 import type { Workflow, WorkflowStatus } from "@/types/workflow";
-
-const MOCK_WORKFLOWS: Workflow[] = [
-  {
-    id: "wf-1",
-    name: "Gmail to Slack Notifications",
-    description:
-      "Forward important emails from Gmail to a Slack channel automatically with AI-powered summarization.",
-    status: "active",
-    nodeCount: 6,
-    lastExecutionAt: new Date(Date.now() - 12 * 60000).toISOString(),
-    executionCount: 342,
-    createdAt: "2025-12-01T10:00:00Z",
-    updatedAt: "2026-01-15T08:30:00Z",
-  },
-  {
-    id: "wf-2",
-    name: "Google Sheets CRM Sync",
-    description:
-      "Sync new contacts from Google Sheets to your CRM and send a welcome email.",
-    status: "active",
-    nodeCount: 4,
-    lastExecutionAt: new Date(Date.now() - 3 * 3600000).toISOString(),
-    executionCount: 89,
-    createdAt: "2026-01-10T14:00:00Z",
-    updatedAt: "2026-02-01T12:00:00Z",
-  },
-  {
-    id: "wf-3",
-    name: "GitHub Issue Tracker",
-    description:
-      "Create tasks in Notion whenever a new GitHub issue is opened with the 'bug' label.",
-    status: "inactive",
-    nodeCount: 3,
-    lastExecutionAt: new Date(Date.now() - 5 * 86400000).toISOString(),
-    executionCount: 12,
-    createdAt: "2026-02-05T09:00:00Z",
-    updatedAt: "2026-03-01T16:00:00Z",
-  },
-  {
-    id: "wf-4",
-    name: "Daily Standup Reminder",
-    description:
-      "Send a scheduled daily standup reminder to the team Slack channel at 9 AM.",
-    status: "error",
-    nodeCount: 2,
-    lastExecutionAt: new Date(Date.now() - 1 * 86400000).toISOString(),
-    executionCount: 56,
-    createdAt: "2026-01-20T11:00:00Z",
-    updatedAt: "2026-03-25T07:00:00Z",
-  },
-  {
-    id: "wf-5",
-    name: "Airtable Lead Enrichment",
-    description:
-      "Enrich new leads in Airtable with company data and assign to the right sales rep.",
-    status: "inactive",
-    nodeCount: 8,
-    lastExecutionAt: undefined,
-    executionCount: 0,
-    createdAt: "2026-03-20T15:00:00Z",
-    updatedAt: "2026-03-20T15:00:00Z",
-  },
-];
 
 type StatusFilter = "all" | WorkflowStatus;
 
 export default function WorkflowsPage() {
+  const { user } = useAuth();
+  const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
-  const filtered = MOCK_WORKFLOWS.filter((wf) => {
+  const fetchWorkflows = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch("/api/workflows", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error("Failed to fetch workflows");
+      const data = (await response.json()) as { workflows: Workflow[] };
+      setWorkflows(data.workflows ?? []);
+    } catch {
+      toast.error("Workflows could not be loaded.");
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    void fetchWorkflows();
+  }, [fetchWorkflows]);
+
+  const handleToggle = async (workflow: Workflow) => {
+    if (!user) return;
+    const action = workflow.status === "active" ? "deactivate" : "activate";
+    // Optimistic update
+    setWorkflows((prev) =>
+      prev.map((wf) =>
+        wf.id === workflow.id
+          ? { ...wf, status: action === "activate" ? "active" : "inactive" }
+          : wf
+      )
+    );
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch(
+        `/api/workflows/${encodeURIComponent(workflow.id)}?action=${action}`,
+        {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (!response.ok) throw new Error("Toggle failed");
+    } catch {
+      toast.error("Could not update workflow status.");
+      void fetchWorkflows(); // revert by re-fetching
+    }
+  };
+
+  const handleDelete = async (workflow: Workflow) => {
+    if (!user) return;
+    // Optimistic update
+    setWorkflows((prev) => prev.filter((wf) => wf.id !== workflow.id));
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch(
+        `/api/workflows/${encodeURIComponent(workflow.id)}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (!response.ok) throw new Error("Delete failed");
+      toast.success(`"${workflow.name}" deleted.`);
+    } catch {
+      toast.error("Could not delete workflow.");
+      void fetchWorkflows(); // revert
+    }
+  };
+
+  const filtered = workflows.filter((wf) => {
     const matchesSearch =
       wf.name.toLowerCase().includes(search.toLowerCase()) ||
       (wf.description?.toLowerCase().includes(search.toLowerCase()) ?? false);
-    const matchesStatus =
-      statusFilter === "all" || wf.status === statusFilter;
+    const matchesStatus = statusFilter === "all" || wf.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
 
@@ -111,7 +123,7 @@ export default function WorkflowsPage() {
           />
         </div>
         <div className="flex items-center gap-1 rounded-lg border border-border p-1 bg-card">
-          {(["all", "active", "inactive", "error"] as const).map((status) => (
+          {(["all", "active", "inactive"] as const).map((status) => (
             <button
               key={status}
               onClick={() => setStatusFilter(status)}
@@ -127,11 +139,20 @@ export default function WorkflowsPage() {
         </div>
       </div>
 
-      {/* Grid */}
-      {filtered.length > 0 ? (
+      {/* Content */}
+      {loading ? (
+        <div className="flex justify-center py-24">
+          <Spinner />
+        </div>
+      ) : filtered.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((wf) => (
-            <WorkflowCard key={wf.id} workflow={wf} />
+            <WorkflowCard
+              key={wf.id}
+              workflow={wf}
+              onToggle={(w) => void handleToggle(w)}
+              onDelete={(w) => void handleDelete(w)}
+            />
           ))}
         </div>
       ) : (

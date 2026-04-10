@@ -40,7 +40,6 @@ export default function NewChatPage() {
     const assistantMessageId = createId("assistant");
     let assistantContent = "";
     let assistantAttachments: MessageAttachment[] = [];
-    let assistantVisible = false;
     let createdConversationId = "";
     let doneProvider: string | undefined;
     let doneModel: string | undefined;
@@ -62,10 +61,7 @@ export default function NewChatPage() {
           if (event === "error") {
             const message = typeof data.message === "string" ? data.message : "An error occurred. Please try again.";
             toast.error(message);
-            if (assistantVisible) {
-              setMessages((prev) => prev.filter((msg) => msg.id !== assistantMessageId));
-              assistantVisible = false;
-            }
+            setMessages((prev) => prev.filter((msg) => msg.id !== assistantMessageId));
             return;
           }
 
@@ -98,6 +94,7 @@ export default function NewChatPage() {
             return;
           }
 
+          // Pure updater: check actual state instead of closure variable
           setMessages((prev) => {
             const normalized: Message[] = prev.map((msg) =>
               msg.conversationId === ""
@@ -105,29 +102,30 @@ export default function NewChatPage() {
                 : msg
             );
 
-            const assistantMessage: Message = {
-              id: assistantMessageId,
-              conversationId: createdConversationId,
-              role: "agent",
-              content: assistantContent,
-              attachments: assistantAttachments,
-              createdAt: now,
-            };
-
-            const next: Message[] = assistantVisible
-              ? normalized.map((msg) =>
-                  msg.id === assistantMessageId
-                    ? {
-                        ...msg,
-                        content: assistantContent,
-                        attachments: assistantAttachments,
-                        conversationId: createdConversationId || msg.conversationId,
-                      }
-                    : msg
-                )
-              : [...normalized, assistantMessage];
-            assistantVisible = true;
-            return next;
+            const exists = normalized.some((msg) => msg.id === assistantMessageId);
+            if (exists) {
+              return normalized.map((msg) =>
+                msg.id === assistantMessageId
+                  ? {
+                      ...msg,
+                      content: assistantContent,
+                      attachments: assistantAttachments,
+                      conversationId: createdConversationId || msg.conversationId,
+                    }
+                  : msg
+              );
+            }
+            return [
+              ...normalized,
+              {
+                id: assistantMessageId,
+                conversationId: createdConversationId,
+                role: "agent",
+                content: assistantContent,
+                attachments: assistantAttachments,
+                createdAt: now,
+              },
+            ];
           });
         },
       });

@@ -1,4 +1,5 @@
 """Firestore tabanlı store. Tüm sync Firestore çağrıları asyncio.to_thread ile sarılır."""
+
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ def _now_iso() -> str:
 # ---------------------------------------------------------------------------
 # Dataclass'lar (route'larda kullanılır)
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class LLMSettings:
@@ -46,6 +48,7 @@ class Message:
     created_at: str
     provider: str | None = None
     model: str | None = None
+    attachments: list[dict] | None = None
 
 
 @dataclass
@@ -63,6 +66,7 @@ class Conversation:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _user_ref(user_id: str):
     return db.collection("users").document(user_id)
@@ -84,6 +88,7 @@ async def _run(fn):
 # LLM Settings
 # ---------------------------------------------------------------------------
 
+
 async def get_llm_settings(user_id: str) -> LLMSettings | None:
     doc = await _run(lambda: _user_ref(user_id).collection("settings").document("llm").get())
     if not doc.exists:
@@ -93,9 +98,14 @@ async def get_llm_settings(user_id: str) -> LLMSettings | None:
 
 
 async def save_llm_settings(user_id: str, provider: str, model: str, api_key: str) -> LLMSettings:
-    await _run(lambda: _user_ref(user_id).collection("settings").document("llm").set(
-        {"provider": provider, "model": model, "api_key": api_key}
-    ))
+    await _run(
+        lambda: (
+            _user_ref(user_id)
+            .collection("settings")
+            .document("llm")
+            .set({"provider": provider, "model": model, "api_key": api_key})
+        )
+    )
     return LLMSettings(provider=provider, model=model, api_key=api_key)
 
 
@@ -106,6 +116,7 @@ async def delete_llm_settings(user_id: str) -> None:
 # ---------------------------------------------------------------------------
 # Provider Connections
 # ---------------------------------------------------------------------------
+
 
 async def list_providers(user_id: str) -> list[ProviderConnection]:
     docs = await _run(lambda: list(_user_ref(user_id).collection("providers").stream()))
@@ -120,7 +131,11 @@ async def get_provider(user_id: str, provider: str) -> ProviderConnection | None
 
 
 async def save_provider(user_id: str, provider: str, api_key: str) -> list[ProviderConnection]:
-    await _run(lambda: _user_ref(user_id).collection("providers").document(provider).set({"api_key": api_key}))
+    await _run(
+        lambda: (
+            _user_ref(user_id).collection("providers").document(provider).set({"api_key": api_key})
+        )
+    )  # noqa: E501
     return await list_providers(user_id)
 
 
@@ -176,22 +191,28 @@ async def delete_provider(user_id: str, provider: str) -> list[ProviderConnectio
 # Conversations
 # ---------------------------------------------------------------------------
 
+
 async def list_conversations(user_id: str) -> list[Conversation]:
-    docs = await _run(lambda: list(
-        _user_ref(user_id).collection("conversations")
-        .order_by("updated_at", direction="DESCENDING")
-        .stream()
-    ))
+    docs = await _run(
+        lambda: list(
+            _user_ref(user_id)
+            .collection("conversations")
+            .order_by("updated_at", direction="DESCENDING")
+            .stream()
+        )
+    )
     result = []
     for d in docs:
         data = d.to_dict()
-        result.append(Conversation(
-            id=d.id,
-            title=data.get("title", "New conversation"),
-            message_count=data.get("message_count", 0),
-            created_at=data.get("created_at", ""),
-            updated_at=data.get("updated_at", ""),
-        ))
+        result.append(
+            Conversation(
+                id=d.id,
+                title=data.get("title", "New conversation"),
+                message_count=data.get("message_count", 0),
+                created_at=data.get("created_at", ""),
+                updated_at=data.get("updated_at", ""),
+            )
+        )
     return result
 
 
@@ -201,13 +222,21 @@ async def get_conversation(user_id: str, conv_id: str) -> Conversation | None:
         return None
     data = doc.to_dict()
 
-    msg_docs = await _run(lambda: list(
-        _conv_ref(user_id, conv_id).collection("messages")
-        .order_by("created_at")
-        .stream()
-    ))
+    msg_docs = await _run(
+        lambda: list(
+            _conv_ref(user_id, conv_id).collection("messages").order_by("created_at").stream()
+        )
+    )
     messages = [
-        Message(id=m.id, role=m.to_dict()["role"], content=m.to_dict()["content"], created_at=m.to_dict()["created_at"], provider=m.to_dict().get("provider"), model=m.to_dict().get("model"))
+        Message(
+            id=m.id,
+            role=m.to_dict()["role"],
+            content=m.to_dict()["content"],
+            created_at=m.to_dict()["created_at"],
+            provider=m.to_dict().get("provider"),
+            model=m.to_dict().get("model"),
+            attachments=m.to_dict().get("attachments"),
+        )
         for m in msg_docs
     ]
 
@@ -257,7 +286,15 @@ async def get_or_create_conversation(
         doc_data["model"] = model
 
     await _run(lambda: _conv_ref(user_id, new_id).set(doc_data))
-    return Conversation(id=new_id, title="New conversation", message_count=0, created_at=now, updated_at=now, provider=provider, model=model)
+    return Conversation(
+        id=new_id,
+        title="New conversation",
+        message_count=0,
+        created_at=now,
+        updated_at=now,
+        provider=provider,
+        model=model,
+    )  # noqa: E501
 
 
 async def add_message(
@@ -267,6 +304,7 @@ async def add_message(
     content: str,
     provider: str | None = None,
     model: str | None = None,
+    attachments: list[dict] | None = None,
 ) -> Message:
     msg_id = str(uuid4())
     now = _now_iso()
@@ -276,6 +314,8 @@ async def add_message(
         data["provider"] = provider
     if model:
         data["model"] = model
+    if attachments:
+        data["attachments"] = attachments
 
     await _run(lambda: _msg_ref(user_id, conv_id, msg_id).set(data))
 
@@ -292,17 +332,30 @@ async def add_message(
         conv_ref.update(update)
 
     await _run(_update)
-    return Message(id=msg_id, role=role, content=content, created_at=now, provider=provider, model=model)
+    return Message(
+        id=msg_id,
+        role=role,
+        content=content,
+        created_at=now,
+        provider=provider,
+        model=model,
+        attachments=attachments or None,
+    )
 
 
 async def get_conversation_messages(user_id: str, conv_id: str) -> list[Message]:
-    docs = await _run(lambda: list(
-        _conv_ref(user_id, conv_id).collection("messages")
-        .order_by("created_at")
-        .stream()
-    ))
+    docs = await _run(
+        lambda: list(
+            _conv_ref(user_id, conv_id).collection("messages").order_by("created_at").stream()
+        )
+    )
     return [
-        Message(id=d.id, role=d.to_dict()["role"], content=d.to_dict()["content"], created_at=d.to_dict()["created_at"])
+        Message(
+            id=d.id,
+            role=d.to_dict()["role"],
+            content=d.to_dict()["content"],
+            created_at=d.to_dict()["created_at"],
+        )
         for d in docs
     ]
 
@@ -315,7 +368,11 @@ async def delete_conversation(user_id: str, conv_id: str) -> bool:
     # Mesajları sil
     msg_docs = await _run(lambda: list(_conv_ref(user_id, conv_id).collection("messages").stream()))
     for m in msg_docs:
-        await _run(lambda mid=m.id: _conv_ref(user_id, conv_id).collection("messages").document(mid).delete())
+        await _run(
+            lambda mid=m.id: (
+                _conv_ref(user_id, conv_id).collection("messages").document(mid).delete()
+            )
+        )  # noqa: E501
 
     await _run(lambda: _conv_ref(user_id, conv_id).delete())
     return True

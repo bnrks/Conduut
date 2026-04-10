@@ -1,4 +1,5 @@
 """n8n REST API client. Tek bir n8n instance'ıyla konuşur (MVP)."""
+
 from dataclasses import dataclass
 
 import httpx
@@ -20,6 +21,7 @@ def _client() -> httpx.AsyncClient:
 # ---------------------------------------------------------------------------
 # Dataclass'lar
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class N8nWorkflow:
@@ -43,6 +45,7 @@ class N8nExecution:
 # ---------------------------------------------------------------------------
 # Workflow işlemleri
 # ---------------------------------------------------------------------------
+
 
 async def list_workflows() -> list[N8nWorkflow]:
     async with _client() as c:
@@ -89,7 +92,9 @@ async def create_workflow(name: str, nodes: list[dict], connections: dict) -> N8
         )
 
 
-async def update_workflow(workflow_id: str, name: str, nodes: list[dict], connections: dict) -> N8nWorkflow:
+async def update_workflow(
+    workflow_id: str, name: str, nodes: list[dict], connections: dict
+) -> N8nWorkflow:  # noqa: E501
     payload = {
         "name": name,
         "nodes": nodes,
@@ -111,15 +116,16 @@ async def update_workflow(workflow_id: str, name: str, nodes: list[dict], connec
 
 async def activate_workflow(workflow_id: str) -> None:
     async with _client() as c:
-        r = await c.patch(f"/workflows/{workflow_id}", json={"active": True})
+        r = await c.post(f"/workflows/{workflow_id}/activate")
         r.raise_for_status()
         log.info("n8n_workflow_activated", workflow_id=workflow_id)
 
 
 async def deactivate_workflow(workflow_id: str) -> None:
     async with _client() as c:
-        r = await c.patch(f"/workflows/{workflow_id}", json={"active": False})
+        r = await c.post(f"/workflows/{workflow_id}/deactivate")
         r.raise_for_status()
+        log.info("n8n_workflow_deactivated", workflow_id=workflow_id)
 
 
 async def delete_workflow(workflow_id: str) -> None:
@@ -133,21 +139,49 @@ async def delete_workflow(workflow_id: str) -> None:
 # Execution
 # ---------------------------------------------------------------------------
 
-async def execute_workflow(workflow_id: str, data: dict | None = None) -> N8nExecution:
-    payload = {"workflowData": {"id": workflow_id}}
-    if data:
-        payload["runData"] = data
-    async with _client() as c:
-        r = await c.post(f"/workflows/{workflow_id}/run", json=payload)
-        r.raise_for_status()
-        e = r.json().get("data", {})
-        log.info("n8n_workflow_executed", workflow_id=workflow_id)
-        return N8nExecution(
-            id=e.get("executionId", ""),
-            workflow_id=workflow_id,
-            status="running",
-            started_at=e.get("startedAt", ""),
-        )
+
+async def execute_workflow(workflow_id: str) -> dict:
+    """Workflow'u aktive eder ve trigger bilgisini döner.
+
+    n8n public REST API v1'de manuel çalıştırma endpoint'i yoktur.
+    Workflow'u aktive etmek, trigger'ına (schedule, webhook, vb.) göre
+    otomatik olarak çalışmasını sağlar.
+    Webhook trigger'ı varsa test için çağrılabilecek URL'i de döner.
+    """
+    # Önce workflow node'larını al (trigger tipini öğrenmek için)
+    wf = await get_workflow(workflow_id)
+    nodes = wf.get("nodes", [])
+
+    # Workflow'u aktive et
+    await activate_workflow(workflow_id)
+    log.info("n8n_workflow_executed", workflow_id=workflow_id)
+
+    # Webhook trigger varsa URL'ini döndür
+    for node in nodes:
+        node_type = node.get("type", "")
+        if node_type == "n8n-nodes-base.webhook":
+            path = node.get("parameters", {}).get("path", "")
+            if path:
+                n8n_base = settings.n8n_url.rstrip("/")
+                return {
+                    "workflow_id": workflow_id,
+                    "status": "activated",
+                    "trigger": "webhook",
+                    "webhook_url": f"{n8n_base}/webhook/{path}",
+                    "note": (
+                        f"Workflow activated. Call POST {n8n_base}/webhook/{path} to trigger it."
+                    ),
+                }
+
+    # Schedule veya diğer trigger
+    trigger_types = [n.get("type", "") for n in nodes if "trigger" in n.get("type", "").lower()]
+    trigger = trigger_types[0] if trigger_types else "unknown"
+    return {
+        "workflow_id": workflow_id,
+        "status": "activated",
+        "trigger": trigger,
+        "note": "Workflow activated and will run automatically on its trigger.",
+    }
 
 
 async def get_execution(execution_id: str) -> N8nExecution:
@@ -187,6 +221,7 @@ async def list_executions(workflow_id: str | None = None, limit: int = 10) -> li
 # ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------
+
 
 async def health_check() -> bool:
     try:

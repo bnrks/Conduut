@@ -1,7 +1,7 @@
 import asyncio
 
-from firebase_admin import auth
 from fastapi import HTTPException, Request
+from firebase_admin import auth
 
 
 def get_user_id(request: Request) -> str:

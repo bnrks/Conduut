@@ -84,7 +84,6 @@ export default function ConversationPage() {
     let assistantContent = "";
     let assistantAttachments: MessageAttachment[] = [];
     const assistantCreatedAt = now;
-    let assistantVisible = false;
 
     setMessages((prev) => [...prev, userMessage]);
     setIsAgentTyping(true);
@@ -97,10 +96,7 @@ export default function ConversationPage() {
           if (event === "error") {
             const message = typeof data.message === "string" ? data.message : "An error occurred. Please try again.";
             toast.error(message);
-            if (assistantVisible) {
-              setMessages((prev) => prev.filter((msg) => msg.id !== assistantMessageId));
-              assistantVisible = false;
-            }
+            setMessages((prev) => prev.filter((msg) => msg.id !== assistantMessageId));
             return;
           }
 
@@ -133,25 +129,27 @@ export default function ConversationPage() {
             return;
           }
 
+          // Pure updater: check actual state instead of closure variable
           setMessages((prev) => {
-            const assistantMessage: Message = {
-              id: assistantMessageId,
-              conversationId,
-              role: "agent",
-              content: assistantContent,
-              attachments: assistantAttachments,
-              createdAt: assistantCreatedAt,
-            };
-
-            const base: Message[] = assistantVisible
-              ? prev.map((msg) =>
-                  msg.id === assistantMessageId
-                    ? { ...msg, content: assistantContent, attachments: assistantAttachments }
-                    : msg
-                )
-              : [...prev, assistantMessage];
-            assistantVisible = true;
-            return base;
+            const exists = prev.some((msg) => msg.id === assistantMessageId);
+            if (exists) {
+              return prev.map((msg) =>
+                msg.id === assistantMessageId
+                  ? { ...msg, content: assistantContent, attachments: assistantAttachments }
+                  : msg
+              );
+            }
+            return [
+              ...prev,
+              {
+                id: assistantMessageId,
+                conversationId,
+                role: "agent",
+                content: assistantContent,
+                attachments: assistantAttachments,
+                createdAt: assistantCreatedAt,
+              },
+            ];
           });
         },
       });

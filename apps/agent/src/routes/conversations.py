@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 
-from src.auth import get_user_id
 from src import store
+from src.auth import get_user_id
 
 router = APIRouter()
 
@@ -46,6 +46,7 @@ async def get_conversation(conversation_id: str, request: Request):
                 "created_at": m.created_at,
                 "provider": m.provider,
                 "model": m.model,
+                "attachments": m.attachments,
             }
             for m in (conv.messages or [])
         ],

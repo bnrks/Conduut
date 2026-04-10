@@ -5,7 +5,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import settings
-from src.routes import chat, conversations, favorites as favorites_router, settings as settings_router
+from src.routes import chat, conversations
+from src.routes import favorites as favorites_router
+from src.routes import settings as settings_router
+from src.routes import workflows as workflows_router
 
 structlog.configure(
     processors=[
@@ -38,6 +41,7 @@ app.include_router(chat.router, prefix="/api")
 app.include_router(conversations.router, prefix="/api")
 app.include_router(settings_router.router, prefix="/api")
 app.include_router(favorites_router.router, prefix="/api")
+app.include_router(workflows_router.router, prefix="/api")
 
 
 @app.get("/health")

@@ -47,24 +47,37 @@ export async function streamChat({
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    const chunk = decoder.decode(value, { stream: true });
-    buffer += chunk;
-
+  const flushEvents = () => {
     let boundary = buffer.indexOf("\n\n");
     while (boundary !== -1) {
       const rawEvent = buffer.slice(0, boundary);
       buffer = buffer.slice(boundary + 2);
-
       const parsed = parseSseEvent(rawEvent);
-      if (parsed) {
-        onEvent(parsed);
-      }
-
+      if (parsed) onEvent(parsed);
       boundary = buffer.indexOf("\n\n");
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      flushEvents();
+    }
+    // Flush any remaining content after the stream ends
+    buffer += decoder.decode();
+    if (buffer.trim().length > 0) {
+      // Handle a final event that wasn't terminated with \n\n
+      const parsed = parseSseEvent(buffer);
+      if (parsed) onEvent(parsed);
+      buffer = "";
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* noop */
     }
   }
 }

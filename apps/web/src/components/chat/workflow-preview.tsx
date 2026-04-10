@@ -44,7 +44,7 @@ export function WorkflowPreview({ data, className }: WorkflowPreviewProps) {
         </div>
       </div>
       <a
-        href={data.id ? `/dashboard/workflows/${data.id}` : "/dashboard/workflows"}
+        href="/dashboard/workflows"
         className="text-[13px] text-conduut-500 hover:text-conduut-700 whitespace-nowrap transition-colors"
       >
         Open in Dashboard

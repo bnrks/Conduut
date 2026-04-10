@@ -5,9 +5,9 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from src.auth import get_user_id
-from src.agent import loop
 from src import store
+from src.agent import loop
+from src.auth import get_user_id
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -30,7 +30,10 @@ async def chat_send(request: Request, body: ChatRequest):
 
     settings = await store.get_llm_settings(user_id)
     if not settings:
-        raise HTTPException(status_code=422, detail="LLM settings not configured. Please add your API key in Settings.")
+        raise HTTPException(
+            status_code=422,
+            detail="LLM settings not configured. Please add your API key in Settings.",
+        )  # noqa: E501
 
     # Provider/model override
     if body.provider and body.provider != settings.provider:
@@ -48,11 +51,15 @@ async def chat_send(request: Request, body: ChatRequest):
             api_key=settings.api_key,
         )
 
-    conv = await store.get_or_create_conversation(user_id, body.conversation_id, provider=settings.provider, model=settings.model)
+    conv = await store.get_or_create_conversation(
+        user_id, body.conversation_id, provider=settings.provider, model=settings.model
+    )  # noqa: E501
     await store.add_message(user_id, conv.id, "user", body.content)
 
     msgs = await store.get_conversation_messages(user_id, conv.id)
-    messages = [{"role": m.role if m.role != "agent" else "assistant", "content": m.content} for m in msgs]
+    messages = [
+        {"role": m.role if m.role != "agent" else "assistant", "content": m.content} for m in msgs
+    ]  # noqa: E501
 
     return StreamingResponse(
         loop.run(user_id, conv.id, messages, settings),

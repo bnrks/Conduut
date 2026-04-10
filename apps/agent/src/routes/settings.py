@@ -3,8 +3,8 @@ import litellm
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from src.auth import get_user_id
 from src import store
+from src.auth import get_user_id
 
 _HARDCODED_MODELS: dict[str, list[dict]] = {
     "anthropic": [
@@ -51,15 +51,11 @@ class ProviderIn(BaseModel):
 
 
 def _providers_response(providers: list[store.ProviderConnection]) -> dict:
-    return {
-        "providers": [
-            {"provider": p.provider, "masked_key": p.masked_key}
-            for p in providers
-        ]
-    }
+    return {"providers": [{"provider": p.provider, "masked_key": p.masked_key} for p in providers]}
 
 
 # --- Active LLM Settings ---
+
 
 @router.get("/settings/llm")
 async def get_settings(request: Request):
@@ -84,6 +80,7 @@ async def delete_settings(request: Request):
 
 
 # --- Provider Connections ---
+
 
 @router.get("/settings/llm/providers")
 async def get_providers(request: Request):
@@ -120,7 +117,9 @@ async def get_provider_models(provider: str, request: Request):
             result = []
             for m in models:
                 mid = m.get("id", "")
-                if provider == "openai" and not any(mid.startswith(p) for p in ("gpt-", "o1", "o3", "o4")):
+                if provider == "openai" and not any(
+                    mid.startswith(p) for p in ("gpt-", "o1", "o3", "o4")
+                ):  # noqa: E501
                     continue
                 result.append({"id": mid, "name": mid})
             return {"models": sorted(result, key=lambda x: x["id"])}
@@ -136,7 +135,9 @@ async def get_provider_models(provider: str, request: Request):
                 )
                 r.raise_for_status()
             models = r.json().get("data", [])
-            result = [{"id": m["id"], "name": m.get("name") or m["id"]} for m in models if m.get("id")]
+            result = [
+                {"id": m["id"], "name": m.get("name") or m["id"]} for m in models if m.get("id")
+            ]  # noqa: E501
             return {"models": sorted(result, key=lambda x: x["name"])}
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Could not fetch models: {e}")
@@ -163,7 +164,11 @@ async def verify_provider(provider: str, request: Request):
     except litellm.AuthenticationError:
         return {"valid": False, "provider": provider, "error": "Invalid API key"}
     except litellm.NotFoundError:
-        return {"valid": False, "provider": provider, "error": "Model not found — key may still be valid"}
+        return {
+            "valid": False,
+            "provider": provider,
+            "error": "Model not found — key may still be valid",
+        }  # noqa: E501
     except Exception as e:
         return {"valid": False, "provider": provider, "error": str(e)}
 

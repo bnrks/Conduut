@@ -1,7 +1,7 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 
-from src.auth import get_user_id
 from src import store
+from src.auth import get_user_id
 
 router = APIRouter()
 

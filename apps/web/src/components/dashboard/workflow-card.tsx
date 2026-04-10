@@ -18,33 +18,23 @@ function formatRelativeTime(dateStr?: string): string {
   return `${days}d ago`;
 }
 
-function statusBadgeVariant(
-  status: WorkflowStatus
-): "success" | "outline" | "error" {
-  if (status === "active") return "success";
-  if (status === "error") return "error";
-  return "outline";
+function statusBadgeVariant(status: WorkflowStatus): "success" | "outline" {
+  return status === "active" ? "success" : "outline";
 }
 
 function statusLabel(status: WorkflowStatus): string {
-  if (status === "active") return "Active";
-  if (status === "error") return "Error";
-  return "Inactive";
+  return status === "active" ? "Active" : "Inactive";
 }
 
 interface WorkflowCardProps {
   workflow: Workflow;
+  onToggle?: (workflow: Workflow) => void;
+  onDelete?: (workflow: Workflow) => void;
 }
 
-export function WorkflowCard({ workflow }: WorkflowCardProps) {
+export function WorkflowCard({ workflow, onToggle, onDelete }: WorkflowCardProps) {
   return (
-    <Card
-      interactive
-      className="flex flex-col"
-      onClick={() => {
-        console.log("Open workflow:", workflow.id);
-      }}
-    >
+    <Card interactive className="flex flex-col">
       <CardContent className="flex flex-col gap-3 p-5">
         {/* Header row */}
         <div className="flex items-start justify-between gap-2">
@@ -57,16 +47,18 @@ export function WorkflowCard({ workflow }: WorkflowCardProps) {
             <Badge variant={statusBadgeVariant(workflow.status)}>
               {statusLabel(workflow.status)}
             </Badge>
-            <button
-              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-              onClick={(e) => {
-                e.stopPropagation();
-                console.log("Workflow menu:", workflow.id);
-              }}
-              aria-label="More options"
-            >
-              <MoreHorizontal className="h-4 w-4" />
-            </button>
+            {onDelete && (
+              <button
+                className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(workflow);
+                }}
+                aria-label="Delete workflow"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -96,13 +88,11 @@ export function WorkflowCard({ workflow }: WorkflowCardProps) {
             aria-checked={workflow.status === "active"}
             onClick={(e) => {
               e.stopPropagation();
-              console.log("Toggle workflow:", workflow.id);
+              onToggle?.(workflow);
             }}
             className={cn(
               "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              workflow.status === "active"
-                ? "bg-conduut-500"
-                : "bg-gray-200"
+              workflow.status === "active" ? "bg-conduut-500" : "bg-gray-200"
             )}
           >
             <span

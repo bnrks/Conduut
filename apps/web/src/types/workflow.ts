@@ -1,4 +1,4 @@
-export type WorkflowStatus = "active" | "inactive" | "error";
+export type WorkflowStatus = "active" | "inactive";
 
 export interface Workflow {
   id: string;
