@@ -55,6 +55,8 @@ class Conversation:
     message_count: int
     created_at: str
     updated_at: str
+    provider: str | None = None
+    model: str | None = None
     messages: list[Message] | None = None
 
 
@@ -215,11 +217,18 @@ async def get_conversation(user_id: str, conv_id: str) -> Conversation | None:
         message_count=data.get("message_count", 0),
         created_at=data.get("created_at", ""),
         updated_at=data.get("updated_at", ""),
+        provider=data.get("provider"),
+        model=data.get("model"),
         messages=messages,
     )
 
 
-async def get_or_create_conversation(user_id: str, conv_id: str | None) -> Conversation:
+async def get_or_create_conversation(
+    user_id: str,
+    conv_id: str | None,
+    provider: str | None = None,
+    model: str | None = None,
+) -> Conversation:
     if conv_id:
         doc = await _run(lambda: _conv_ref(user_id, conv_id).get())
         if doc.exists:
@@ -230,17 +239,25 @@ async def get_or_create_conversation(user_id: str, conv_id: str | None) -> Conve
                 message_count=data.get("message_count", 0),
                 created_at=data.get("created_at", ""),
                 updated_at=data.get("updated_at", ""),
+                provider=data.get("provider"),
+                model=data.get("model"),
             )
 
     new_id = str(uuid4())
     now = _now_iso()
-    await _run(lambda: _conv_ref(user_id, new_id).set({
+    doc_data: dict = {
         "title": "New conversation",
         "message_count": 0,
         "created_at": now,
         "updated_at": now,
-    }))
-    return Conversation(id=new_id, title="New conversation", message_count=0, created_at=now, updated_at=now)
+    }
+    if provider:
+        doc_data["provider"] = provider
+    if model:
+        doc_data["model"] = model
+
+    await _run(lambda: _conv_ref(user_id, new_id).set(doc_data))
+    return Conversation(id=new_id, title="New conversation", message_count=0, created_at=now, updated_at=now, provider=provider, model=model)
 
 
 async def add_message(

@@ -12,12 +12,13 @@ export interface ChatInputProps {
   value: string;
   onChange: (value: string) => void;
   providers?: ProviderOption[];
-  selectedProvider?: string;
+  selectedProvider?: string | null;
   onProviderChange?: (provider: string) => void;
   models?: ModelOption[];
-  selectedModel?: string;
+  selectedModel?: string | null;
   onModelChange?: (model: string) => void;
   loadingModels?: boolean;
+  lockedModel?: boolean;
   isFavorite?: (provider: string, modelId: string) => boolean;
   onToggleFavorite?: (provider: string, modelId: string) => void;
 }
@@ -306,6 +307,7 @@ export function ChatInput({
   selectedModel = "",
   onModelChange,
   loadingModels = false,
+  lockedModel = false,
   isFavorite,
   onToggleFavorite,
 }: ChatInputProps) {
@@ -340,25 +342,40 @@ export function ChatInput({
           )}
         >
           {/* Selector bar */}
-          {hasProviders && (
+          {(hasProviders || lockedModel) && (
             <div className="flex items-center gap-0.5 border-b border-[#E4E4E7] px-2 py-1.5">
-              <ProviderDropdown
-                providers={providers}
-                selected={selectedProvider}
-                onChange={onProviderChange ?? (() => {})}
-              />
-              {selectedProvider && (
+              {lockedModel ? (
+                <div className="flex items-center gap-1 px-2 py-1 rounded text-xs text-[#71717A] select-none">
+                  <span>{selectedProvider}</span>
+                  {selectedModel && (
+                    <>
+                      <span className="text-[#E4E4E7]">/</span>
+                      <span>{selectedModel}</span>
+                    </>
+                  )}
+                  <span className="ml-1 text-[10px] text-[#A1A1AA] border border-[#E4E4E7] rounded px-1">locked</span>
+                </div>
+              ) : (
                 <>
-                  <span className="text-[#E4E4E7] select-none">/</span>
-                  <ModelDropdown
-                    models={models}
-                    selected={selectedModel}
-                    onChange={onModelChange ?? (() => {})}
-                    loading={loadingModels}
-                    provider={selectedProvider}
-                    isFavorite={isFavorite}
-                    onToggleFavorite={onToggleFavorite}
+                  <ProviderDropdown
+                    providers={providers}
+                    selected={selectedProvider ?? ""}
+                    onChange={onProviderChange ?? (() => {})}
                   />
+                  {selectedProvider && (
+                    <>
+                      <span className="text-[#E4E4E7] select-none">/</span>
+                      <ModelDropdown
+                        models={models}
+                        selected={selectedModel ?? ""}
+                        onChange={onModelChange ?? (() => {})}
+                        loading={loadingModels}
+                        provider={selectedProvider}
+                        isFavorite={isFavorite}
+                        onToggleFavorite={onToggleFavorite}
+                      />
+                    </>
+                  )}
                 </>
               )}
             </div>

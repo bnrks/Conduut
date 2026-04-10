@@ -51,7 +51,8 @@ export async function streamChat({
     const { done, value } = await reader.read();
     if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
+    const chunk = decoder.decode(value, { stream: true });
+    buffer += chunk;
 
     let boundary = buffer.indexOf("\n\n");
     while (boundary !== -1) {
@@ -59,7 +60,9 @@ export async function streamChat({
       buffer = buffer.slice(boundary + 2);
 
       const parsed = parseSseEvent(rawEvent);
-      if (parsed) onEvent(parsed);
+      if (parsed) {
+        onEvent(parsed);
+      }
 
       boundary = buffer.indexOf("\n\n");
     }

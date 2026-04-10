@@ -1,13 +1,12 @@
 import json
-from typing import AsyncIterator
 
-import litellm
 import structlog
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from src.auth import get_user_id
+from src.agent import loop
 from src import store
 
 log = structlog.get_logger()
@@ -23,43 +22,6 @@ class ChatRequest(BaseModel):
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
-
-
-async def stream_response(
-    user_id: str,
-    conv_id: str,
-    messages: list[dict],
-    settings: store.LLMSettings,
-    provider: str,
-    model: str,
-) -> AsyncIterator[str]:
-    model = f"{settings.provider}/{settings.model}"
-
-    try:
-        response = await litellm.acompletion(
-            model=model,
-            messages=messages,
-            api_key=settings.api_key,
-            stream=True,
-        )
-
-        full_content = ""
-        async for chunk in response:
-            delta = chunk.choices[0].delta
-            if delta.content:
-                full_content += delta.content
-                yield _sse("token", {"text": delta.content, "conversation_id": conv_id})
-
-        await store.add_message(user_id, conv_id, "assistant", full_content, provider=provider, model=model)
-        yield _sse("done", {"conversation_id": conv_id, "provider": provider, "model": model})
-
-    except litellm.AuthenticationError:
-        yield _sse("error", {"message": "Invalid API key"})
-    except litellm.BadRequestError as e:
-        yield _sse("error", {"message": str(e)})
-    except Exception as e:
-        log.error("stream_error", error=str(e))
-        yield _sse("error", {"message": "Something went wrong"})
 
 
 @router.post("/chat/send")
@@ -86,15 +48,14 @@ async def chat_send(request: Request, body: ChatRequest):
             api_key=settings.api_key,
         )
 
-    conv = await store.get_or_create_conversation(user_id, body.conversation_id)
+    conv = await store.get_or_create_conversation(user_id, body.conversation_id, provider=settings.provider, model=settings.model)
     await store.add_message(user_id, conv.id, "user", body.content)
 
-    # Geçmiş mesajları yükle
     msgs = await store.get_conversation_messages(user_id, conv.id)
     messages = [{"role": m.role if m.role != "agent" else "assistant", "content": m.content} for m in msgs]
 
     return StreamingResponse(
-        stream_response(user_id, conv.id, messages, settings, settings.provider, settings.model),
+        loop.run(user_id, conv.id, messages, settings),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

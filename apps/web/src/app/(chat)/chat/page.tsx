@@ -9,6 +9,7 @@ import { ChatInput } from "@/components/chat/chat-input";
 import { useAuth } from "@/hooks/use-auth";
 import { useModelSelector } from "@/hooks/use-model-selector";
 import { streamChat } from "@/lib/chat/sse";
+import { setConversationCache } from "@/lib/chat/conversation-cache";
 import type { Message, MessageAttachment } from "@/types/chat";
 
 function createId(prefix: string) {
@@ -41,6 +42,8 @@ export default function NewChatPage() {
     let assistantAttachments: MessageAttachment[] = [];
     let assistantVisible = false;
     let createdConversationId = "";
+    let doneProvider: string | undefined;
+    let doneModel: string | undefined;
 
     setMessages((prev) => [...prev, userMessage]);
     setIsAgentTyping(true);
@@ -57,14 +60,18 @@ export default function NewChatPage() {
           }
 
           if (event === "error") {
-            const message = typeof data.message === "string" ? data.message : "Agent error";
+            const message = typeof data.message === "string" ? data.message : "An error occurred. Please try again.";
             toast.error(message);
+            if (assistantVisible) {
+              setMessages((prev) => prev.filter((msg) => msg.id !== assistantMessageId));
+              assistantVisible = false;
+            }
             return;
           }
 
           if (event === "done") {
-            const doneProvider = typeof data.provider === "string" ? data.provider : undefined;
-            const doneModel = typeof data.model === "string" ? data.model : undefined;
+            doneProvider = typeof data.provider === "string" ? data.provider : undefined;
+            doneModel = typeof data.model === "string" ? data.model : undefined;
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === assistantMessageId
@@ -126,6 +133,20 @@ export default function NewChatPage() {
       });
 
       if (createdConversationId) {
+        const finalMessages: Message[] = [
+          { ...userMessage, conversationId: createdConversationId },
+          {
+            id: assistantMessageId,
+            conversationId: createdConversationId,
+            role: "agent",
+            content: assistantContent,
+            attachments: assistantAttachments.length > 0 ? assistantAttachments : undefined,
+            createdAt: now,
+            provider: doneProvider,
+            model: doneModel,
+          },
+        ];
+        setConversationCache(createdConversationId, finalMessages, selectedProvider ?? undefined, selectedModel ?? undefined);
         router.replace(`/chat/${createdConversationId}`);
       }
     } catch (error) {

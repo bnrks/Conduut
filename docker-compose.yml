@@ -1,4 +1,29 @@
 services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: conduut-n8n
+    environment:
+      N8N_API_DISABLED: "false"
+      N8N_API_KEY: "conduut-dev-api-key"
+      N8N_ENCRYPTION_KEY: "conduut-dev-encryption-key-32chars!"
+      N8N_USER_MANAGEMENT_DISABLED: "true"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      WEBHOOK_URL: "http://localhost:5678"
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n-data:/home/node/.n8n
+    networks:
+      - app-net
+      - n8n-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5678/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
   agent:
     build:
       context: ./apps/agent
@@ -8,6 +33,11 @@ services:
       - ./apps/agent/serviceAccount.json:/app/serviceAccount.json:ro
     environment:
       CONDUUT_ENVIRONMENT: development
+      CONDUUT_N8N_URL: http://n8n:5678
+      CONDUUT_N8N_API_KEY: ***REMOVED***
+    depends_on:
+      n8n:
+        condition: service_healthy
     ports:
       - "8000:8000"
     healthcheck:
@@ -18,6 +48,7 @@ services:
       start_period: 5s
     networks:
       - app-net
+      - n8n-net
 
   web:
     build:
@@ -42,6 +73,14 @@ services:
     networks:
       - app-net
 
+volumes:
+  n8n-data:
+
 networks:
   app-net:
     name: conduut-app-net
+    driver_opts:
+      com.docker.network.driver.mtu: "1450"
+  n8n-net:
+    name: conduut-n8n-net
+    internal: true

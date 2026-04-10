@@ -16,3 +16,4 @@ __pycache__/
 
 # Copilot
 copilot-instructions.md
+apps/agent/serviceAccount.json

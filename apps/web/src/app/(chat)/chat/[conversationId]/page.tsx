@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { toast } from "sonner";
 import { MessageList } from "@/components/chat/message-list";
@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/chat/empty-state";
 import { useAuth } from "@/hooks/use-auth";
 import { useModelSelector } from "@/hooks/use-model-selector";
 import { streamChat } from "@/lib/chat/sse";
+import { popConversationCache } from "@/lib/chat/conversation-cache";
 import type { Conversation, Message, MessageAttachment } from "@/types/chat";
 
 interface ConversationDetailResponse extends Conversation {
@@ -27,10 +28,14 @@ export default function ConversationPage() {
   }, [params.conversationId]);
 
   const { user } = useAuth();
-  const [messages, setMessages] = useState<Message[]>([]);
+  const cachedData = useMemo(() => popConversationCache(conversationId), []);
+  const [messages, setMessages] = useState<Message[]>(() => cachedData?.messages ?? []);
+  const hasCachedMessages = useRef((cachedData?.messages?.length ?? 0) > 0);
+  const [lockedProvider, setLockedProvider] = useState<string | undefined>(cachedData?.provider);
+  const [lockedModel, setLockedModel] = useState<string | undefined>(cachedData?.model);
   const [inputValue, setInputValue] = useState("");
   const [isAgentTyping, setIsAgentTyping] = useState(false);
-  const { providers, selectedProvider, setSelectedProvider, models, selectedModel, setSelectedModel, loadingModels, isFavorite, toggleFavorite } = useModelSelector();
+  const { providers, isFavorite, toggleFavorite } = useModelSelector();
 
   useEffect(() => {
     const loadConversation = async () => {
@@ -50,7 +55,13 @@ export default function ConversationPage() {
       }
 
       const data = (await response.json()) as ConversationDetailResponse;
-      setMessages(data.messages || []);
+      setLockedProvider(data.provider);
+      setLockedModel(data.model);
+      if (!hasCachedMessages.current) {
+        // Use updater to avoid overwriting in-flight streaming messages
+        setMessages((prev) => (prev.length > 0 ? prev : (data.messages || [])));
+        hasCachedMessages.current = true;
+      }
     };
 
     void loadConversation();
@@ -81,11 +92,15 @@ export default function ConversationPage() {
     try {
       await streamChat({
         token,
-        body: { content, conversation_id: conversationId, provider: selectedProvider || undefined, model: selectedModel || undefined },
+        body: { content, conversation_id: conversationId, provider: lockedProvider, model: lockedModel },
         onEvent: ({ event, data }) => {
           if (event === "error") {
-            const message = typeof data.message === "string" ? data.message : "Agent error";
+            const message = typeof data.message === "string" ? data.message : "An error occurred. Please try again.";
             toast.error(message);
+            if (assistantVisible) {
+              setMessages((prev) => prev.filter((msg) => msg.id !== assistantMessageId));
+              assistantVisible = false;
+            }
             return;
           }
 
@@ -153,23 +168,26 @@ export default function ConversationPage() {
 
   return (
     <>
-      {messages.length === 0 ? (
-        <EmptyState onPromptClick={handlePromptClick} />
-      ) : (
-        <MessageList messages={messages} isAgentTyping={isAgentTyping} />
-      )}
+      <div className="flex flex-1 flex-col overflow-hidden">
+        {messages.length === 0 ? (
+          <EmptyState onPromptClick={handlePromptClick} />
+        ) : (
+          <MessageList messages={messages} isAgentTyping={isAgentTyping} />
+        )}
+      </div>
       <ChatInput
         value={inputValue}
         onChange={setInputValue}
         onSend={(content) => { void handleSend(content); }}
         disabled={!user}
         providers={providers}
-        selectedProvider={selectedProvider}
-        onProviderChange={setSelectedProvider}
-        models={models}
-        selectedModel={selectedModel}
-        onModelChange={setSelectedModel}
-        loadingModels={loadingModels}
+        selectedProvider={lockedProvider ?? null}
+        onProviderChange={() => {}}
+        models={lockedModel ? [{ id: lockedModel, name: lockedModel }] : []}
+        selectedModel={lockedModel ?? null}
+        onModelChange={() => {}}
+        loadingModels={false}
+        lockedModel={true}
         isFavorite={isFavorite}
         onToggleFavorite={(p, m) => void toggleFavorite(p, m)}
       />

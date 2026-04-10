@@ -36,6 +36,8 @@ async def get_conversation(conversation_id: str, request: Request):
         "message_count": conv.message_count,
         "created_at": conv.created_at,
         "updated_at": conv.updated_at,
+        "provider": conv.provider,
+        "model": conv.model,
         "messages": [
             {
                 "id": m.id,

@@ -22,4 +22,6 @@ export interface Conversation {
   lastMessageAt: string;
   messageCount: number;
   createdAt: string;
+  provider?: string;
+  model?: string;
 }
