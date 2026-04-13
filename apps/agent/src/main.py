@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import settings
+from src.registry import initialize_registry
 from src.routes import chat, conversations
 from src.routes import favorites as favorites_router
 from src.routes import settings as settings_router
@@ -24,6 +25,7 @@ log = structlog.get_logger()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("conduut_agent_starting", environment=settings.environment)
+    await initialize_registry(settings.n8n_url)
     yield
     log.info("conduut_agent_stopping")
 

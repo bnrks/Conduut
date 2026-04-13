@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "conduut-agent"
 version = "0.1.0"
@@ -13,6 +17,8 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "firebase-admin>=6.0.0",
 ]
+# n8n-registry local package — installed separately in Dockerfile / dev setup
+# pip install -e packages/n8n-registry
 
 [project.optional-dependencies]
 dev = [

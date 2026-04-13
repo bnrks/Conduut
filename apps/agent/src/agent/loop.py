@@ -12,38 +12,6 @@ from src.agent.tools import TOOL_DEFINITIONS, execute_tool
 
 log = structlog.get_logger()
 
-_NODE_TEMPLATES = (
-    "\nNode templates — use these exact shapes, adapt parameters as needed:\n\n"
-    "Schedule trigger (cron):\n"
-    '{"id":"s1","name":"Schedule Trigger","type":"n8n-nodes-base.scheduleTrigger",'  # noqa: E501
-    '"typeVersion":1,"position":[250,300],'
-    '"parameters":{"rule":{"interval":[{"field":"hours","hoursInterval":1}]}}}\n\n'  # noqa: E501
-    "Webhook trigger:\n"
-    '{"id":"w1","name":"Webhook","type":"n8n-nodes-base.webhook","typeVersion":2,'
-    '"position":[250,300],"parameters":{"path":"webhook","httpMethod":"POST"}}\n\n'  # noqa: E501
-    "HTTP Request:\n"
-    '{"id":"h1","name":"HTTP Request","type":"n8n-nodes-base.httpRequest","typeVersion":4,'  # noqa: E501
-    '"position":[500,300],"parameters":{"url":"https://api.example.com","method":"GET","options":{}}}\n\n'  # noqa: E501
-    "Set (assign/transform data):\n"
-    '{"id":"set1","name":"Set","type":"n8n-nodes-base.set","typeVersion":3,'
-    '"position":[500,300],"parameters":{"mode":"manual","assignments":{"assignments":'  # noqa: E501
-    '[{"id":"f1","name":"field","value":"={{ $json.input }}","type":"string"}]}}}\n\n'  # noqa: E501
-    "Gmail send email (requires Gmail credential):\n"
-    '{"id":"g1","name":"Send Email","type":"n8n-nodes-base.gmail","typeVersion":2,'
-    '"position":[750,300],"parameters":{"operation":"send","sendTo":"user@example.com",'  # noqa: E501
-    '"subject":"Subject","message":"<p>Body</p>","options":{}}}\n\n'
-    "Connections example (TriggerNode \u2192 ProcessNode \u2192 ActionNode):\n"
-    '{"TriggerNode":{"main":[[{"node":"ProcessNode","type":"main","index":0}]]},'
-    '"ProcessNode":{"main":[[{"node":"ActionNode","type":"main","index":0}]]}}\n\n'  # noqa: E501
-    "Rules:\n"
-    "- NEVER call create_workflow or update_workflow with an empty nodes array."
-    " Every workflow needs at least one trigger node.\n"
-    "- Always connect nodes via the connections object — disconnected nodes do nothing.\n"  # noqa: E501
-    "- If unsure of exact parameters, make a best-effort choice from the templates above"
-    " rather than leaving nodes empty.\n"
-    "- Position nodes left-to-right, 250px apart (x: 250, 500, 750, ...).\n"
-)
-
 SYSTEM_PROMPT = (
     "You are Conduut, an AI assistant that helps users build and manage n8n workflow"
     " automations.\n\n"
@@ -66,10 +34,27 @@ SYSTEM_PROMPT = (
     " delete it.\n"
     "- After acting, briefly tell the user what you did and what the workflow does.\n"
     "- If the user just wants to chat or ask questions, respond normally without using"
-    " tools.\n"
-) + _NODE_TEMPLATES
+    " tools.\n\n"
+    "Building workflows — REQUIRED process:\n"
+    "1. For any service you are not 100% certain about (Gmail, Slack, Discord, Notion,"
+    " Postgres, Airtable, etc.), call search_n8n_nodes first to find the exact type"
+    " string.\n"
+    "2. Then call get_node_schema for each node to get exact typeVersion, parameters,"
+    " credentials, and a ready-made exampleNode — use the exampleNode as a starting"
+    " point and adapt it.\n"
+    "3. Optionally call find_workflow_template to get a real working example to adapt.\n"
+    "4. Finally call create_workflow or update_workflow with the correct node types.\n"
+    "Never guess node type strings. Always look them up with search_n8n_nodes first.\n\n"
+    "Node rules:\n"
+    "- NEVER call create_workflow or update_workflow with an empty nodes array.\n"
+    "- Every workflow needs at least one trigger node"
+    " (scheduleTrigger, webhook, manualTrigger, etc.).\n"
+    "- Always connect nodes via the connections object — disconnected nodes do nothing.\n"
+    "- Position nodes left-to-right, 250px apart (x: 250, 500, 750, ...).\n"
+    "- Use the typeVersion from get_node_schema — never guess it.\n"
+)
 
-MAX_TOOL_ROUNDS = 5  # sonsuz döngü koruması
+MAX_TOOL_ROUNDS = 8  # search + schema + template + create + response için yeterli buffer
 
 
 def _sse(event: str, data: dict) -> str:

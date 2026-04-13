@@ -1,0 +1,2 @@
+# nodes.json is large (~14MB) and container-specific — generate with scripts/fetch_nodes.py
+nodes.json

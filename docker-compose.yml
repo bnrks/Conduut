@@ -26,8 +26,8 @@ services:
 
   agent:
     build:
-      context: ./apps/agent
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/agent/Dockerfile
     container_name: conduut-agent
     volumes:
       - ./apps/agent/serviceAccount.json:/app/serviceAccount.json:ro
