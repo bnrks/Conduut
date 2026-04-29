@@ -1,502 +1,310 @@
-"""n8n tool tanımları — LLM'e verilecek JSON schema'lar ve executor map."""
+"""Pydantic AI tool registration for n8n registry and workflow operations."""
 
-import json
 from typing import Any
 
+import httpx
 import structlog
+from pydantic_ai import Agent, ModelRetry, RunContext
 
 from src import n8n_client
+from src.agent.schemas import (
+    AgentDeps,
+    WorkflowNode,
+    WorkflowPreviewAttachment,
+    WorkflowPreviewData,
+    dump_workflow_nodes,
+)
+from src.agent.validation import (
+    normalize_workflow_connections,
+    normalize_workflow_nodes,
+    validate_workflow_payload,
+)
 from src.registry import registry
 
 log = structlog.get_logger()
 
-_CONNECTIONS_HINT = (
-    "Shape: { 'NodeA': { 'main': [[{ 'node': 'NodeB', 'type': 'main', 'index': 0 }]] } }. "
-    "For A→B→C: A connects to B, B connects to C. Leaf nodes are omitted."
+SYSTEM_PROMPT = (
+    "You are Conduut, an AI assistant that helps users build and manage n8n workflow"
+    " automations.\n\n"
+    "You have access to tools to create, manage, and run n8n workflows.\n"
+    "When a user asks you to automate something, use the tools to build it for them"
+    " immediately. Do not ask for permission before acting.\n\n"
+    "Guidelines:\n"
+    "- Act directly. When the user asks you to create, update, run, activate, deactivate,"
+    " or delete a workflow, use tools and then report what you did.\n"
+    "- CREATE vs UPDATE: Use create_workflow only for brand new workflows. If a workflow"
+    " already exists, first call get_workflow and then update_workflow with the complete"
+    " updated node and connection structure.\n"
+    "- Track workflow IDs in the conversation and use those IDs for later operations.\n"
+    "- If the user only wants to chat or ask questions, respond normally without tools.\n\n"
+    "Building workflows - required process:\n"
+    "1. For any service or node you are not 100% certain about, call search_n8n_nodes"
+    " before building the workflow.\n"
+    "2. Then call get_node_schema for each node to get exact type, typeVersion,"
+    " credentials, parameters, and exampleNode.\n"
+    "3. Optionally call find_workflow_template for complex workflows.\n"
+    "4. Finally call create_workflow or update_workflow.\n\n"
+    "Node rules:\n"
+    "- Never call create_workflow or update_workflow with an empty nodes array.\n"
+    "- Every workflow needs at least one trigger node such as manualTrigger,"
+    " scheduleTrigger, or webhook.\n"
+    "- Always connect nodes via the connections object; disconnected nodes do nothing.\n"
+    "- In connections, source keys and target node values must use node names, not IDs.\n"
+    "- Position nodes left-to-right, 250px apart.\n"
+    "- Use the exact node type and typeVersion from get_node_schema.\n"
+    "- For Edit Fields (Set), add fields through parameters.assignments.assignments. "
+    "Do not leave the assignments list empty. A message field should look like "
+    "{id: 'message', name: 'message', type: 'string', value: 'hello from Conduut'}."
 )
 
-_NODE_BUILD_HINT = (
-    "Each node must have: id (unique string), name (string), "
-    "type (exact n8n type string, e.g. 'n8n-nodes-base.gmail'), "
-    "typeVersion (integer — use the version from get_node_schema), "
-    "position ([x, y] starting at [250, 300], 250px apart), "
-    "parameters (object). "
-    "Use search_n8n_nodes + get_node_schema before building nodes you're unsure about."
-)
 
-# ---------------------------------------------------------------------------
-# Tool schema'lar (OpenAI function calling format — LiteLLM tüm provider'lara çevirir)
-# ---------------------------------------------------------------------------
-
-TOOL_DEFINITIONS = [
-    # --- Registry tools ---
-    {
-        "type": "function",
-        "function": {
-            "name": "search_n8n_nodes",
-            "description": (
-                "Search for n8n node types by keyword. "
-                "Use this before building a workflow when you need to know "
-                "the exact node type string for a service or action "
-                "(e.g. 'gmail', 'slack', 'postgres', 'discord'). "
-                "Returns a list of matching nodes with their type names and descriptions."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": (
-                            "Search keywords, e.g. 'gmail', 'send slack message', "
-                            "'postgres database', 'schedule trigger'"
-                        ),
-                    },
-                },
-                "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_node_schema",
-            "description": (
-                "Get the full parameter schema for a specific n8n node type. "
-                "Call this after search_n8n_nodes to get exact parameters, "
-                "typeVersion, credentials required, and an example node JSON. "
-                "Use the returned exampleNode as a starting point."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "node_type": {
-                        "type": "string",
-                        "description": (
-                            "The exact node type string from search results, "
-                            "e.g. 'n8n-nodes-base.gmail' or just 'gmail'"
-                        ),
-                    },
-                },
-                "required": ["node_type"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "find_workflow_template",
-            "description": (
-                "Find existing workflow templates similar to what the user wants. "
-                "Returns up to 3 real workflow examples you can adapt. "
-                "Use this for complex multi-node workflows to get a working starting point."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "description": {
-                        "type": "string",
-                        "description": (
-                            "Short description of the workflow, "
-                            "e.g. 'send gmail when form submitted', "
-                            "'daily report to slack', 'sync airtable to notion'"
-                        ),
-                    },
-                },
-                "required": ["description"],
-            },
-        },
-    },
-    # --- Workflow management tools ---
-    {
-        "type": "function",
-        "function": {
-            "name": "list_workflows",
-            "description": "Lists all n8n workflows belonging to the user.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_workflow",
-            "description": "Gets the full details and node structure of a specific workflow.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "workflow_id": {"type": "string", "description": "The workflow ID"},
-                },
-                "required": ["workflow_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "create_workflow",
-            "description": (
-                "Creates a new n8n workflow. "
-                "Use search_n8n_nodes + get_node_schema first to get correct node types. "
-                "nodes is a list of n8n node objects. "
-                "connections defines the data flow between nodes."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "Workflow name"},
-                    "nodes": {
-                        "type": "array",
-                        "description": "List of n8n node objects. " + _NODE_BUILD_HINT,
-                        "items": {"type": "object"},
-                    },
-                    "connections": {
-                        "type": "object",
-                        "description": "n8n connections object. " + _CONNECTIONS_HINT,
-                    },
-                },
-                "required": ["name", "nodes", "connections"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "update_workflow",
-            "description": (
-                "Updates an existing n8n workflow by replacing its nodes and connections. "
-                "Always call get_workflow first to retrieve the current structure, "
-                "then send the full updated version."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "workflow_id": {
-                        "type": "string",
-                        "description": "The ID of the workflow to update",
-                    },
-                    "name": {"type": "string", "description": "Workflow name (can be unchanged)"},
-                    "nodes": {
-                        "type": "array",
-                        "description": "Complete updated list of n8n node objects. "
-                        + _NODE_BUILD_HINT,
-                        "items": {"type": "object"},
-                    },
-                    "connections": {
-                        "type": "object",
-                        "description": "Complete updated n8n connections object. "
-                        + _CONNECTIONS_HINT,
-                    },
-                },
-                "required": ["workflow_id", "name", "nodes", "connections"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "activate_workflow",
-            "description": "Activates a workflow so it runs automatically on triggers.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "workflow_id": {"type": "string", "description": "The workflow ID to activate"},
-                },
-                "required": ["workflow_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "deactivate_workflow",
-            "description": "Deactivates a workflow, stopping it from running automatically.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "workflow_id": {
-                        "type": "string",
-                        "description": "The workflow ID to deactivate",
-                    },
-                },
-                "required": ["workflow_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "execute_workflow",
-            "description": (
-                "Activates a workflow so it runs automatically on its trigger. "
-                "For webhook-triggered workflows, also returns the webhook URL to call. "
-                "Use this when the user asks to 'run', 'execute', or 'start' a workflow."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "workflow_id": {"type": "string", "description": "The workflow ID to run"},
-                },
-                "required": ["workflow_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_executions",
-            "description": "Lists recent workflow execution history.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "workflow_id": {
-                        "type": "string",
-                        "description": "Filter by workflow ID (optional)",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delete_workflow",
-            "description": "Permanently deletes a workflow.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "workflow_id": {"type": "string", "description": "The workflow ID to delete"},
-                },
-                "required": ["workflow_id"],
-            },
-        },
-    },
-]
+def _safe_error(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        method = exc.request.method
+        path = exc.request.url.path
+        return f"n8n API returned {status} for {method} {path}"
+    return str(exc)[:300] or "Tool execution failed"
 
 
-# ---------------------------------------------------------------------------
-# Workflow JSON validator (Pydantic kullanmadan basit doğrulama)
-# ---------------------------------------------------------------------------
-
-
-def _validate_workflow_nodes(nodes: list[Any]) -> list[str]:
-    """
-    Workflow node listesini doğrular.
-    Sorun varsa hata mesajlarının listesini döner, temizse boş liste.
-    """
-    errors: list[str] = []
-    if not nodes:
-        errors.append("nodes array is empty — every workflow needs at least one trigger node")
-        return errors
-
-    seen_ids: set[str] = set()
-    has_trigger = False
-
-    for i, node in enumerate(nodes):
-        if not isinstance(node, dict):
-            errors.append(f"Node at index {i} is not an object")
-            continue
-
-        # Zorunlu alanlar
-        for field in ("id", "name", "type", "typeVersion", "position", "parameters"):
-            if field not in node:
-                errors.append(f"Node '{node.get('name', i)}' missing required field: {field}")
-
-        # id uniqueness
-        node_id = node.get("id")
-        if node_id:
-            if node_id in seen_ids:
-                errors.append(f"Duplicate node id: '{node_id}'")
-            seen_ids.add(node_id)
-
-        # type format
-        node_type = node.get("type", "")
-        if node_type and not (
-            node_type.startswith("n8n-nodes-base.")
-            or node_type.startswith("@n8n/")
-            or node_type.startswith("n8n-nodes-")
-        ):
-            errors.append(
-                f"Node '{node.get('name', i)}' has suspicious type '{node_type}' — "
-                "use search_n8n_nodes to find the correct type string"
-            )
-
-        # typeVersion
-        tv = node.get("typeVersion")
-        if tv is not None and not isinstance(tv, int):
-            errors.append(f"Node '{node.get('name', i)}' typeVersion must be an integer")
-
-        # position
-        pos = node.get("position")
-        if pos is not None and (not isinstance(pos, list) or len(pos) != 2):
-            errors.append(f"Node '{node.get('name', i)}' position must be [x, y]")
-
-        # Trigger detection
-        name_lower = str(node_type).lower()
-        if "trigger" in name_lower or node.get("webhookId"):
-            has_trigger = True
-
-    if not has_trigger:
-        errors.append(
-            "No trigger node found — workflow needs a trigger "
-            "(scheduleTrigger, webhook, manualTrigger, etc.)"
+def _validated_workflow(
+    nodes: list[WorkflowNode],
+    connections: dict[str, Any],
+) -> tuple[list[WorkflowNode], dict[str, Any]]:
+    normalized_nodes = normalize_workflow_nodes(nodes)
+    normalized_connections = normalize_workflow_connections(connections, normalized_nodes)
+    errors = validate_workflow_payload(normalized_nodes, normalized_connections)
+    if errors:
+        log.warning(
+            "workflow_validation_failed",
+            errors=errors,
+            node_types=[node.type for node in normalized_nodes],
+            connection_sources=list(normalized_connections.keys()),
         )
-
-    return errors
-
-
-# ---------------------------------------------------------------------------
-# Executor — tool adına göre doğru fonksiyonu çağırır
-# ---------------------------------------------------------------------------
+        details = "\n".join(f"- {error}" for error in errors)
+        raise ModelRetry(
+            f"Workflow validation failed. Fix these issues before retrying:\n{details}"
+        )
+    return normalized_nodes, normalized_connections
 
 
-async def execute_tool(name: str, arguments: str) -> tuple[str, dict | None]:
-    """Tool çağırır. (llm_için_json_string, opsiyonel_attachment) tuple'ı döner."""
-    try:
-        args: dict[str, Any] = json.loads(arguments) if arguments else {}
-    except json.JSONDecodeError:
-        return json.dumps({"error": "Invalid tool arguments"}), None
+def create_agent(model: Any) -> Agent[AgentDeps, str]:
+    """Create a Conduut Pydantic AI agent with all n8n tools registered."""
 
-    log.info("tool_call", tool=name, args=args)
+    agent: Agent[AgentDeps, str] = Agent(
+        model,
+        deps_type=AgentDeps,
+        output_type=str,
+        instructions=SYSTEM_PROMPT,
+        retries=2,
+        tool_timeout=60.0,
+    )
 
-    try:
-        match name:
-            # --- Registry tools ---
-            case "search_n8n_nodes":
-                query = args.get("query", "")
-                results = registry.search_nodes(query)
-                if not results:
-                    return json.dumps({
-                        "results": [],
-                        "hint": (
-                            "No nodes found for this query. "
-                            "Try a different keyword (e.g. service name, action type). "
-                            "Common types: scheduleTrigger, webhook, httpRequest, "
-                            "set, if, code, gmail, slack, googleSheets"
-                        ),
-                    }), None
-                return json.dumps({"results": results}), None
+    @agent.tool
+    async def search_n8n_nodes(ctx: RunContext[AgentDeps], query: str) -> dict[str, Any]:
+        """Search for n8n node types by keyword before building workflow nodes."""
 
-            case "get_node_schema":
-                node_type = args.get("node_type", "")
-                schema = registry.get_node_schema(node_type)
-                if not schema:
-                    return json.dumps({
-                        "error": f"Node type '{node_type}' not found in registry. "
-                        "Use search_n8n_nodes to find the correct type string."
-                    }), None
-                return json.dumps(schema), None
+        await ctx.deps.emit_tool_call("search_n8n_nodes")
+        results = registry.search_nodes(query)
+        if not results:
+            return {
+                "results": [],
+                "hint": (
+                    "No nodes found. Try service names or common nodes like "
+                    "scheduleTrigger, webhook, httpRequest, set, if, code, gmail, slack."
+                ),
+            }
+        return {"results": results}
 
-            case "find_workflow_template":
-                description = args.get("description", "")
-                results = registry.find_templates(description)
-                if not results:
-                    return json.dumps({
-                        "templates": [],
-                        "hint": "No matching templates found. Build the workflow from scratch.",
-                    }), None
-                return json.dumps({"templates": results}), None
+    @agent.tool
+    async def get_node_schema(ctx: RunContext[AgentDeps], node_type: str) -> dict[str, Any]:
+        """Get exact parameters, credentials, type, and typeVersion for an n8n node."""
 
-            # --- Workflow management ---
-            case "list_workflows":
-                workflows = await n8n_client.list_workflows()
-                return json.dumps(
-                    [{"id": w.id, "name": w.name, "active": w.active} for w in workflows]
-                ), None
-
-            case "get_workflow":
-                return json.dumps(await n8n_client.get_workflow(args["workflow_id"])), None
-
-            case "create_workflow":
-                nodes = args.get("nodes", [])
-                errors = _validate_workflow_nodes(nodes)
-                if errors:
-                    return json.dumps({
-                        "error": "Workflow validation failed — fix these issues before creating",
-                        "issues": errors,
-                    }), None
-
-                workflow = await n8n_client.create_workflow(
-                    name=args["name"],
-                    nodes=nodes,
-                    connections=args.get("connections", {}),
+        await ctx.deps.emit_tool_call("get_node_schema")
+        schema = registry.get_node_schema(node_type)
+        if not schema:
+            return {
+                "error": (
+                    f"Node type '{node_type}' was not found. Use search_n8n_nodes "
+                    "to find the exact n8n type string."
                 )
-                attachment = {
-                    "type": "workflow_preview",
-                    "data": {
-                        "id": workflow.id,
-                        "name": workflow.name,
-                        "nodeCount": len(nodes),
-                        "status": "active" if workflow.active else "inactive",
-                    },
-                }
-                return json.dumps(
-                    {"id": workflow.id, "name": workflow.name, "active": workflow.active}
-                ), attachment
+            }
+        return schema
 
-            case "update_workflow":
-                nodes = args.get("nodes", [])
-                errors = _validate_workflow_nodes(nodes)
-                if errors:
-                    return json.dumps({
-                        "error": "Workflow validation failed — fix these issues before updating",
-                        "issues": errors,
-                    }), None
+    @agent.tool
+    async def find_workflow_template(
+        ctx: RunContext[AgentDeps], description: str
+    ) -> dict[str, Any]:
+        """Find existing n8n workflow templates similar to the user's request."""
 
-                workflow = await n8n_client.update_workflow(
-                    workflow_id=args["workflow_id"],
-                    name=args["name"],
-                    nodes=nodes,
-                    connections=args.get("connections", {}),
+        await ctx.deps.emit_tool_call("find_workflow_template")
+        results = registry.find_templates(description)
+        if not results:
+            return {"templates": [], "hint": "No matching templates found. Build from scratch."}
+        return {"templates": results}
+
+    @agent.tool
+    async def list_workflows(ctx: RunContext[AgentDeps]) -> list[dict[str, Any]]:
+        """List all n8n workflows in the shared MVP instance."""
+
+        await ctx.deps.emit_tool_call("list_workflows")
+        try:
+            workflows = await n8n_client.list_workflows()
+        except Exception as exc:
+            log.error("tool_error", tool="list_workflows", error=str(exc))
+            return [{"error": _safe_error(exc)}]
+        return [{"id": w.id, "name": w.name, "active": w.active} for w in workflows]
+
+    @agent.tool
+    async def get_workflow(ctx: RunContext[AgentDeps], workflow_id: str) -> dict[str, Any]:
+        """Get the full details and node structure of a specific n8n workflow."""
+
+        await ctx.deps.emit_tool_call("get_workflow")
+        try:
+            return await n8n_client.get_workflow(workflow_id)
+        except Exception as exc:
+            log.error("tool_error", tool="get_workflow", error=str(exc))
+            return {"error": _safe_error(exc)}
+
+    @agent.tool
+    async def create_workflow(
+        ctx: RunContext[AgentDeps],
+        name: str,
+        nodes: list[WorkflowNode],
+        connections: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Create a new n8n workflow after validating nodes and connections."""
+
+        await ctx.deps.emit_tool_call("create_workflow")
+        validated_nodes, validated_connections = _validated_workflow(nodes, connections)
+        node_dicts = dump_workflow_nodes(validated_nodes)
+
+        try:
+            workflow = await n8n_client.create_workflow(
+                name=name,
+                nodes=node_dicts,
+                connections=validated_connections,
+            )
+        except Exception as exc:
+            log.error("tool_error", tool="create_workflow", error=str(exc))
+            return {"error": _safe_error(exc)}
+
+        await ctx.deps.emit_attachment(
+            WorkflowPreviewAttachment(
+                data=WorkflowPreviewData(
+                    id=workflow.id,
+                    name=workflow.name,
+                    nodeCount=len(node_dicts),
+                    status="active" if workflow.active else "inactive",
                 )
-                attachment = {
-                    "type": "workflow_preview",
-                    "data": {
-                        "id": workflow.id,
-                        "name": workflow.name,
-                        "nodeCount": len(nodes),
-                        "status": "active" if workflow.active else "inactive",
-                    },
-                }
-                return json.dumps(
-                    {"id": workflow.id, "name": workflow.name, "active": workflow.active}
-                ), attachment
+            )
+        )
+        return {"id": workflow.id, "name": workflow.name, "active": workflow.active}
 
-            case "activate_workflow":
-                await n8n_client.activate_workflow(args["workflow_id"])
-                return json.dumps({"success": True, "workflow_id": args["workflow_id"]}), None
+    @agent.tool
+    async def update_workflow(
+        ctx: RunContext[AgentDeps],
+        workflow_id: str,
+        name: str,
+        nodes: list[WorkflowNode],
+        connections: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Update an existing n8n workflow with the complete validated structure."""
 
-            case "deactivate_workflow":
-                await n8n_client.deactivate_workflow(args["workflow_id"])
-                return json.dumps({"success": True, "workflow_id": args["workflow_id"]}), None
+        await ctx.deps.emit_tool_call("update_workflow")
+        validated_nodes, validated_connections = _validated_workflow(nodes, connections)
+        node_dicts = dump_workflow_nodes(validated_nodes)
 
-            case "execute_workflow":
-                result = await n8n_client.execute_workflow(args["workflow_id"])
-                return json.dumps(result), None
+        try:
+            workflow = await n8n_client.update_workflow(
+                workflow_id=workflow_id,
+                name=name,
+                nodes=node_dicts,
+                connections=validated_connections,
+            )
+        except Exception as exc:
+            log.error("tool_error", tool="update_workflow", error=str(exc))
+            return {"error": _safe_error(exc)}
 
-            case "list_executions":
-                executions = await n8n_client.list_executions(
-                    workflow_id=args.get("workflow_id"),
-                    limit=10,
+        await ctx.deps.emit_attachment(
+            WorkflowPreviewAttachment(
+                data=WorkflowPreviewData(
+                    id=workflow.id,
+                    name=workflow.name,
+                    nodeCount=len(node_dicts),
+                    status="active" if workflow.active else "inactive",
                 )
-                return json.dumps(
-                    [
-                        {
-                            "id": e.id,
-                            "workflow_id": e.workflow_id,
-                            "status": e.status,
-                            "started_at": e.started_at,
-                        }
-                        for e in executions
-                    ]
-                ), None
+            )
+        )
+        return {"id": workflow.id, "name": workflow.name, "active": workflow.active}
 
-            case "delete_workflow":
-                await n8n_client.delete_workflow(args["workflow_id"])
-                return json.dumps({"success": True, "workflow_id": args["workflow_id"]}), None
+    @agent.tool
+    async def activate_workflow(ctx: RunContext[AgentDeps], workflow_id: str) -> dict[str, Any]:
+        """Activate a workflow so it runs automatically on its trigger."""
 
-            case _:
-                return json.dumps({"error": f"Unknown tool: {name}"}), None
+        await ctx.deps.emit_tool_call("activate_workflow")
+        try:
+            await n8n_client.activate_workflow(workflow_id)
+            return {"success": True, "workflow_id": workflow_id}
+        except Exception as exc:
+            log.error("tool_error", tool="activate_workflow", error=str(exc))
+            return {"error": _safe_error(exc)}
 
-    except Exception as e:
-        log.error("tool_error", tool=name, error=str(e))
-        return json.dumps({"error": str(e)}), None
+    @agent.tool
+    async def deactivate_workflow(ctx: RunContext[AgentDeps], workflow_id: str) -> dict[str, Any]:
+        """Deactivate a workflow so it stops running automatically."""
+
+        await ctx.deps.emit_tool_call("deactivate_workflow")
+        try:
+            await n8n_client.deactivate_workflow(workflow_id)
+            return {"success": True, "workflow_id": workflow_id}
+        except Exception as exc:
+            log.error("tool_error", tool="deactivate_workflow", error=str(exc))
+            return {"error": _safe_error(exc)}
+
+    @agent.tool
+    async def execute_workflow(ctx: RunContext[AgentDeps], workflow_id: str) -> dict[str, Any]:
+        """Activate a workflow and return trigger details such as webhook URL when available."""
+
+        await ctx.deps.emit_tool_call("execute_workflow")
+        try:
+            return await n8n_client.execute_workflow(workflow_id)
+        except Exception as exc:
+            log.error("tool_error", tool="execute_workflow", error=str(exc))
+            return {"error": _safe_error(exc)}
+
+    @agent.tool
+    async def list_executions(
+        ctx: RunContext[AgentDeps], workflow_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """List recent workflow execution history."""
+
+        await ctx.deps.emit_tool_call("list_executions")
+        try:
+            executions = await n8n_client.list_executions(workflow_id=workflow_id, limit=10)
+        except Exception as exc:
+            log.error("tool_error", tool="list_executions", error=str(exc))
+            return [{"error": _safe_error(exc)}]
+        return [
+            {
+                "id": e.id,
+                "workflow_id": e.workflow_id,
+                "status": e.status,
+                "started_at": e.started_at,
+            }
+            for e in executions
+        ]
+
+    @agent.tool
+    async def delete_workflow(ctx: RunContext[AgentDeps], workflow_id: str) -> dict[str, Any]:
+        """Permanently delete a workflow."""
+
+        await ctx.deps.emit_tool_call("delete_workflow")
+        try:
+            await n8n_client.delete_workflow(workflow_id)
+            return {"success": True, "workflow_id": workflow_id}
+        except Exception as exc:
+            log.error("tool_error", tool="delete_workflow", error=str(exc))
+            return {"error": _safe_error(exc)}
+
+    return agent

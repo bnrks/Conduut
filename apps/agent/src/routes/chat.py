@@ -6,7 +6,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from src import store
-from src.agent import loop
+from src.agent import runner
+from src.agent.provider_factory import UnsupportedProviderError, normalize_provider
 from src.auth import get_user_id
 
 log = structlog.get_logger()
@@ -36,11 +37,18 @@ async def chat_send(request: Request, body: ChatRequest):
         )  # noqa: E501
 
     # Provider/model override
-    if body.provider and body.provider != settings.provider:
-        conn = await store.get_provider(user_id, body.provider)
+    provider_override = None
+    if body.provider:
+        try:
+            provider_override = normalize_provider(body.provider)
+        except UnsupportedProviderError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if provider_override and provider_override != settings.provider:
+        conn = await store.get_provider(user_id, provider_override)
         if conn:
             settings = store.LLMSettings(
-                provider=body.provider,
+                provider=provider_override,
                 model=body.model or settings.model,
                 api_key=conn.api_key,
             )
@@ -62,7 +70,7 @@ async def chat_send(request: Request, body: ChatRequest):
     ]  # noqa: E501
 
     return StreamingResponse(
-        loop.run(user_id, conv.id, messages, settings),
+        runner.run(user_id, conv.id, messages, settings),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

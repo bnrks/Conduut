@@ -1,9 +1,14 @@
 import httpx
-import litellm
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from src import store
+from src.agent.provider_factory import (
+    UnsupportedProviderError,
+    classify_provider_error,
+    normalize_provider,
+    verify_provider_connection,
+)
 from src.auth import get_user_id
 
 _HARDCODED_MODELS: dict[str, list[dict]] = {
@@ -28,14 +33,6 @@ _OPENAI_COMPAT_BASE: dict[str, str] = {
     "groq": "https://api.groq.com/openai/v1",
 }
 
-_VERIFY_MODELS: dict[str, str] = {
-    "openai": "gpt-4o-mini",
-    "anthropic": "claude-haiku-4-5-20251001",
-    "google": "gemini/gemini-2.0-flash",
-    "groq": "groq/llama-3.1-8b-instant",
-    "openrouter": "openrouter/openai/gpt-4o-mini",
-}
-
 router = APIRouter()
 
 
@@ -54,6 +51,13 @@ def _providers_response(providers: list[store.ProviderConnection]) -> dict:
     return {"providers": [{"provider": p.provider, "masked_key": p.masked_key} for p in providers]}
 
 
+def _provider_or_422(provider: str) -> str:
+    try:
+        return normalize_provider(provider)
+    except UnsupportedProviderError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 # --- Active LLM Settings ---
 
 
@@ -69,8 +73,9 @@ async def get_settings(request: Request):
 @router.put("/settings/llm")
 async def save_settings(request: Request, body: LLMSettingsIn):
     user_id = get_user_id(request)
-    await store.save_llm_settings(user_id, body.provider, body.model, body.api_key)
-    return {"provider": body.provider, "model": body.model, "api_key_set": True}
+    provider = _provider_or_422(body.provider)
+    await store.save_llm_settings(user_id, provider, body.model, body.api_key)
+    return {"provider": provider, "model": body.model, "api_key_set": True}
 
 
 @router.delete("/settings/llm", status_code=204)
@@ -91,13 +96,15 @@ async def get_providers(request: Request):
 @router.put("/settings/llm/providers")
 async def add_provider(request: Request, body: ProviderIn):
     user_id = get_user_id(request)
-    providers = await store.save_provider(user_id, body.provider, body.api_key)
+    provider = _provider_or_422(body.provider)
+    providers = await store.save_provider(user_id, provider, body.api_key)
     return _providers_response(providers)
 
 
 @router.get("/settings/llm/providers/{provider}/models")
 async def get_provider_models(provider: str, request: Request):
     user_id = get_user_id(request)
+    provider = _provider_or_422(provider)
     conn = await store.get_provider(user_id, provider)
     if not conn:
         raise HTTPException(status_code=404, detail="Provider not found")
@@ -148,34 +155,22 @@ async def get_provider_models(provider: str, request: Request):
 @router.post("/settings/llm/providers/{provider}/verify")
 async def verify_provider(provider: str, request: Request):
     user_id = get_user_id(request)
+    provider = _provider_or_422(provider)
     conn = await store.get_provider(user_id, provider)
     if not conn:
         raise HTTPException(status_code=404, detail="Provider not found")
 
-    model = _VERIFY_MODELS.get(provider, f"{provider}/gpt-4o-mini")
     try:
-        await litellm.acompletion(
-            model=model,
-            messages=[{"role": "user", "content": "hi"}],
-            api_key=conn.api_key,
-            max_tokens=1,
-        )
+        await verify_provider_connection(provider, conn.api_key)
         return {"valid": True, "provider": provider}
-    except litellm.AuthenticationError:
-        return {"valid": False, "provider": provider, "error": "Invalid API key"}
-    except litellm.NotFoundError:
-        return {
-            "valid": False,
-            "provider": provider,
-            "error": "Model not found — key may still be valid",
-        }  # noqa: E501
     except Exception as e:
-        return {"valid": False, "provider": provider, "error": str(e)}
+        return {"valid": False, "provider": provider, "error": classify_provider_error(e)}
 
 
 @router.delete("/settings/llm/providers/{provider}")
 async def remove_provider(provider: str, request: Request):
     user_id = get_user_id(request)
+    provider = _provider_or_422(provider)
     providers = await store.delete_provider(user_id, provider)
     if providers is None:
         raise HTTPException(status_code=404, detail="Provider not found")

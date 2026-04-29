@@ -17,6 +17,11 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = ["pytest-cache-files-*"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+addopts = "-p no:cacheprovider"
+norecursedirs = ["pytest-cache-files-*"]

@@ -1,0 +1,70 @@
+"""Typed data structures used by the Pydantic AI agent runtime."""
+
+import asyncio
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class WorkflowNode(BaseModel):
+    """Minimal n8n node shape required before writing a workflow."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    name: str
+    type: str
+    typeVersion: int | float
+    position: list[int | float] = Field(min_length=2, max_length=2)
+    parameters: dict[str, Any]
+
+
+class WorkflowPreviewData(BaseModel):
+    id: str | None = None
+    name: str
+    nodeCount: int
+    status: Literal["active", "inactive"]
+
+
+class WorkflowPreviewAttachment(BaseModel):
+    type: Literal["workflow_preview"] = "workflow_preview"
+    data: WorkflowPreviewData
+
+
+AgentEvent = tuple[str, dict[str, Any]]
+
+
+@dataclass
+class AgentDeps:
+    """Runtime-only dependencies passed to Pydantic AI tools."""
+
+    user_id: str
+    conversation_id: str
+    event_queue: asyncio.Queue[AgentEvent]
+    attachments: list[dict[str, Any]] = field(default_factory=list)
+
+    async def emit_tool_call(self, tool: str) -> None:
+        await self.event_queue.put(
+            ("tool_call", {"tool": tool, "conversation_id": self.conversation_id})
+        )
+
+    async def emit_attachment(self, attachment: WorkflowPreviewAttachment) -> None:
+        payload = attachment.model_dump(exclude_none=True)
+        self.attachments.append(payload)
+        await self.event_queue.put(
+            (
+                "attachment",
+                {
+                    "conversation_id": self.conversation_id,
+                    "type": payload["type"],
+                    "data": payload["data"],
+                },
+            )
+        )
+
+
+def dump_workflow_nodes(nodes: list[WorkflowNode]) -> list[dict[str, Any]]:
+    """Convert typed workflow nodes back to n8n-compatible dictionaries."""
+
+    return [node.model_dump(exclude_none=True) for node in nodes]

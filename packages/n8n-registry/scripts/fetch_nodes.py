@@ -21,7 +21,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 # n8n container'ında nodes.json'un bulunduğu yol
 _N8N_NODES_PATH = "/home/node/.cache/n8n/public/types/nodes.json"
 

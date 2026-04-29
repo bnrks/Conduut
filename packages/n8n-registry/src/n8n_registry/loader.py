@@ -5,8 +5,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import httpx
-
 from .models import NodeInfo, WorkflowTemplate
 
 log = logging.getLogger(__name__)
@@ -57,12 +55,8 @@ def _extract_resources_and_ops(
     resources: list[str] = []
     operations: dict[str, list[str]] = {}
 
-    resource_prop = next(
-        (p for p in properties if p.get("name") == "resource"), None
-    )
-    operation_prop = next(
-        (p for p in properties if p.get("name") == "operation"), None
-    )
+    resource_prop = next((p for p in properties if p.get("name") == "resource"), None)
+    operation_prop = next((p for p in properties if p.get("name") == "operation"), None)
 
     if resource_prop:
         opts = resource_prop.get("options", [])
@@ -100,9 +94,7 @@ def _extract_key_properties(properties: list[dict]) -> list[dict]:
             "default": prop.get("default"),
         }
         if prop.get("type") == "options" and "options" in prop:
-            condensed["options"] = [
-                o.get("value") for o in prop["options"] if isinstance(o, dict)
-            ]
+            condensed["options"] = [o.get("value") for o in prop["options"] if isinstance(o, dict)]
         result.append(condensed)
         if len(result) >= 8:  # LLM için fazla detay olmasın
             break
@@ -237,11 +229,9 @@ def load_templates_from_file(path: str | Path) -> list[WorkflowTemplate]:
             # Fallback: workflow.nodes'tan çek
             if not node_types:
                 wf_nodes = item.get("workflow", {}).get("nodes", [])
-                node_types = list({
-                    n.get("type", "")
-                    for n in wf_nodes
-                    if isinstance(n, dict) and n.get("type")
-                })
+                node_types = list(
+                    {n.get("type", "") for n in wf_nodes if isinstance(n, dict) and n.get("type")}
+                )
 
             categories: list[str] = [
                 c.get("name", "") if isinstance(c, dict) else str(c)

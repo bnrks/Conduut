@@ -37,7 +37,7 @@ _NODE_ALIASES: dict[str, list[str]] = {
     "rest": ["httprequest"],
     # Code/logic
     "code": ["code"],
-    "function": ["code"],        # eski adı "Function", yeni adı "Code"
+    "function": ["code"],  # eski adı "Function", yeni adı "Code"
     "javascript": ["code"],
     "python": ["code"],
     "script": ["code"],
@@ -147,6 +147,46 @@ def get_node_by_type(
     return None
 
 
+def _set_node_example(node: NodeInfo) -> dict:
+    return {
+        "id": "node2",
+        "name": "Edit Fields (Set)",
+        "type": node.type_name,
+        "typeVersion": node.type_version,
+        "position": [750, 300],
+        "parameters": {
+            "mode": "manual",
+            "assignments": {
+                "assignments": [
+                    {
+                        "id": "message",
+                        "name": "message",
+                        "type": "string",
+                        "value": "hello from Conduut",
+                    }
+                ]
+            },
+            "options": {},
+        },
+    }
+
+
+def _apply_node_specific_guidance(schema: dict, node: NodeInfo) -> None:
+    if node.type_name == "n8n-nodes-base.set":
+        schema["usageHints"] = [
+            (
+                "To add or change fields with Edit Fields (Set), use "
+                "parameters.assignments.assignments. Each assignment needs id, name, type, "
+                "and value. Do not leave assignments empty."
+            ),
+            (
+                "For a field named message, use an assignment like "
+                "{id: 'message', name: 'message', type: 'string', value: 'hello'}."
+            ),
+        ]
+        schema["exampleNode"] = _set_node_example(node)
+
+
 def build_schema_response(node: NodeInfo) -> dict:
     """
     LLM'e gönderilecek kondanse şema dict'ini oluşturur.
@@ -202,6 +242,8 @@ def build_schema_response(node: NodeInfo) -> dict:
         "position": [500, 300],
         "parameters": example_params,
     }
+
+    _apply_node_specific_guidance(schema, node)
 
     return schema
 
