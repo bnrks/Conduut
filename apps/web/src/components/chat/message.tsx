@@ -10,6 +10,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Logo } from "@/components/ui/logo";
 import { WorkflowPreview, type WorkflowPreviewData } from "./workflow-preview";
 import { OAuthPrompt, type OAuthPromptData } from "./oauth-prompt";
+import { CredentialRequest, type CredentialRequestData } from "./credential-request";
 import { cn } from "@/lib/utils";
 import type { Message as MessageType } from "@/types/chat";
 
@@ -174,6 +175,15 @@ export function Message({ message }: MessageProps) {
               <OAuthPrompt
                 key={i}
                 data={attachment.data as unknown as OAuthPromptData}
+                className="w-full"
+              />
+            );
+          }
+          if (attachment.type === "credential_request") {
+            return (
+              <CredentialRequest
+                key={i}
+                data={attachment.data as unknown as CredentialRequestData}
                 className="w-full"
               />
             );

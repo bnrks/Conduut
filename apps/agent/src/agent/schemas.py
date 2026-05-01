@@ -32,6 +32,44 @@ class WorkflowPreviewAttachment(BaseModel):
     data: WorkflowPreviewData
 
 
+class CredentialField(BaseModel):
+    name: str
+    label: str
+    type: str = "string"
+    required: bool = False
+
+
+class CredentialRequestData(BaseModel):
+    workflowId: str
+    workflowName: str | None = None
+    nodeName: str
+    service: str
+    credentialType: str
+    credentialName: str
+    fields: list[CredentialField]
+    submitPath: str
+    description: str
+
+
+class CredentialRequestAttachment(BaseModel):
+    type: Literal["credential_request"] = "credential_request"
+    data: CredentialRequestData
+
+
+class WorkflowRunResultData(BaseModel):
+    workflowId: str
+    executionId: str | None = None
+    status: str
+    summary: str
+    failedNode: str | None = None
+    error: str | None = None
+    response: dict[str, Any] | None = None
+    outputs: list[dict[str, Any]] = Field(default_factory=list)
+
+
+AgentAttachment = WorkflowPreviewAttachment | CredentialRequestAttachment
+
+
 AgentEvent = tuple[str, dict[str, Any]]
 
 
@@ -49,8 +87,10 @@ class AgentDeps:
             ("tool_call", {"tool": tool, "conversation_id": self.conversation_id})
         )
 
-    async def emit_attachment(self, attachment: WorkflowPreviewAttachment) -> None:
+    async def emit_attachment(self, attachment: AgentAttachment) -> None:
         payload = attachment.model_dump(exclude_none=True)
+        if payload in self.attachments:
+            return
         self.attachments.append(payload)
         await self.event_queue.put(
             (

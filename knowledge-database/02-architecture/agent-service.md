@@ -74,7 +74,31 @@ anahtarlarini 422 ile reddeder.
 - Workflow CRUD: `list_workflows`, `get_workflow`, `create_workflow`,
   `update_workflow`, `delete_workflow`.
 - Runtime: `activate_workflow`, `deactivate_workflow`, `execute_workflow`,
-  `list_executions`.
+  `list_executions`, `analyze_workflow_readiness`, `inspect_execution`.
+
+Workflow readiness davranisi:
+
+- Workflow create/update sonrasi agent n8n'deki full workflow'u tekrar okur.
+- Registry schema'sinda credential isteyen node'larda credential bagli degilse
+  `credential_request` attachment emit eder.
+- Activate/run islemleri eksik credential varsa n8n'e side effect yapmadan
+  durur ve kullanicidan credential ister.
+- Ilk faz sadece API key/token credential formunu destekler; OAuth proxy henuz
+  yoktur.
+- `execute_workflow` Conduut'tan sadece webhook-triggered workflow'lari test
+  eder. Diger external trigger'lar icin agent hazirlik/credential durumunu
+  bildirir, gercek event gelmeden calistirdim demez.
+- Workflow run dogrulamasi agent icinde kalir. `execute_workflow` webhook
+  response ve n8n execution detayini okuyarak sonucu modele tool sonucu olarak
+  verir, fakat chat'e `workflow_run_result` attachment'i emit etmez. Kullanici
+  teknik kanit karti gormez; agent kanita dayanarak sade metin cevap uretir.
+
+Credential route'lari:
+
+- `GET /api/credentials`: kullanicinin Conduut uzerinden kaydedilen workflow
+  credential metadata listesini dondurur.
+- `POST /api/credentials`: API-key credential'i n8n public API'ye kaydeder,
+  ilgili workflow node'una attach eder ve Firestore'a metadata yazar.
 
 Workflow create/update oncesi `src/agent/validation.py` validator pipeline'i
 calisir:
@@ -123,8 +147,10 @@ tarafindan ignore edilir.
 
 ## n8n Client
 
-`src/n8n_client.py` tek shared n8n instance REST API'siyle konusur. Bu MVP
-davranisi [[adr-0001-shared-n8n-mvp]] icinde kayitlidir.
+`src/n8n_client.py` tek shared n8n instance REST API'siyle konusur. Workflow,
+credential ve execution islemlerinde n8n hata body'lerini koruyan typed hata
+sinifi kullanir. Bu MVP davranisi [[adr-0001-shared-n8n-mvp]] icinde
+kayitlidir.
 
 Ilgili notlar: [[n8n-registry]], [[chat-workflow-generation]],
 [[known-issues]].

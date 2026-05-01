@@ -4,9 +4,10 @@ import { cn } from "@/lib/utils";
 
 export interface TypingIndicatorProps {
   className?: string;
+  activity?: string;
 }
 
-export function TypingIndicator({ className }: TypingIndicatorProps) {
+export function TypingIndicator({ className, activity }: TypingIndicatorProps) {
   return (
     <div className={cn("flex items-center gap-2", className)}>
       <div className="flex items-center gap-1">
@@ -24,7 +25,7 @@ export function TypingIndicator({ className }: TypingIndicatorProps) {
         />
       </div>
       <span className="text-[13px] text-muted-foreground">
-        Conduut is thinking...
+        {activity || "Conduut is thinking..."}
       </span>
     </div>
   );

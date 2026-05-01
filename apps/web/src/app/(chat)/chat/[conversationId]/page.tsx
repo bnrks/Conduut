@@ -10,6 +10,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useModelSelector } from "@/hooks/use-model-selector";
 import { streamChat } from "@/lib/chat/sse";
 import { popConversationCache } from "@/lib/chat/conversation-cache";
+import { toolActivityLabel } from "@/lib/chat/tool-activity";
 import type { Conversation, Message, MessageAttachment } from "@/types/chat";
 
 interface ConversationDetailResponse extends Conversation {
@@ -28,13 +29,14 @@ export default function ConversationPage() {
   }, [params.conversationId]);
 
   const { user } = useAuth();
-  const cachedData = useMemo(() => popConversationCache(conversationId), []);
+  const cachedData = useMemo(() => popConversationCache(conversationId), [conversationId]);
   const [messages, setMessages] = useState<Message[]>(() => cachedData?.messages ?? []);
   const hasCachedMessages = useRef((cachedData?.messages?.length ?? 0) > 0);
   const [lockedProvider, setLockedProvider] = useState<string | undefined>(cachedData?.provider);
   const [lockedModel, setLockedModel] = useState<string | undefined>(cachedData?.model);
   const [inputValue, setInputValue] = useState("");
   const [isAgentTyping, setIsAgentTyping] = useState(false);
+  const [agentActivity, setAgentActivity] = useState<string | undefined>();
   const { providers, isFavorite, toggleFavorite } = useModelSelector();
 
   useEffect(() => {
@@ -87,6 +89,7 @@ export default function ConversationPage() {
 
     setMessages((prev) => [...prev, userMessage]);
     setIsAgentTyping(true);
+    setAgentActivity(undefined);
 
     try {
       await streamChat({
@@ -103,6 +106,7 @@ export default function ConversationPage() {
           if (event === "done") {
             const doneProvider = typeof data.provider === "string" ? data.provider : undefined;
             const doneModel = typeof data.model === "string" ? data.model : undefined;
+            setAgentActivity("Finishing the response");
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === assistantMessageId
@@ -110,6 +114,11 @@ export default function ConversationPage() {
                   : msg
               )
             );
+            return;
+          }
+
+          if (event === "tool_call") {
+            setAgentActivity(toolActivityLabel(data.tool));
             return;
           }
 
@@ -157,6 +166,7 @@ export default function ConversationPage() {
       toast.error(error instanceof Error ? error.message : "Message could not be sent.");
     } finally {
       setIsAgentTyping(false);
+      setAgentActivity(undefined);
     }
   };
 
@@ -170,7 +180,11 @@ export default function ConversationPage() {
         {messages.length === 0 ? (
           <EmptyState onPromptClick={handlePromptClick} />
         ) : (
-          <MessageList messages={messages} isAgentTyping={isAgentTyping} />
+          <MessageList
+            messages={messages}
+            isAgentTyping={isAgentTyping}
+            agentActivity={agentActivity}
+          />
         )}
       </div>
       <ChatInput

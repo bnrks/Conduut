@@ -12,7 +12,7 @@ export interface Message {
 }
 
 export interface MessageAttachment {
-  type: "workflow_preview" | "oauth_prompt";
+  type: "workflow_preview" | "oauth_prompt" | "credential_request";
   data: Record<string, unknown>;
 }
 

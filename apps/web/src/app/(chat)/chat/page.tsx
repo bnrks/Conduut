@@ -10,6 +10,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useModelSelector } from "@/hooks/use-model-selector";
 import { streamChat } from "@/lib/chat/sse";
 import { setConversationCache } from "@/lib/chat/conversation-cache";
+import { toolActivityLabel } from "@/lib/chat/tool-activity";
 import type { Message, MessageAttachment } from "@/types/chat";
 
 function createId(prefix: string) {
@@ -22,6 +23,7 @@ export default function NewChatPage() {
   const [inputValue, setInputValue] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isAgentTyping, setIsAgentTyping] = useState(false);
+  const [agentActivity, setAgentActivity] = useState<string | undefined>();
   const { providers, selectedProvider, setSelectedProvider, models, selectedModel, setSelectedModel, loadingModels, isFavorite, toggleFavorite } = useModelSelector();
 
   const handleSend = async (content: string) => {
@@ -46,6 +48,7 @@ export default function NewChatPage() {
 
     setMessages((prev) => [...prev, userMessage]);
     setIsAgentTyping(true);
+    setAgentActivity(undefined);
 
     try {
       await streamChat({
@@ -68,6 +71,7 @@ export default function NewChatPage() {
           if (event === "done") {
             doneProvider = typeof data.provider === "string" ? data.provider : undefined;
             doneModel = typeof data.model === "string" ? data.model : undefined;
+            setAgentActivity("Finishing the response");
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === assistantMessageId
@@ -75,6 +79,11 @@ export default function NewChatPage() {
                   : msg
               )
             );
+            return;
+          }
+
+          if (event === "tool_call") {
+            setAgentActivity(toolActivityLabel(data.tool));
             return;
           }
 
@@ -151,6 +160,7 @@ export default function NewChatPage() {
       toast.error(error instanceof Error ? error.message : "Message could not be sent.");
     } finally {
       setIsAgentTyping(false);
+      setAgentActivity(undefined);
     }
   };
 
@@ -164,7 +174,11 @@ export default function NewChatPage() {
         {messages.length === 0 ? (
           <EmptyState onPromptClick={handlePromptClick} />
         ) : (
-          <MessageList messages={messages} isAgentTyping={isAgentTyping} />
+          <MessageList
+            messages={messages}
+            isAgentTyping={isAgentTyping}
+            agentActivity={agentActivity}
+          />
         )}
       </div>
       <ChatInput

@@ -173,8 +173,9 @@ function ModelDropdown({
   }, []);
 
   useEffect(() => {
-    if (open) setTimeout(() => searchRef.current?.focus(), 50);
-    else setQuery("");
+    if (!open) return;
+    const timer = window.setTimeout(() => searchRef.current?.focus(), 50);
+    return () => window.clearTimeout(timer);
   }, [open]);
 
   const favoriteModels = models.filter((m) => isFavorite?.(provider, m.id));
@@ -202,7 +203,14 @@ function ModelDropdown({
     <div ref={ref} className="relative min-w-0">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          if (open) {
+            setOpen(false);
+            setQuery("");
+          } else {
+            setOpen(true);
+          }
+        }}
         className={cn(
           "flex items-center gap-1 rounded-md px-2 py-1",
           "text-[12px] transition-all duration-150",
