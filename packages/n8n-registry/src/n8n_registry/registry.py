@@ -110,13 +110,14 @@ class NodeRegistry:
     # Search API (tools.py tarafından çağrılır)
     # ------------------------------------------------------------------
 
-    def search_nodes(self, query: str, limit: int = 8) -> list[dict]:
+    def search_nodes(self, query: str, limit: int = 20) -> list[dict]:
         """
         Query'ye göre node arar.
         Her sonuç: {type, displayName, description, typeVersion, credentials, category, isTrigger}
         """
         if not self._nodes:
             return []
+        limit = max(1, min(limit, 50))
         results = search_nodes(query, self._nodes, limit=limit)
         return [
             {

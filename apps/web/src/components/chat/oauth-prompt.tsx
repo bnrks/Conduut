@@ -44,7 +44,7 @@ export function OAuthPrompt({
 
   const handleConnect = async () => {
     if (!user) {
-      toast.error("Please sign in before connecting Google Gmail.");
+      toast.error(`Please sign in before connecting ${data.service}.`);
       return;
     }
 

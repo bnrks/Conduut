@@ -63,6 +63,25 @@ connection referanslarini node `name` formatina normalize eder; model `1`/`2`
 veya `node1`/`node2` gibi id/sira alias'lari uretirse bunlar n8n'e yazilmadan
 once ilgili node adlarina cevrilir.
 
+Gmail on-demand workflow'lar icin yeni pilot yol `WorkflowSpec` IR + compiler
+akisini kullanir. Agent bu dar kapsamdaki istekte raw `nodes/connections` JSON
+yazmak yerine `create_workflow_from_spec` tool'una compact spec verir. Backend
+Webhook trigger, Gmail send node'u, nested connections ve `to`/`subject`/
+`message` runtime input schema'sini deterministic olarak uretir; sonuc yine
+mevcut validator, metadata ve readiness akislariyla islenir.
+
+WorkflowSpec compiler'in ikinci desteklenen ailesi Google Sheets satirlarini
+okuyup filtreleyen ve eslesen satirlar icin Gmail gonderen workflow'lardir.
+Agent spec'i su sira ile vermelidir: `read_sheet_rows`/`google_sheets`,
+`filter_items`/`core`, `send_email`/`gmail`. Gerekli is bilgisi gercek
+`document_id` veya `spreadsheet_id`, `sheet_name` veya `sheet_id`, filtre
+kolonu/operatoru/degeri, Gmail `to_field` ve subject/message kaynagidir. Bunlar
+eksikse agent placeholder uydurmaz, `request_user_input` ile sorar. Trigger
+on-demand olabilir veya gunluk schedule icin `frequency=daily` ve `time=HH:MM`
+tasiyabilir. Subject/message sabit metin icinde `{{...}}` n8n expression'i
+tasiyorsa compiler degeri `=` ile baslatir; tamamen sabit metinlerde expression
+modu acilmaz.
+
 ## Credential ve Run Capability
 
 Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
@@ -72,8 +91,9 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
   `workflow_metadata` altinda saklanir ve dashboard run formu tarafindan
   kullanilir. Gmail send workflow'larinda `to`, `subject`, `message` field'lari
   otomatik runtime input olarak infer edilir ve Gmail node parametreleri
-  `={{$json.to}}`, `={{$json.subject}}`, `={{$json.message}}` expression'larina
-  normalize edilir.
+  webhook trigger varsa `={{$json.body.to}}`, `={{$json.body.subject}}`,
+  `={{$json.body.message}}` expression'larina normalize edilir. Webhook yoksa
+  eski `$json.to`/`$json.subject`/`$json.message` formu korunur.
 - Credential isteyen node'larda eksik credential varsa chat'e
   `credential_request` attachment gelir.
 - Gmail message/thread/label `get` ve `getAll` operasyonlari ile send/reply
@@ -88,12 +108,22 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
   `test@example.com` gibi placeholder alicilar validation hatasi sayilir; gercek
   alici yoksa workflow n8n'e yazilmamalidir. Reusable Gmail workflow'larda
   runtime `input_schema` validation oncesi uygulanir; boylece `sendTo`,
-  `subject` ve `message` alanlari `={{$json.to}}`, `={{$json.subject}}` ve
-  `={{$json.message}}` expression'larina cevrildikten sonra validate edilir.
-  n8n expression recipient degerleri placeholder email kontrolunden gecirilmez.
-- Gmail read/send connection yoksa chat'e `oauth_prompt` attachment gelir. Web
-  component'i artik simule etmez; `/api/connections/google/gmail/authorize`
-  BFF route'undan gercek Google authorization URL alir.
+  `subject` ve `message` alanlari webhook output shape'ine gore expression'a
+  cevrildikten sonra validate edilir. n8n expression recipient degerleri
+  placeholder email kontrolunden gecirilmez.
+- Gmail read/send connection yoksa chat'e Gmail `oauth_prompt` attachment
+  gelir. Google Sheets node'u credential istediginde ve kullanicinin
+  `google_sheets` connection'i yoksa chat'e Sheets `oauth_prompt` attachment'i
+  gelir. Web component'i artik simule etmez; attachment `authorizePath`
+  degerine gore `/api/connections/google/gmail/authorize` veya
+  `/api/connections/google/sheets/authorize` BFF route'undan gercek Google
+  authorization URL alir.
+- Eksik credential/OAuth prompt emit edildikten sonra agent ayni turda workflow
+  calistirma veya aktive etme denemesi yapmamalidir. Tool sonucu
+  `missing_credentials > 0`, `ready=false` veya `waiting_for_user_input=true`
+  ise model durur ve kullanicidan gosterilen connection/credential aksiyonunu
+  tamamlamasini ister. Bu, workflow olusturulduktan sonra Sheets/Gmail
+  baglantisi beklenirken generic max-rounds hatasina dusmeyi engeller.
 - Gmail delete/mark-read/mark-unread gibi modify operasyonlari V1 read/send
   OAuth scope ile otomatik attach edilmez; bu durum eski credential request
   davranisina duser.
@@ -101,8 +131,10 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
   credential type listelenmesi tek basina yeterli sayilmaz. Agent actual node
   `parameters.authentication` ve schema default degerini kontrol eder; default
   `none` ise credential istemez.
-- Kullanici credential'i Conduut chat formundan girer; Next BFF
-  `/api/credentials` uzerinden agent'a proxy eder.
+- Kullanici API-key credential'i Conduut chat formundan girer; Next BFF
+  `/api/credentials` uzerinden agent'a proxy eder. Google Gmail ve Google
+  Sheets credential'lari icin chat formu yerine managed OAuth connection akisi
+  kullanilir.
 - Agent credential'i n8n'e kaydeder, workflow node'una attach eder ve
   Firestore'a credential metadata yazar.
 - `execute_workflow` ilk fazda sadece webhook-triggered workflow'lari
@@ -127,9 +159,19 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
   alici, mesaj metni, servis hesabi veya zamanlama gibi is bilgilerini sorduktan
   sonra kullanici sadece cevabi yazarsa agent onceki otomasyon istegini devam
   ettirebilir. Web tarafinda `user_input_request` normal chat balonu/karti
-  olarak gosterilmez; aktif son soru chat input'unun hemen ustunde koyu cevap
-  paneliyle gosterilir. Tool isterse 2-4 secenek de gonderebilir, kullanici
-  secenege tiklayarak, klavye ile secerek veya serbest cevap yazarak devam eder.
+  olarak gosterilmez; aktif son soru chat input wrapper'i icinde
+  `absolute bottom-full` overlay panel olarak gosterilir. Bu aktif soru ayni
+  anda mesaj listesinde kompakt ozet olarak render edilmez; sadece onceki
+  `user_input_request` attachment'lari mesaj listesinde kompakt ozet olarak
+  kalir, boylece clarification gecmisi kaybolmaz. Panel `missingFields`
+  listesini de render eder; bu yuzden agent `request_user_input` cagrilarinda
+  eksik alanlari insan tarafindan okunabilir etiketlerle doldurmalidir. Tool
+  isterse 2-4 secenek de gonderebilir, kullanici secenege tiklayarak, klavye ile
+  secerek veya serbest cevap yazarak devam eder.
+- Runner conversation history'ye, `user_input_request` sonrasi gelen user
+  mesajlari icin internal "bu mesaj onceki clarification'a cevap olabilir"
+  context'i ekler. Bu modelin cevaplanmis alanlari biriktirmesine ve ayni eksik
+  bilgiyi tekrar sormamasina yardim eder.
 - Acuity/Gmail/Slack gibi external event trigger'lari icin credential ve
   readiness saglanir; gercek external event gelmeden agent calistirdim demez.
 
@@ -143,15 +185,26 @@ workflowlar n8n'e yazilmadan once ModelRetry'a duser.
 Agent prompt'u onay sormadan aksiyon almayi ister. Yeni workflow icin
 `create_workflow`, mevcut workflow icin `get_workflow` sonra `update_workflow`
 kullanmalidir. Bilinmeyen node type'lar asla tahmin edilmemeli; once
-[[n8n-registry]] tool'lari kullanilmalidir.
+[[n8n-registry]] tool'lari kullanilmalidir. Node arama tool'u varsayilan 20
+sonuc dondurur ve agent yeterli adayi bulamazsa `limit` parametresini artirarak
+tekrar arayabilir; limit registry tarafinda 50 ile sinirlanir.
+
+On-demand Gmail send/reusable email workflow'larda ve Google Sheets satir
+filtreleme -> Gmail gonderim akisi isteyen workflow'larda agent once
+`create_workflow_from_spec` kullanmalidir. Bu compiler desteklemiyorsa raw
+`create_workflow` fallback'i korunur. Tek seferlik gonderimlerde gerekli runtime
+input tamamlandiktan sonra agent olusan on-demand workflow'u `execute_workflow`
+ile calistirabilir.
 
 Agent artik kullanicidan n8n, webhook, workflow veya node terminolojisi
 beklememelidir. "Su mail adreslerine bu paragrafi gonder" gibi dogal dil
 isteklerinde otomasyon niyetini kendisi cikarmali, teknik yapiyi kendisi
 secmeli ve sadece gerekli is bilgisi eksikse `request_user_input` tool'u ile
-tek, net bir soru sormalidir. Placeholder alici, fake URL veya ornek metin
-uydurmak yerine bu soru akisi kullanilir; tool cagrildiktan sonra ayni turda
-workflow yazilmaz.
+tek, net ve kendi basina anlasilir bir soru sormalidir. Soru genel kalacaksa
+`missing_fields` mutlaka "Google Sheet ID", "sheet/tab name", "kaydedilecek
+input alanlari" gibi acik etiketlerle doldurulmalidir. Placeholder alici, fake
+URL veya ornek metin uydurmak yerine bu soru akisi kullanilir; tool
+cagrildiktan sonra ayni turda workflow yazilmaz.
 
 Conduut'un chat'ten "sen tetikle/test et" diyerek calistirabilecegi on-demand
 workflow'larda agent kullaniciya webhook terimini soylemeden internal POST
@@ -159,6 +212,12 @@ Webhook trigger kullanmalidir. Daha once manual trigger ile olusmus workflow
 run isteginde otomatik Conduut webhook trigger'a cevrilir; boylece agent kendi
 olusturdugu basit Gmail gibi workflow'lari n8n editor butonuna muhtac kalmadan
 tetikleyebilir.
+
+Webhook trigger zaten varsa fakat `httpMethod` eksikse n8n bunu GET olarak
+kaydedebilir. Conduut run endpoint'i runtime input'u JSON body ile POST
+gonderdigi icin create/update normalizer artik webhook method'unu varsayilan
+POST yapar; mevcut eski workflow run edilirken de webhook POST kabul etmiyorsa
+workflow once POST'a patch'lenir.
 
 LiteLLM agent loop'u kaldirildi; provider cagrilari Pydantic AI native
 provider'lariyla yapilir. Mevcut SSE event sozlesmesi korunur:

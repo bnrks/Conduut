@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const response = await fetch(
-      `${getAgentBaseUrl()}/api/connections/google/gmail/callback`,
+      `${getAgentBaseUrl()}/api/connections/google/callback`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -71,16 +71,17 @@ export async function GET(request: NextRequest) {
       return redirectWithQuery(request, "/dashboard/connections", {
         error: await getErrorMessage(
           response,
-          "Google Gmail connection could not be completed."
+          "Google connection could not be completed."
         ),
       });
     }
 
     const payload = (await response.json().catch(() => null)) as {
+      connection?: { id?: string };
       returnTo?: string;
     } | null;
     return redirectWithQuery(request, safeReturnTo(payload?.returnTo), {
-      connected: "google",
+      connected: payload?.connection?.id ?? "google",
     });
   } catch {
     return redirectWithQuery(request, "/dashboard/connections", {

@@ -14,15 +14,36 @@ from src.config import settings
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
-GMAIL_CONNECTION_SCOPES = [
+GOOGLE_PROFILE_SCOPES = [
     "openid",
     "email",
     "profile",
+]
+GMAIL_CONNECTION_SCOPES = [
+    *GOOGLE_PROFILE_SCOPES,
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.readonly",
 ]
+GOOGLE_SHEETS_CONNECTION_SCOPES = [
+    *GOOGLE_PROFILE_SCOPES,
+    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive.metadata",
+]
 
 GMAIL_SEND_SCOPES = GMAIL_CONNECTION_SCOPES
+GOOGLE_SHEETS_SCOPES = GOOGLE_SHEETS_CONNECTION_SCOPES
+
+_GOOGLE_CONNECTION_SCOPES = {
+    "gmail": GMAIL_CONNECTION_SCOPES,
+    "sheets": GOOGLE_SHEETS_CONNECTION_SCOPES,
+}
+
+_GOOGLE_SHEETS_N8N_SCOPES = [
+    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive.metadata",
+]
 
 
 class GoogleOAuthConfigError(RuntimeError):
@@ -72,13 +93,20 @@ def safe_return_to(value: str | None) -> str:
     return value
 
 
-def authorization_url(*, state: str, code_verifier: str) -> str:
+def connection_scopes(service: str) -> list[str]:
+    scopes = _GOOGLE_CONNECTION_SCOPES.get(service)
+    if not scopes:
+        raise GoogleOAuthConfigError(f"Unsupported Google service: {service}.")
+    return scopes
+
+
+def authorization_url(*, state: str, code_verifier: str, service: str = "gmail") -> str:
     ensure_google_oauth_configured()
     params = {
         "client_id": settings.google_oauth_client_id,
         "redirect_uri": redirect_uri(),
         "response_type": "code",
-        "scope": " ".join(GMAIL_CONNECTION_SCOPES),
+        "scope": " ".join(connection_scopes(service)),
         "access_type": "offline",
         "prompt": "consent",
         "include_granted_scopes": "true",
@@ -115,11 +143,15 @@ async def fetch_userinfo(access_token: str) -> dict[str, Any]:
     return response.json()
 
 
-def n8n_oauth_token_data(token_response: dict[str, Any]) -> dict[str, Any]:
+def n8n_oauth_token_data(
+    token_response: dict[str, Any],
+    *,
+    default_scopes: list[str] | None = None,
+) -> dict[str, Any]:
     access_token = str(token_response.get("access_token") or "")
     refresh_token = str(token_response.get("refresh_token") or "")
     token_type = str(token_response.get("token_type") or "Bearer")
-    scope = str(token_response.get("scope") or " ".join(GMAIL_CONNECTION_SCOPES))
+    scope = str(token_response.get("scope") or " ".join(default_scopes or GMAIL_CONNECTION_SCOPES))
     expires_in = token_response.get("expires_in")
 
     data: dict[str, Any] = {
@@ -143,5 +175,22 @@ def n8n_gmail_credential_data(token_response: dict[str, Any]) -> dict[str, Any]:
         "clientSecret": settings.google_oauth_client_secret,
         "sendAdditionalBodyProperties": False,
         "additionalBodyProperties": {},
-        "oauthTokenData": n8n_oauth_token_data(token_response),
+        "oauthTokenData": n8n_oauth_token_data(
+            token_response,
+            default_scopes=GMAIL_CONNECTION_SCOPES,
+        ),
+    }
+
+
+def n8n_google_sheets_credential_data(token_response: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "serverUrl": "https://accounts.google.com",
+        "clientId": settings.google_oauth_client_id,
+        "clientSecret": settings.google_oauth_client_secret,
+        "sendAdditionalBodyProperties": False,
+        "additionalBodyProperties": {},
+        "oauthTokenData": n8n_oauth_token_data(
+            token_response,
+            default_scopes=GOOGLE_SHEETS_CONNECTION_SCOPES,
+        ),
     }

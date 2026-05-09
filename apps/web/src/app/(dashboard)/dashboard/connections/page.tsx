@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Mail, Plus, RefreshCw } from "lucide-react";
+import { Mail, Plus, RefreshCw, Table2 } from "lucide-react";
 import { toast } from "sonner";
 import { ConnectionCard } from "@/components/dashboard/connection-card";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,16 @@ const AVAILABLE_SERVICES: AvailableService[] = [
     description: "Read and send Gmail messages from workflows",
     category: "Email",
     connectionId: "google_gmail",
+    authorizePath: "/api/connections/google/gmail/authorize",
+  },
+  {
+    name: "Google Sheets",
+    slug: "google-sheets",
+    icon: "google",
+    description: "Read spreadsheet rows from workflows",
+    category: "Data",
+    connectionId: "google_sheets",
+    authorizePath: "/api/connections/google/sheets/authorize",
   },
 ];
 
@@ -52,6 +62,13 @@ export default function ConnectionsPage() {
   const connectedById = useMemo(
     () => new Map(connections.map((connection) => [connection.id, connection])),
     [connections]
+  );
+  const serviceByConnectionId = useMemo(
+    () =>
+      new Map(
+        AVAILABLE_SERVICES.map((service) => [service.connectionId, service])
+      ),
+    []
   );
 
   const loadConnections = useCallback(async () => {
@@ -95,8 +112,10 @@ export default function ConnectionsPage() {
     const connected = params.get("connected");
     const error = params.get("error");
 
-    if (connected === "google") {
-      toast.success("Google Gmail connected.");
+    if (connected) {
+      const serviceName =
+        serviceByConnectionId.get(connected)?.name ?? "Google service";
+      toast.success(`${serviceName} connected.`);
       void loadConnections();
     }
     if (error) {
@@ -106,18 +125,18 @@ export default function ConnectionsPage() {
     if (connected || error) {
       window.history.replaceState(null, "", window.location.pathname);
     }
-  }, [loadConnections]);
+  }, [loadConnections, serviceByConnectionId]);
 
-  const startGoogleConnect = async () => {
+  const startGoogleConnect = async (service: AvailableService) => {
     if (!user) {
-      toast.error("Please sign in before connecting Google Gmail.");
+      toast.error(`Please sign in before connecting ${service.name}.`);
       return;
     }
 
-    setConnectingService("google-gmail");
+    setConnectingService(service.slug);
     try {
       const token = await user.getIdToken();
-      const response = await fetch("/api/connections/google/gmail/authorize", {
+      const response = await fetch(service.authorizePath, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -198,7 +217,10 @@ export default function ConnectionsPage() {
                 key={connection.id}
                 connection={connection}
                 onDisconnect={(conn) => void disconnectConnection(conn)}
-                onReconnect={() => void startGoogleConnect()}
+                onReconnect={(conn) => {
+                  const service = serviceByConnectionId.get(conn.id);
+                  if (service) void startGoogleConnect(service);
+                }}
                 isBusy={busyConnectionId === connection.id}
               />
             ))}
@@ -214,7 +236,7 @@ export default function ConnectionsPage() {
                   No connected services
                 </p>
                 <p className="text-[13px] text-muted-foreground">
-                  Connect Google Gmail to run email workflows.
+                  Connect Google services to run workflows.
                 </p>
               </div>
             </CardContent>
@@ -232,6 +254,7 @@ export default function ConnectionsPage() {
             const colorClass =
               SERVICE_COLORS[service.icon] ?? "bg-conduut-50 text-conduut-700";
             const isBusy = connectingService === service.slug;
+            const Icon = service.slug === "google-sheets" ? Table2 : Mail;
 
             return (
               <Card key={service.slug}>
@@ -243,7 +266,7 @@ export default function ConnectionsPage() {
                         colorClass
                       )}
                     >
-                      <Mail className="h-5 w-5" />
+                      <Icon className="h-5 w-5" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-[14px] font-medium text-foreground">
@@ -257,7 +280,7 @@ export default function ConnectionsPage() {
                       size="sm"
                       variant={existingConnection ? "outline" : "default"}
                       className="h-7 text-[12px] px-3 shrink-0"
-                      onClick={() => void startGoogleConnect()}
+                      onClick={() => void startGoogleConnect(service)}
                       disabled={isBusy}
                     >
                       {isBusy ? (

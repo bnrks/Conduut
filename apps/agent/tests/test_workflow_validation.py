@@ -36,6 +36,11 @@ SCHEMAS = {
         "typeVersion": 2.1,
         "isTrigger": False,
     },
+    "n8n-nodes-base.googleSheets": {
+        "type": "n8n-nodes-base.googleSheets",
+        "typeVersion": 4.7,
+        "isTrigger": False,
+    },
 }
 
 
@@ -222,6 +227,28 @@ def test_normalize_workflow_nodes_maps_gmail_send_alias_parameters():
     assert normalized[2].parameters["message"] == "Message body"
     assert "toEmail" not in normalized[2].parameters
     assert "bodyContent" not in normalized[2].parameters
+
+
+def test_normalize_workflow_nodes_rewrites_google_sheets_append_resource_to_sheet():
+    nodes = valid_nodes()
+    nodes.append(
+        {
+            "id": "sheets",
+            "name": "Google Sheets",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.7,
+            "position": [750, 300],
+            "parameters": {
+                "resource": "spreadsheet",
+                "operation": "append",
+                "authentication": "oAuth2",
+            },
+        }
+    )
+
+    normalized = normalize_workflow_nodes(nodes, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+
+    assert normalized[2].parameters["resource"] == "sheet"
 
 
 def test_gmail_send_placeholder_recipient_fails_validation():

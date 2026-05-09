@@ -14,6 +14,29 @@ router = APIRouter()
 
 GOOGLE_GMAIL_CONNECTION_ID = "google_gmail"
 GOOGLE_GMAIL_CREDENTIAL_TYPE = "gmailOAuth2"
+GOOGLE_SHEETS_CONNECTION_ID = "google_sheets"
+GOOGLE_SHEETS_CREDENTIAL_TYPE = "googleSheetsOAuth2Api"
+
+GOOGLE_CONNECTIONS: dict[str, dict[str, Any]] = {
+    "gmail": {
+        "connection_id": GOOGLE_GMAIL_CONNECTION_ID,
+        "credential_type": GOOGLE_GMAIL_CREDENTIAL_TYPE,
+        "service": "gmail",
+        "service_name": "Google Gmail",
+        "credential_prefix": "Google Gmail",
+        "scopes": google.GMAIL_CONNECTION_SCOPES,
+        "credential_data": google.n8n_gmail_credential_data,
+    },
+    "sheets": {
+        "connection_id": GOOGLE_SHEETS_CONNECTION_ID,
+        "credential_type": GOOGLE_SHEETS_CREDENTIAL_TYPE,
+        "service": "sheets",
+        "service_name": "Google Sheets",
+        "credential_prefix": "Google Sheets",
+        "scopes": google.GOOGLE_SHEETS_CONNECTION_SCOPES,
+        "credential_data": google.n8n_google_sheets_credential_data,
+    },
+}
 
 
 class AuthorizeIn(BaseModel):
@@ -26,8 +49,13 @@ class GoogleCallbackIn(BaseModel):
 
 
 def _connection_payload(connection: store.AppConnection) -> dict[str, Any]:
-    service_name = (
-        "Google Gmail" if connection.id == GOOGLE_GMAIL_CONNECTION_ID else connection.service
+    service_name = next(
+        (
+            config["service_name"]
+            for config in GOOGLE_CONNECTIONS.values()
+            if config["connection_id"] == connection.id
+        ),
+        connection.service,
     )
     return {
         "id": connection.id,
@@ -42,6 +70,13 @@ def _connection_payload(connection: store.AppConnection) -> dict[str, Any]:
         "updatedAt": connection.updated_at,
         "scopes": connection.scopes,
     }
+
+
+def _google_connection_config(service: str) -> dict[str, Any]:
+    config = GOOGLE_CONNECTIONS.get(service)
+    if not config:
+        raise HTTPException(status_code=404, detail={"message": "Unsupported Google service."})
+    return config
 
 
 def _oauth_http_error(exc: httpx.HTTPStatusError, fallback: str) -> HTTPException:
@@ -67,9 +102,9 @@ async def list_connections(request: Request):
     return {"connections": [_connection_payload(item) for item in connections]}
 
 
-@router.post("/connections/google/gmail/authorize")
-async def authorize_google_gmail(request: Request, body: AuthorizeIn):
+async def _authorize_google_service(request: Request, body: AuthorizeIn, service: str):
     user_id = get_user_id(request)
+    config = _google_connection_config(service)
     try:
         google.ensure_google_oauth_configured()
         state = google.generate_state()
@@ -78,22 +113,37 @@ async def authorize_google_gmail(request: Request, body: AuthorizeIn):
             state,
             user_id=user_id,
             provider="google",
-            service="gmail",
+            service=config["service"],
             code_verifier=code_verifier,
             return_to=google.safe_return_to(body.return_to),
             expires_at=google.expires_at(),
         )
         return {
-            "authorizationUrl": google.authorization_url(state=state, code_verifier=code_verifier)
+            "authorizationUrl": google.authorization_url(
+                state=state,
+                code_verifier=code_verifier,
+                service=config["service"],
+            )
         }
     except google.GoogleOAuthConfigError as exc:
         raise HTTPException(status_code=503, detail={"message": str(exc)}) from exc
 
 
-@router.post("/connections/google/gmail/callback")
-async def google_gmail_callback(body: GoogleCallbackIn):
+@router.post("/connections/google/gmail/authorize")
+async def authorize_google_gmail(request: Request, body: AuthorizeIn):
+    return await _authorize_google_service(request, body, "gmail")
+
+
+@router.post("/connections/google/sheets/authorize")
+async def authorize_google_sheets(request: Request, body: AuthorizeIn):
+    return await _authorize_google_service(request, body, "sheets")
+
+
+async def _google_callback(body: GoogleCallbackIn, *, expected_service: str | None = None):
     state = await store.get_oauth_state(body.state)
-    if state is None or state.provider != "google" or state.service != "gmail":
+    if state is None or state.provider != "google":
+        raise HTTPException(status_code=400, detail={"message": "Invalid OAuth state."})
+    if expected_service and state.service != expected_service:
         raise HTTPException(status_code=400, detail={"message": "Invalid OAuth state."})
     if state.used:
         raise HTTPException(
@@ -102,6 +152,7 @@ async def google_gmail_callback(body: GoogleCallbackIn):
     if google.is_expired(state.expires_at):
         raise HTTPException(status_code=400, detail={"message": "OAuth state has expired."})
 
+    config = _google_connection_config(state.service)
     await store.mark_oauth_state_used(state.id)
 
     try:
@@ -135,27 +186,29 @@ async def google_gmail_callback(body: GoogleCallbackIn):
             detail={"message": "Google account profile did not include email/sub."},
         )
 
-    existing = await store.get_connection(state.user_id, GOOGLE_GMAIL_CONNECTION_ID)
-    credential_name = f"Google Gmail - {account_email} - Conduut"
-    credential_data = google.n8n_gmail_credential_data(token_response)
+    connection_id = config["connection_id"]
+    credential_type = config["credential_type"]
+    credential_name = f"{config['credential_prefix']} - {account_email} - Conduut"
+    credential_data = config["credential_data"](token_response)
+    existing = await store.get_connection(state.user_id, connection_id)
 
     try:
         credential = await n8n_client.create_credential(
             credential_name,
-            GOOGLE_GMAIL_CREDENTIAL_TYPE,
+            credential_type,
             credential_data,
         )
         connection = await store.save_connection(
             state.user_id,
-            GOOGLE_GMAIL_CONNECTION_ID,
+            connection_id,
             provider="google",
-            service="gmail",
+            service=config["service"],
             account_email=account_email,
             google_sub=google_sub,
-            credential_type=GOOGLE_GMAIL_CREDENTIAL_TYPE,
+            credential_type=credential_type,
             n8n_credential_id=credential.id,
             n8n_credential_name=credential.name,
-            scopes=google.GMAIL_CONNECTION_SCOPES,
+            scopes=config["scopes"],
         )
     except n8n_client.N8nApiError as exc:
         raise HTTPException(status_code=exc.status_code, detail={"message": exc.message}) from exc
@@ -177,6 +230,21 @@ async def google_gmail_callback(body: GoogleCallbackIn):
         "connection": _connection_payload(connection),
         "returnTo": state.return_to,
     }
+
+
+@router.post("/connections/google/callback")
+async def google_callback(body: GoogleCallbackIn):
+    return await _google_callback(body)
+
+
+@router.post("/connections/google/gmail/callback")
+async def google_gmail_callback(body: GoogleCallbackIn):
+    return await _google_callback(body, expected_service="gmail")
+
+
+@router.post("/connections/google/sheets/callback")
+async def google_sheets_callback(body: GoogleCallbackIn):
+    return await _google_callback(body, expected_service="sheets")
 
 
 @router.delete("/connections/{connection_id}")

@@ -16,6 +16,7 @@ import type { Message as MessageType } from "@/types/chat";
 
 export interface MessageProps {
   message: MessageType;
+  hideInputRequests?: boolean;
 }
 
 function formatTime(dateStr: string) {
@@ -99,9 +100,45 @@ function MarkdownContent({ content }: { content: string }) {
   );
 }
 
-export function Message({ message }: MessageProps) {
+function UserInputSummary({ data }: { data: Record<string, unknown> }) {
+  const question = typeof data.question === "string" ? data.question : "Conduut asked a question";
+  const missingFields = Array.isArray(data.missingFields)
+    ? data.missingFields
+        .filter((field): field is string => typeof field === "string" && field.trim().length > 0)
+        .map((field) => field.trim())
+    : [];
+
+  return (
+    <div className="mt-1 rounded-lg border border-border bg-muted/40 px-3 py-2 text-[13px] text-muted-foreground">
+      <div className="flex items-start gap-2">
+        <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-conduut-500" />
+        <div className="min-w-0">
+          <p className="font-medium text-foreground">Conduut asked for details</p>
+          <p className="line-clamp-2 break-words">{question}</p>
+          {missingFields.length > 0 && (
+            <p className="mt-1 truncate">
+              Needed: {missingFields.join(", ")}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function Message({ message, hideInputRequests = false }: MessageProps) {
   const [showTimestamp, setShowTimestamp] = useState(false);
   const isUser = message.role === "user";
+  const inputRequestAttachments =
+    message.attachments?.filter((attachment) => attachment.type === "user_input_request") ?? [];
+  const visibleAttachments =
+    message.attachments?.filter((attachment) => attachment.type !== "user_input_request") ?? [];
+  const inputRequests = hideInputRequests ? [] : inputRequestAttachments;
+  const hasText = message.content.trim().length > 0 && inputRequestAttachments.length === 0;
+
+  if (!hasText && inputRequests.length === 0 && visibleAttachments.length === 0) {
+    return null;
+  }
 
   return (
     <motion.div
@@ -123,44 +160,50 @@ export function Message({ message }: MessageProps) {
 
       {/* Bubble + attachments */}
       <div className={cn("flex flex-col max-w-[75%]", isUser ? "items-end" : "items-start")}>
-        <div className="relative">
-          <div
-            className={cn(
-              "px-4 py-2.5 text-[15px] leading-relaxed break-words",
-              isUser
-                ? "bg-conduut-50 text-foreground rounded-2xl rounded-br-md whitespace-pre-wrap"
-                : "bg-card border border-border text-foreground rounded-2xl rounded-bl-md"
-            )}
-          >
-            {isUser ? message.content : <MarkdownContent content={message.content} />}
-          </div>
+        {hasText && (
+          <div className="relative">
+            <div
+              className={cn(
+                "px-4 py-2.5 text-[15px] leading-relaxed break-words",
+                isUser
+                  ? "bg-conduut-50 text-foreground rounded-2xl rounded-br-md whitespace-pre-wrap"
+                  : "bg-card border border-border text-foreground rounded-2xl rounded-bl-md"
+              )}
+            >
+              {isUser ? message.content : <MarkdownContent content={message.content} />}
+            </div>
 
-          {/* Timestamp + model info on hover */}
-          <div
-            className={cn(
-              "absolute -bottom-5 flex items-center gap-1.5 whitespace-nowrap transition-opacity duration-150",
-              isUser ? "right-0" : "left-0",
-              showTimestamp ? "opacity-100" : "opacity-0"
-            )}
-          >
-            {!isUser && message.model && (
-              <span className="text-[11px] text-muted-foreground/70">
-                {message.provider && <span className="font-medium">{message.provider}</span>}
-                {message.provider && message.model && <span className="mx-0.5">/</span>}
-                {message.model}
+            {/* Timestamp + model info on hover */}
+            <div
+              className={cn(
+                "absolute -bottom-5 flex items-center gap-1.5 whitespace-nowrap transition-opacity duration-150",
+                isUser ? "right-0" : "left-0",
+                showTimestamp ? "opacity-100" : "opacity-0"
+              )}
+            >
+              {!isUser && message.model && (
+                <span className="text-[11px] text-muted-foreground/70">
+                  {message.provider && <span className="font-medium">{message.provider}</span>}
+                  {message.provider && message.model && <span className="mx-0.5">/</span>}
+                  {message.model}
+                </span>
+              )}
+              {!isUser && message.model && (
+                <span className="text-muted-foreground/40 text-[11px]">·</span>
+              )}
+              <span className="text-[11px] text-muted-foreground">
+                {formatTime(message.createdAt)}
               </span>
-            )}
-            {!isUser && message.model && (
-              <span className="text-muted-foreground/40 text-[11px]">·</span>
-            )}
-            <span className="text-[11px] text-muted-foreground">
-              {formatTime(message.createdAt)}
-            </span>
+            </div>
           </div>
-        </div>
+        )}
+
+        {inputRequests.map((attachment, i) => (
+          <UserInputSummary key={`input-${i}`} data={attachment.data} />
+        ))}
 
         {/* Attachments */}
-        {message.attachments?.filter((attachment) => attachment.type !== "user_input_request").map((attachment, i) => {
+        {visibleAttachments.map((attachment, i) => {
           if (attachment.type === "workflow_preview") {
             return (
               <WorkflowPreview

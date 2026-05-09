@@ -20,7 +20,8 @@ Mevcut `docker-compose.yml` uc servis calistirir:
 - `conduut-agent`: FastAPI agent, container port `8000`; local host port
   `8100` because Windows can reserve host port `8000`.
 - `conduut-n8n`: tek shared n8n instance, container port `5678`; local host
-  port `5780` because this Windows environment can reserve host port `5678`.
+  port `5880` because this Windows environment reserves ranges including
+  `5678` and `5778-5877`.
 
 `apps/web/src/app/api/*` route handler'lari BFF/proxy gorevi gorur. Firebase ID
 token'i browser'dan Next API route'a, oradan agent servisine Authorization
@@ -50,6 +51,10 @@ olmak iyi, fakat mevcut MVP'nin gercek sinirlarini bozmamak daha onemlidir.
 - Credential request: chat attachment -> [[web-app]] `/api/credentials` BFF ->
   [[agent-service]] `/api/credentials` -> n8n credential API -> workflow node
   attach.
+- Managed Google OAuth connection: chat/dashboard OAuth prompt -> [[web-app]]
+  Google authorize BFF -> [[agent-service]] connection route -> Google OAuth ->
+  n8n credential API -> Firestore connection metadata. MVP'de Gmail ve Google
+  Sheets ayri connection id'leriyle tutulur.
 - Workflow run: dashboard run form veya agent tool -> Conduut run endpoint ->
   runtime input validation -> webhook-triggered workflow call -> n8n execution
   API -> agent/internal verification -> normal assistant text response veya

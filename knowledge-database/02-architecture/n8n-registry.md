@@ -59,6 +59,20 @@ Agent system prompt'u lookup-first davranisi ister:
 3. Kompleks workflow icin opsiyonel `find_workflow_template`.
 4. Sonra `create_workflow` veya `update_workflow`.
 
+`search_n8n_nodes` artik varsayilan olarak 20 node sonucu dondurur. Tool
+opsiyonel `limit` alir; agent ilk arama yeterli degilse daha spesifik query ile
+veya daha yuksek limit isteyerek tekrar arayabilir. Registry tarafinda limit
+1-50 araligina clamp edilir, boylece tum `nodes.json` context'e basilmadan
+ilgili aday havuzu genisletilebilir.
+
+WorkflowSpec compiler pilotu registry'yi yalnizca lookup icin degil,
+deterministic JSON uretimi icin de kullanir. Gmail on-demand compiler'i Webhook
+ve Gmail node `typeVersion` degerlerini; Google Sheets -> Filter -> Gmail
+compiler'i ise Webhook veya Schedule, Google Sheets, Filter ve Gmail
+`typeVersion` degerlerini registry schema'sindan alir. Schema yoksa workflow
+n8n'e yazilmaz ve tool acik hata dondurur. Bu davranis
+[[adr-0005-workflow-spec-compiler]] icinde kayitlidir.
+
 ## Node-Specific Guidance
 
 Registry bazi node'lar icin genel `keyParameters` bilgisinin otesinde

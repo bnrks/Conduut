@@ -12,7 +12,7 @@ class FakeRequest:
 def test_get_user_id_verifies_bearer_token_with_clock_skew(monkeypatch):
     def fake_verify(token: str, *, clock_skew_seconds: int):
         assert token == "token"
-        assert clock_skew_seconds == 5
+        assert clock_skew_seconds == 60
         return {"uid": "user_1"}
 
     monkeypatch.setattr(auth_module.auth, "verify_id_token", fake_verify)

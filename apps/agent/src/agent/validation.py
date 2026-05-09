@@ -294,6 +294,18 @@ def _normalize_gmail_node(data: dict[str, Any]) -> None:
     parameters.pop("additionalFields", None)
 
 
+def _normalize_google_sheets_node(data: dict[str, Any]) -> None:
+    if data.get("type") != "n8n-nodes-base.googleSheets":
+        return
+    parameters = data.get("parameters")
+    if not isinstance(parameters, dict):
+        return
+    resource = str(parameters.get("resource") or "").lower()
+    operation = str(parameters.get("operation") or "").lower()
+    if resource == "spreadsheet" and operation == "append":
+        parameters["resource"] = "sheet"
+
+
 def validate_workflow_payload(
     nodes: Sequence[WorkflowNode | Mapping[str, Any]],
     connections: Mapping[str, Any] | None,
@@ -406,6 +418,7 @@ def normalize_workflow_nodes(
             data["type"] = schema.get("type", data.get("type"))
             data["typeVersion"] = schema.get("typeVersion", data.get("typeVersion"))
         _normalize_gmail_node(data)
+        _normalize_google_sheets_node(data)
         if data.get("type") == "n8n-nodes-base.webhook" and not data.get("webhookId"):
             data["webhookId"] = str(uuid4())
         normalized.append(WorkflowNode.model_validate(data))

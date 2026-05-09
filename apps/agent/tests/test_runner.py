@@ -119,7 +119,8 @@ def test_history_from_store_messages_adds_attachment_context_for_assistant():
         ]
     )
 
-    assert prompt == "run the workflow"
+    assert prompt.startswith("run the workflow")
+    assert "answers the previous user_input_request" in prompt
     assistant_content = history[1].parts[0].content
     assert "wf_123" in assistant_content
     assert "workflow_run workflowId=wf_123" in assistant_content
@@ -147,9 +148,39 @@ def test_history_from_store_messages_adds_user_input_context_for_continuation():
         ]
     )
 
-    assert prompt == "burak@example.com"
+    assert prompt.startswith("burak@example.com")
+    assert "answers the previous user_input_request" in prompt
+    assert "do not ask for the same missing field again" in prompt
     assert "user_input_request" in history[1].parts[0].content
     assert "recipients" in history[1].parts[0].content
+
+
+def test_history_from_store_messages_marks_prior_user_answer_to_clarification():
+    _prompt, history = runner._history_from_store_messages(
+        [
+            {"role": "user", "content": "sheet workflow kur"},
+            {
+                "role": "assistant",
+                "content": "Hangi sheet bilgilerini kullanayim?",
+                "attachments": [
+                    UserInputRequestAttachment(
+                        data=UserInputRequestData(
+                            question="Hangi sheet bilgilerini kullanayim?",
+                            missingFields=["Google Sheet ID", "sheet/tab name"],
+                        )
+                    ).model_dump()
+                ],
+            },
+            {"role": "user", "content": "yeni dosya olustur, sekme sayfa 1"},
+            {"role": "assistant", "content": "Devam ediyorum."},
+            {"role": "user", "content": "son mesaj"},
+        ]
+    )
+
+    answer_content = history[2].parts[0].content
+    assert answer_content.startswith("yeni dosya olustur")
+    assert "answers the previous user_input_request" in answer_content
+    assert "Google Sheet ID" in answer_content
 
 
 @pytest.mark.asyncio

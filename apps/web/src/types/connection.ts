@@ -16,4 +16,5 @@ export interface AvailableService {
   description: string;
   category: string;
   connectionId: string;
+  authorizePath: string;
 }

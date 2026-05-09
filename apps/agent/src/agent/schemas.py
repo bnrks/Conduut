@@ -40,6 +40,30 @@ class WorkflowInputField(BaseModel):
     placeholder: str | None = None
 
 
+class WorkflowTriggerSpec(BaseModel):
+    """Small workflow intent trigger representation compiled into n8n JSON."""
+
+    kind: Literal["on_demand", "schedule"]
+    frequency: Literal["daily"] = "daily"
+    time: str | None = None
+
+
+class WorkflowStepSpec(BaseModel):
+    """Small workflow intent step representation compiled into n8n JSON."""
+
+    id: str | None = None
+    capability: Literal["send_email", "read_sheet_rows", "filter_items"]
+    service: Literal["gmail", "google_sheets", "core"]
+    inputs: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowSpec(BaseModel):
+    """Workflow IR used before deterministic n8n JSON compilation."""
+
+    trigger: WorkflowTriggerSpec
+    steps: list[WorkflowStepSpec] = Field(min_length=1)
+
+
 class CredentialField(BaseModel):
     name: str
     label: str

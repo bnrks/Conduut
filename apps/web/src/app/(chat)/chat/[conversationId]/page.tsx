@@ -25,6 +25,11 @@ function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+interface ActiveClarification {
+  messageId: string;
+  data: ClarificationPanelData;
+}
+
 function activeClarification(messages: Message[], isAgentTyping: boolean) {
   if (isAgentTyping) return undefined;
   const lastMessage = messages[messages.length - 1];
@@ -32,7 +37,11 @@ function activeClarification(messages: Message[], isAgentTyping: boolean) {
   const attachment = lastMessage.attachments?.find(
     (item) => item.type === "user_input_request"
   );
-  return attachment?.data as unknown as ClarificationPanelData | undefined;
+  if (!attachment) return undefined;
+  return {
+    messageId: lastMessage.id,
+    data: attachment.data as unknown as ClarificationPanelData,
+  } satisfies ActiveClarification;
 }
 
 export default function ConversationPage() {
@@ -207,38 +216,41 @@ export default function ConversationPage() {
             messages={messages}
             isAgentTyping={isAgentTyping}
             agentActivity={agentActivity}
+            activeClarificationMessageId={clarification?.messageId}
           />
         )}
       </div>
-      {clarification && (
-        <div className="bg-background px-4 pb-2">
-          <div className="mx-auto max-w-3xl">
-            <ClarificationPanel
-              data={clarification}
-              onSubmit={(value) => { void handleSend(value); }}
-            />
+      <div className="relative shrink-0">
+        {clarification && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-full z-30 px-4 pb-3">
+            <div className="pointer-events-auto mx-auto max-w-3xl">
+              <ClarificationPanel
+                data={clarification.data}
+                onSubmit={(value) => { void handleSend(value); }}
+              />
+            </div>
           </div>
-        </div>
-      )}
-      <ChatInput
-        value={inputValue}
-        onChange={setInputValue}
-        onSend={(content) => { void handleSend(content); }}
-        disabled={!user}
-        providers={providers}
-        selectedProvider={lockedProvider ?? null}
-        onProviderChange={() => {}}
-        models={lockedModel ? [{ id: lockedModel, name: lockedModel }] : []}
-        selectedModel={lockedModel ?? null}
-        onModelChange={() => {}}
-        reasoningEfforts={lockedReasoningEffort ? [lockedReasoningEffort] : []}
-        selectedReasoningEffort={lockedReasoningEffort ?? null}
-        onReasoningEffortChange={() => {}}
-        loadingModels={false}
-        lockedModel={true}
-        isFavorite={isFavorite}
-        onToggleFavorite={(p, m) => void toggleFavorite(p, m)}
-      />
+        )}
+        <ChatInput
+          value={inputValue}
+          onChange={setInputValue}
+          onSend={(content) => { void handleSend(content); }}
+          disabled={!user}
+          providers={providers}
+          selectedProvider={lockedProvider ?? null}
+          onProviderChange={() => {}}
+          models={lockedModel ? [{ id: lockedModel, name: lockedModel }] : []}
+          selectedModel={lockedModel ?? null}
+          onModelChange={() => {}}
+          reasoningEfforts={lockedReasoningEffort ? [lockedReasoningEffort] : []}
+          selectedReasoningEffort={lockedReasoningEffort ?? null}
+          onReasoningEffortChange={() => {}}
+          loadingModels={false}
+          lockedModel={true}
+          isFavorite={isFavorite}
+          onToggleFavorite={(p, m) => void toggleFavorite(p, m)}
+        />
+      </div>
     </>
   );
 }

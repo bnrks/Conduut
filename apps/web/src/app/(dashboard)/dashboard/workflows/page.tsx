@@ -27,7 +27,7 @@ async function getErrorMessage(response: Response, fallback: string): Promise<st
 }
 
 export default function WorkflowsPage() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -37,22 +37,28 @@ export default function WorkflowsPage() {
   const [runningWorkflowId, setRunningWorkflowId] = useState<string | null>(null);
 
   const fetchWorkflows = useCallback(async () => {
-    if (!user) return;
+    if (authLoading) return;
+    if (!user) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      const token = await user.getIdToken();
+      const token = await user.getIdToken(true);
       const response = await fetch("/api/workflows", {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!response.ok) throw new Error("Failed to fetch workflows");
+      if (!response.ok) {
+        throw new Error(await getErrorMessage(response, "Failed to fetch workflows."));
+      }
       const data = (await response.json()) as { workflows: Workflow[] };
       setWorkflows(data.workflows ?? []);
-    } catch {
-      toast.error("Workflows could not be loaded.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Workflows could not be loaded.");
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [authLoading, user]);
 
   useEffect(() => {
     void fetchWorkflows();

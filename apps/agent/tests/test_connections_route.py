@@ -9,12 +9,17 @@ from src.oauth import google
 from src.routes import connections as connections_route
 
 
-def _oauth_state(*, used: bool = False, expires_at: str = "2999-01-01T00:00:00+00:00"):
+def _oauth_state(
+    *,
+    service: str = "gmail",
+    used: bool = False,
+    expires_at: str = "2999-01-01T00:00:00+00:00",
+):
     return store.OAuthState(
         id="state_1",
         user_id="user_1",
         provider="google",
-        service="gmail",
+        service=service,
         code_verifier="verifier_1",
         return_to="/dashboard/connections",
         expires_at=expires_at,
@@ -64,6 +69,27 @@ def test_google_authorization_url_includes_pkce_offline_and_gmail_scope(monkeypa
     assert "https://www.googleapis.com/auth/gmail.readonly" in scopes
 
 
+def test_google_authorization_url_includes_sheets_scopes(monkeypatch):
+    monkeypatch.setattr(settings, "google_oauth_client_id", "client_id")
+    monkeypatch.setattr(settings, "google_oauth_client_secret", "client_secret")
+    monkeypatch.setattr(settings, "public_web_url", "http://localhost:3000")
+
+    url = google.authorization_url(
+        state="state_1",
+        code_verifier="verifier_1",
+        service="sheets",
+    )
+    query = parse_qs(urlparse(url).query)
+
+    scopes = query["scope"][0].split()
+    assert "openid" in scopes
+    assert "email" in scopes
+    assert "profile" in scopes
+    assert "https://www.googleapis.com/auth/drive.file" in scopes
+    assert "https://www.googleapis.com/auth/spreadsheets" in scopes
+    assert "https://www.googleapis.com/auth/drive.metadata" in scopes
+
+
 @pytest.mark.asyncio
 async def test_authorize_google_gmail_saves_state_and_returns_url(monkeypatch):
     monkeypatch.setattr(connections_route, "get_user_id", lambda _request: "user_1")
@@ -77,8 +103,8 @@ async def test_authorize_google_gmail_saves_state_and_returns_url(monkeypatch):
     monkeypatch.setattr(
         connections_route.google,
         "authorization_url",
-        lambda *, state, code_verifier: (
-            f"https://google.test?state={state}&verifier={code_verifier}"
+        lambda *, state, code_verifier, service: (
+            f"https://google.test?state={state}&verifier={code_verifier}&service={service}"
         ),
     )
     monkeypatch.setattr(
@@ -101,11 +127,61 @@ async def test_authorize_google_gmail_saves_state_and_returns_url(monkeypatch):
         connections_route.AuthorizeIn(return_to="/dashboard/connections"),
     )
 
-    assert response == {"authorizationUrl": "https://google.test?state=state_1&verifier=verifier_1"}
+    assert response == {
+        "authorizationUrl": "https://google.test?state=state_1&verifier=verifier_1&service=gmail"
+    }
     assert saved["state_id"] == "state_1"
     assert saved["user_id"] == "user_1"
     assert saved["provider"] == "google"
     assert saved["service"] == "gmail"
+    assert saved["code_verifier"] == "verifier_1"
+    assert saved["return_to"] == "/dashboard/connections"
+
+
+@pytest.mark.asyncio
+async def test_authorize_google_sheets_saves_state_and_returns_url(monkeypatch):
+    monkeypatch.setattr(connections_route, "get_user_id", lambda _request: "user_1")
+    monkeypatch.setattr(connections_route.google, "ensure_google_oauth_configured", lambda: None)
+    monkeypatch.setattr(connections_route.google, "generate_state", lambda: "state_1")
+    monkeypatch.setattr(
+        connections_route.google,
+        "generate_code_verifier",
+        lambda: "verifier_1",
+    )
+    monkeypatch.setattr(
+        connections_route.google,
+        "authorization_url",
+        lambda *, state, code_verifier, service: (
+            f"https://google.test?state={state}&verifier={code_verifier}&service={service}"
+        ),
+    )
+    monkeypatch.setattr(
+        connections_route.google,
+        "expires_at",
+        lambda: "2999-01-01T00:00:00+00:00",
+    )
+
+    saved: dict[str, object] = {}
+
+    async def fake_save_oauth_state(state_id: str, **kwargs):
+        saved["state_id"] = state_id
+        saved.update(kwargs)
+        return _oauth_state(service="sheets")
+
+    monkeypatch.setattr(connections_route.store, "save_oauth_state", fake_save_oauth_state)
+
+    response = await connections_route.authorize_google_sheets(
+        object(),
+        connections_route.AuthorizeIn(return_to="/dashboard/connections"),
+    )
+
+    assert response == {
+        "authorizationUrl": "https://google.test?state=state_1&verifier=verifier_1&service=sheets"
+    }
+    assert saved["state_id"] == "state_1"
+    assert saved["user_id"] == "user_1"
+    assert saved["provider"] == "google"
+    assert saved["service"] == "sheets"
     assert saved["code_verifier"] == "verifier_1"
     assert saved["return_to"] == "/dashboard/connections"
 
@@ -215,6 +291,86 @@ async def test_google_callback_creates_n8n_credential_and_connection(monkeypatch
     assert saved_connection["user_id"] == "user_1"
     assert saved_connection["connection_id"] == "google_gmail"
     assert response["connection"]["id"] == "google_gmail"
+    assert response["connection"]["accountEmail"] == "user@example.com"
+    assert response["returnTo"] == "/dashboard/connections"
+
+
+@pytest.mark.asyncio
+async def test_google_callback_creates_sheets_n8n_credential_and_connection(monkeypatch):
+    monkeypatch.setattr(settings, "google_oauth_client_id", "client_id")
+    monkeypatch.setattr(settings, "google_oauth_client_secret", "client_secret")
+
+    async def fake_get_oauth_state(_state_id: str):
+        return _oauth_state(service="sheets")
+
+    async def fake_mark_used(_state_id: str):
+        return None
+
+    token_response = {
+        "access_token": "access_token",
+        "refresh_token": "refresh_token",
+        "token_type": "Bearer",
+        "expires_in": 3600,
+        "scope": (
+            "openid email profile https://www.googleapis.com/auth/drive.file "
+            "https://www.googleapis.com/auth/spreadsheets "
+            "https://www.googleapis.com/auth/drive.metadata"
+        ),
+    }
+
+    async def fake_exchange_code(*, code: str, code_verifier: str):
+        assert code == "code"
+        assert code_verifier == "verifier_1"
+        return token_response
+
+    async def fake_fetch_userinfo(access_token: str):
+        assert access_token == "access_token"
+        return {"email": "user@example.com", "sub": "google_sub"}
+
+    async def fake_get_connection(_user_id: str, _connection_id: str):
+        return None
+
+    created: dict[str, object] = {}
+
+    async def fake_create_credential(name: str, credential_type: str, data: dict):
+        created["name"] = name
+        created["credential_type"] = credential_type
+        created["data"] = data
+        return n8n_client.N8nCredential(id="cred_sheets", name=name, type=credential_type)
+
+    saved_connection: dict[str, object] = {}
+
+    async def fake_save_connection(user_id: str, connection_id: str, **kwargs):
+        saved_connection["user_id"] = user_id
+        saved_connection["connection_id"] = connection_id
+        saved_connection.update(kwargs)
+        return _app_connection(id=connection_id, **kwargs)
+
+    monkeypatch.setattr(connections_route.store, "get_oauth_state", fake_get_oauth_state)
+    monkeypatch.setattr(connections_route.store, "mark_oauth_state_used", fake_mark_used)
+    monkeypatch.setattr(connections_route.google, "exchange_code", fake_exchange_code)
+    monkeypatch.setattr(connections_route.google, "fetch_userinfo", fake_fetch_userinfo)
+    monkeypatch.setattr(connections_route.store, "get_connection", fake_get_connection)
+    monkeypatch.setattr(connections_route.n8n_client, "create_credential", fake_create_credential)
+    monkeypatch.setattr(connections_route.store, "save_connection", fake_save_connection)
+
+    response = await connections_route.google_callback(
+        connections_route.GoogleCallbackIn(code="code", state="state_1")
+    )
+
+    assert created["credential_type"] == "googleSheetsOAuth2Api"
+    credential_data = created["data"]
+    assert credential_data["serverUrl"] == "https://accounts.google.com"
+    assert credential_data["clientId"] == "client_id"
+    assert credential_data["clientSecret"] == "client_secret"
+    assert "scope" not in credential_data
+    assert credential_data["oauthTokenData"]["scope"] == token_response["scope"]
+    assert credential_data["oauthTokenData"]["access_token"] == "access_token"
+    assert credential_data["oauthTokenData"]["refresh_token"] == "refresh_token"
+    assert saved_connection["user_id"] == "user_1"
+    assert saved_connection["connection_id"] == "google_sheets"
+    assert response["connection"]["id"] == "google_sheets"
+    assert response["connection"]["serviceName"] == "Google Sheets"
     assert response["connection"]["accountEmail"] == "user@example.com"
     assert response["returnTo"] == "/dashboard/connections"
 

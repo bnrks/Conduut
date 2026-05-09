@@ -36,7 +36,11 @@ web container baslamaz.
 Firebase client auth `src/hooks/use-auth.ts` icinde kullanilir. Browser
 `user.getIdToken()` ile token alir ve `Authorization: Bearer ...` header'i ile
 Next API route'larina gonderir. Next API route'lari ayni header'i agent
-servisine aktarir.
+servisine aktarir. Dashboard workflows sayfasi ilk listeleme isteginde
+`user.getIdToken(true)` ile taze ID token ister; auth state henuz hazir degilse
+listeleme bekler, kullanici yoksa local loading state'ini kapatir. Agent 401
+veya baska hata donerse BFF payload'indaki `detail.message`, `detail` veya
+`message` toast'a yansitilir.
 
 ## BFF API Routes
 
@@ -51,9 +55,11 @@ Baslica route handler'lar:
 - `api/connections/[connectionId]`: connection silme proxy.
 - `api/connections/google/gmail/authorize`: Firebase token ile agent Google
   Gmail authorize endpoint'ine proxy eder.
+- `api/connections/google/sheets/authorize`: Firebase token ile agent Google
+  Sheets authorize endpoint'ine proxy eder.
 - `api/oauth/google/callback`: Google OAuth callback'ini auth header olmadan
-  agent callback endpoint'ine iletir ve dashboard'a success/error redirect
-  yapar.
+  generic agent Google callback endpoint'ine iletir ve connection id ile
+  dashboard'a success/error redirect yapar.
 - `api/settings/llm`: aktif provider/model/API key ayarlari.
 - `api/settings/llm/providers`: provider ekleme/listeleme.
 - `api/settings/llm/providers/[provider]/models`: model listeleme.
@@ -85,17 +91,24 @@ SSE event'leri `src/lib/chat/sse.ts` ile parse edilir:
 
 `WorkflowPreview` workflow kaydini daha belirgin bir "Workflow saved" paneliyle
 gosterir. `OAuthPrompt` artik simule connect yapmaz; agent'tan gelen
-`authorizePath` ile Google Gmail OAuth authorize route'unu cagirir ve
-authorization URL'ine yonlendirir. Workflow run sonuclari icin ayri sonuc/kanit
-karti render edilmez; agent execution sonucunu kendi icinde dogrular ve
-kullaniciya normal assistant mesaji olarak cevap verir.
+`authorizePath` ile Google Gmail veya Google Sheets OAuth authorize route'unu
+cagirir ve authorization URL'ine yonlendirir. Workflow run sonuclari icin ayri
+sonuc/kanit karti render edilmez; agent execution sonucunu kendi icinde dogrular
+ve kullaniciya normal assistant mesaji olarak cevap verir.
 
-`ClarificationPanel` component'i agent'in `user_input_request` attachment'ini
-render eder. `user_input_request` mesajlari normal chat balonu/karti olarak
-gosterilmez; aktif son soru chat input'unun hemen ustunde Conduut temasina uygun
-bir panel olarak acilir. Panel agent sorusunu, varsa secilebilir cevaplari ve
-tek bir serbest cevap input'unu gosterir. Secenek tiklama veya serbest cevap,
-normal chat mesaji olarak agent'a gonderilir.
+`ClarificationPanel` component'i agent'in aktif `user_input_request`
+attachment'ini render eder. Aktif son soru chat input wrapper'i icinde
+`absolute bottom-full` overlay panel olarak acilir ve ayni anda message list
+icinde ozet karti olarak tekrar gosterilmez. Panel agent sorusunu, varsa
+secilebilir cevaplari ve `missingFields` listesini gosterir; boylece agent genel
+bir soru sorsa bile kullanici hangi alanlarin beklendigini gorur. Tek bir
+serbest cevap input'u vardir. Secenek tiklama veya serbest cevap, normal chat
+mesaji olarak agent'a gonderilir.
+
+Gecmis `user_input_request` mesajlari tamamen gizlenmez. `Message` component'i
+bunlari kompakt "Conduut asked for details" ozeti olarak render eder; boylece
+kullanici once hangi sorularin soruldugunu gorebilir ama aktif clarification
+paneliyle cift gorunum olusmaz.
 
 ## UI State
 

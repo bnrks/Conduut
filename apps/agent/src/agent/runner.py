@@ -23,8 +23,8 @@ from src.agent.tools import create_agent
 
 log = structlog.get_logger()
 
-MAX_MODEL_REQUESTS = 8
-MAX_TOOL_CALLS = 24
+MAX_MODEL_REQUESTS = 12
+MAX_TOOL_CALLS = 32
 
 
 def _sse(event: str, data: dict) -> str:
@@ -35,24 +35,68 @@ def _history_from_store_messages(messages: list[dict]) -> tuple[str, list[ModelM
     if not messages:
         return "", []
 
-    user_prompt = str(messages[-1].get("content") or "")
+    user_prompt = _content_with_user_input_answer_context(
+        messages[-1],
+        _user_input_request_context(messages[-2]) if len(messages) > 1 else None,
+    )
     prior_messages = messages[:-1]
     if not prior_messages:
         return user_prompt, []
 
     history: list[ModelMessage] = []
+    pending_user_input_request: str | None = None
 
     for message in prior_messages:
+        role = message.get("role")
         content = _content_with_attachment_context(message)
+        if role == "user":
+            content = _content_with_user_input_answer_context(
+                message,
+                pending_user_input_request,
+            )
+            pending_user_input_request = None
         if not content:
             continue
-        role = message.get("role")
         if role == "user":
             history.append(ModelRequest(parts=[UserPromptPart(content=content)]))
         elif role in ("assistant", "agent"):
             history.append(ModelResponse(parts=[TextPart(content=content)]))
+            pending_user_input_request = _user_input_request_context(message)
 
     return user_prompt, history
+
+
+def _user_input_request_context(message: dict | None) -> str | None:
+    if not message or message.get("role") not in ("assistant", "agent"):
+        return None
+    attachments = message.get("attachments")
+    if not isinstance(attachments, list):
+        return None
+    for attachment in attachments:
+        if not isinstance(attachment, dict) or attachment.get("type") != "user_input_request":
+            continue
+        data = attachment.get("data")
+        if not isinstance(data, dict):
+            continue
+        question = data.get("question")
+        missing_fields = data.get("missingFields")
+        return f"user_input_request question={question} missingFields={missing_fields}"
+    return None
+
+
+def _content_with_user_input_answer_context(
+    message: dict,
+    pending_request_context: str | None,
+) -> str:
+    content = str(message.get("content") or "")
+    if not content or not pending_request_context:
+        return content
+    return (
+        f"{content}\n\n"
+        "[Conduut internal context: this user message answers the previous "
+        f"{pending_request_context}. Treat this answer as accumulated task information and "
+        "do not ask for the same missing field again unless the answer is ambiguous.]"
+    )
 
 
 def _content_with_attachment_context(message: dict) -> str:
@@ -164,7 +208,8 @@ async def run(
 
     try:
         result = task.result()
-    except UsageLimitExceeded:
+    except UsageLimitExceeded as exc:
+        log.warning("agent_usage_limit_exceeded", error=str(exc))
         yield _sse(
             "error",
             {

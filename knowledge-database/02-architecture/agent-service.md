@@ -36,8 +36,10 @@ Health endpoint: `GET /health`.
 
 `src/auth.py` Authorization header'ini bekler ve Firebase Admin ile ID token
 dogrular. Gecerli token yoksa 401 doner. Firebase ID token dogrulamasinda
-Docker/browser saat farkindan dogan kisa `Token used too early` hatalarini
-azaltmak icin 5 saniyelik clock skew toleransi kullanilir.
+Docker/browser saat farkindan dogan `Token used too early` hatalarini azaltmak
+icin Firebase Admin'in izin verdigi ust sinir olan 60 saniyelik clock skew
+toleransi kullanilir. Reddedilen token'lar `firebase_token_rejected` log
+event'iyle hata tipi ve mesaji korunarak kaydedilir.
 
 `src/firebase.py` Docker icinde `/app/serviceAccount.json` dosyasini, local
 test/dev ortaminda ise `apps/agent/serviceAccount.json` dosyasini kullanir.
@@ -86,11 +88,28 @@ SSE error event'i kullaniciya provider quota/billing problemini net soyler.
 
 ## Agent Tools
 
-`src/agent/tools.py` icindeki Pydantic AI tool'lari:
+`src/agent/tools/` paketi Pydantic AI tool'larini ve yardimci workflow
+mantigini tasir. Eski tek dosya `src/agent/tools.py` bolundu; public import
+yuzeyi `src.agent.tools` paketinin `__init__.py` dosyasindan korunur. Ana
+moduller:
+
+- `factory.py`: `create_agent` ve Pydantic AI tool registration.
+- `prompt.py`: agent system prompt'u.
+- `runtime_inputs.py`: reusable workflow input schema ve Gmail runtime input
+  inference.
+- `workflow_runner.py`: Conduut'tan workflow run hazirligi ve execution.
+- `readiness.py`: credential/readiness analizi ve managed Gmail connection
+  attach davranisi.
+- `validation.py`: create/update oncesi workflow normalize/validate akisi.
+- `execution.py`: execution output ozetleme.
+- `spec_compiler.py`: desteklenen `WorkflowSpec` IR'larini deterministic n8n
+  node/connection/input schema payload'una ceviren pilot compiler.
+
+Kayitli tool'lar:
 
 - Registry: `search_n8n_nodes`, `get_node_schema`, `find_workflow_template`.
-- Workflow CRUD: `list_workflows`, `get_workflow`, `create_workflow`,
-  `update_workflow`, `delete_workflow`.
+- Workflow CRUD: `list_workflows`, `get_workflow`, `create_workflow_from_spec`,
+  `create_workflow`, `update_workflow`, `delete_workflow`.
 - Runtime: `activate_workflow`, `deactivate_workflow`, `execute_workflow`,
   `list_executions`, `analyze_workflow_readiness`, `inspect_execution`.
 - Clarification: `request_user_input`.
@@ -99,7 +118,29 @@ SSE error event'i kullaniciya provider quota/billing problemini net soyler.
 Schema MVP'de Firestore `users/{uid}/workflow_metadata/{workflowId}` altinda
 saklanir. Gmail send node'u reusable workflow olarak uretildiginde `to`,
 `subject`, `message` runtime field'lari infer edilir ve Gmail parametreleri
-webhook payload expression'larina baglanir.
+webhook payload expression'larina baglanir. Webhook trigger output'u body'yi
+`$json.body` altinda verdigi icin Webhook + Gmail send workflow'larinda
+compiler/normalizer `={{$json.body.to}}`, `={{$json.body.subject}}` ve
+`={{$json.body.message}}` kullanir.
+
+`create_workflow_from_spec`, WorkflowSpec IR pilotudur. Desteklenen compiler
+sekilleri:
+
+- `trigger.kind=on_demand` ve tek `send_email`/`gmail` step'i: Webhook + Gmail
+  send workflow'u uretir ve `to`/`subject`/`message` runtime input schema'si
+  kaydeder.
+- `trigger.kind=on_demand` veya gunluk `trigger.kind=schedule` ile
+  `read_sheet_rows`/`google_sheets` -> `filter_items`/`core` ->
+  `send_email`/`gmail`: Google Sheets read, Filter ve Gmail send node'larini
+  deterministic olarak uretir. Bu workflow sheet satiri uzerinden email
+  gonderdigi icin compiler explicit bos `input_schema` dondurur; Gmail runtime
+  input inference bu akista devreye girmez.
+
+Tool LLM'in raw n8n JSON yazmasi yerine desteklenen node/connection yapilarini
+compiler ile uretir, registry'den Webhook/Gmail/Google Sheets/Filter/Schedule
+`typeVersion` bilgisini alir, mevcut validation/readiness/metadata akisini
+kullanir ve unsupported spec veya eksik registry schema durumunda n8n'e side
+effect yapmadan hata dondurur.
 
 `request_user_input`, kullanicinin otomasyon isteginde gerekli is bilgisi
 eksikse kullanilir. Ornekler: gercek alici email adresleri, gonderilecek
@@ -125,8 +166,16 @@ Workflow readiness davranisi:
   degerine normalize eder. Gmail send parameter alias'lari da canonical
   `sendTo`, `subject`, `message`, `emailType` alanlarina cevrilir; placeholder
   alici email'leri validation hatasi sayilir.
-- Gmail connection yoksa chat'e `oauth_prompt` attachment emit edilir. Gmail
-  delete/mark-read/mark-unread gibi modify operasyonlari V1 read/send
+- Google Sheets node'lari icin kullanicinin `google_sheets` connection'i varsa
+  agent `googleSheetsOAuth2Api` credential'ini otomatik attach eder. Sheets
+  connection yoksa chat'e Google Sheets `oauth_prompt` attachment'i gelir.
+- Workflow create/update/activate/run/readiness kontrollerinde eksik credential
+  veya managed OAuth connection bulunursa agent runtime `awaiting_user_input`
+  durumuna gecer. Bu, workflow olustuktan sonra ayni turda activate/run gibi
+  ek side effect tool'larinin denenmesini engeller; agent kullaniciya once
+  gosterilen connection/credential aksiyonunu tamamlamasini soylemelidir.
+- Gmail connection yoksa chat'e Gmail `oauth_prompt` attachment emit edilir.
+  Gmail delete/mark-read/mark-unread gibi modify operasyonlari V1 read/send
   credential ile otomatik attach edilmez.
 - API key/token isteyen diger node'larda eski `credential_request` form akisi
   korunur.
@@ -155,15 +204,22 @@ Connection route'lari:
 
 - `GET /api/connections`: kullanicinin app connection metadata listesini
   dondurur.
-- `POST /api/connections/google/gmail/authorize`: Firebase auth ister,
-  OAuth state ve PKCE verifier uretir, Firestore `oauth_states/{state}` yazar
-  ve Google authorization URL dondurur.
-- `POST /api/connections/google/gmail/callback`: auth header beklemez; state
-  dogrular, Google token exchange ve userinfo okur, n8n'de `gmailOAuth2`
-  credential olusturur ve Firestore metadata yazar. n8n public API schema'si
-  `gmailOAuth2` icin token datasina ek olarak `serverUrl`,
-  `sendAdditionalBodyProperties` ve `additionalBodyProperties` alanlarini da
-  bekler.
+- `POST /api/connections/google/gmail/authorize` ve
+  `/api/connections/google/sheets/authorize`: Firebase auth ister, OAuth state
+  ve PKCE verifier uretir, Firestore `oauth_states/{state}` yazar ve servis
+  bazli Google authorization URL dondurur.
+- `POST /api/connections/google/callback`: auth header beklemez; state icindeki
+  Google service degerine gore token exchange ve userinfo okur. Gmail icin
+  n8n'de `gmailOAuth2`, Sheets icin `googleSheetsOAuth2Api` credential
+  olusturur ve Firestore connection metadata yazar. Eski
+  `/connections/google/gmail/callback` endpoint'i Gmail icin compatibility
+  alias'i olarak kalir.
+- n8n public API schema'si Gmail/Sheets Google OAuth credential'lari icin token
+  datasina ek olarak `serverUrl`, `sendAdditionalBodyProperties` ve
+  `additionalBodyProperties` alanlarini bekler. n8n `1.121.3`
+  `googleSheetsOAuth2Api` schema'si `additionalProperties=false` oldugu icin
+  Sheets credential data'sina top-level `scope` yazilmaz; scope
+  `oauthTokenData.scope` icinde kalir.
 - `DELETE /api/connections/{connection_id}`: metadata'yi siler ve n8n
   credential'i best-effort siler.
 
@@ -191,6 +247,11 @@ bekledigi node `name` formatina cevrilir; model `id`, `1`, `2`, `node1`,
 validation hatalarinda n8n'e side effect yapilmaz; Pydantic AI `ModelRetry` ile
 modele duzeltme yaptirir. Validation retry'a giden hatalar
 `workflow_validation_failed` log event'iyle kaydedilir.
+Google Sheets node'unda model `operation=append` ile `resource=spreadsheet`
+uretirirse normalizer bunu `resource=sheet` olarak duzeltir; n8n Google Sheets
+v4 append operasyonu spreadsheet resource'u altinda calismadigi icin aksi halde
+runtime'da `Cannot read properties of undefined (reading 'execute')` hatasi
+olur.
 
 Connection normalizer, model `{"main": [{"node": "Gmail", "type": "main"}]}`
 gibi flat output listesi uretirse bunu n8n editor'un bekledigi
@@ -209,6 +270,7 @@ cevirir. Aksi halde n8n workflow'u API'den kabul etse bile editor
 - `users/{uid}/conversations/{convId}/messages/{messageId}`
 - `oauth_states/{state}`
 - `users/{uid}/connections/google_gmail`
+- `users/{uid}/connections/google_sheets`
 - `users/{uid}/workflow_metadata/{workflowId}`
 
 Firestore sync SDK cagrilari `asyncio.to_thread` ile sarilir.
