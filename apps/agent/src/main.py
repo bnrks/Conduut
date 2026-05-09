@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.config import settings
 from src.registry import initialize_registry
 from src.routes import chat, conversations
+from src.routes import connections as connections_router
+from src.routes import credentials as credentials_router
 from src.routes import favorites as favorites_router
 from src.routes import settings as settings_router
 from src.routes import workflows as workflows_router
@@ -43,6 +45,8 @@ app.include_router(chat.router, prefix="/api")
 app.include_router(conversations.router, prefix="/api")
 app.include_router(settings_router.router, prefix="/api")
 app.include_router(favorites_router.router, prefix="/api")
+app.include_router(credentials_router.router, prefix="/api")
+app.include_router(connections_router.router, prefix="/api")
 app.include_router(workflows_router.router, prefix="/api")
 
 

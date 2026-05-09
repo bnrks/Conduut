@@ -14,9 +14,17 @@ export interface MessageListProps {
   agentActivity?: string;
 }
 
-export function MessageList({ messages, isAgentTyping, agentActivity }: MessageListProps) {
+export function MessageList({
+  messages,
+  isAgentTyping,
+  agentActivity,
+}: MessageListProps) {
   const { containerRef, isAtBottom, scrollToBottom } =
     useScrollToBottom<HTMLDivElement>();
+  const visibleMessages = messages.filter(
+    (message) =>
+      !message.attachments?.some((attachment) => attachment.type === "user_input_request")
+  );
 
   // Auto-scroll on new messages / typing start
   useEffect(() => {
@@ -30,7 +38,7 @@ export function MessageList({ messages, isAgentTyping, agentActivity }: MessageL
         className="h-full overflow-y-auto px-4 py-6 scroll-smooth"
       >
         <div className="mx-auto max-w-3xl space-y-4 pb-4">
-          {messages.map((message) => (
+          {visibleMessages.map((message) => (
             <Message key={message.id} message={message} />
           ))}
           {isAgentTyping && (

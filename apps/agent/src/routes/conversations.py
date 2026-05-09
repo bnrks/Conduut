@@ -38,6 +38,7 @@ async def get_conversation(conversation_id: str, request: Request):
         "updated_at": conv.updated_at,
         "provider": conv.provider,
         "model": conv.model,
+        "reasoning_effort": conv.reasoning_effort,
         "messages": [
             {
                 "id": m.id,

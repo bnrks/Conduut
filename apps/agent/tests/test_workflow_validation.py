@@ -31,6 +31,11 @@ SCHEMAS = {
         "typeVersion": 3.4,
         "isTrigger": False,
     },
+    "n8n-nodes-base.gmail": {
+        "type": "n8n-nodes-base.gmail",
+        "typeVersion": 2.1,
+        "isTrigger": False,
+    },
 }
 
 
@@ -169,6 +174,127 @@ def test_normalize_workflow_nodes_canonicalizes_shorthand_type_and_version():
     assert normalized[1].typeVersion == 3.4
 
 
+def test_normalize_workflow_nodes_rewrites_gmail_message_create_to_send():
+    nodes = valid_nodes()
+    nodes.append(
+        {
+            "id": "gmail",
+            "name": "Gmail",
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.1,
+            "position": [750, 300],
+            "parameters": {
+                "resource": "message",
+                "operation": "create",
+                "authentication": "oAuth2",
+            },
+        }
+    )
+
+    normalized = normalize_workflow_nodes(nodes, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+
+    assert normalized[2].parameters["operation"] == "send"
+
+
+def test_normalize_workflow_nodes_maps_gmail_send_alias_parameters():
+    nodes = valid_nodes()
+    nodes.append(
+        {
+            "id": "gmail",
+            "name": "Gmail",
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.1,
+            "position": [750, 300],
+            "parameters": {
+                "resource": "message",
+                "operation": "send",
+                "toEmail": "user@example.test",
+                "subject": "Hello",
+                "bodyContent": "Message body",
+            },
+        }
+    )
+
+    normalized = normalize_workflow_nodes(nodes, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+
+    assert normalized[2].parameters["sendTo"] == "user@example.test"
+    assert normalized[2].parameters["subject"] == "Hello"
+    assert normalized[2].parameters["message"] == "Message body"
+    assert "toEmail" not in normalized[2].parameters
+    assert "bodyContent" not in normalized[2].parameters
+
+
+def test_gmail_send_placeholder_recipient_fails_validation():
+    nodes = valid_nodes()
+    nodes.append(
+        {
+            "id": "gmail",
+            "name": "Gmail",
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.1,
+            "position": [750, 300],
+            "parameters": {
+                "resource": "message",
+                "operation": "send",
+                "sendTo": "receiver@email.com",
+                "subject": "Hello",
+                "message": "Message body",
+            },
+        }
+    )
+
+    errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+
+    assert "Gmail node 'Gmail' sendTo must be a real recipient email" in errors
+
+
+def test_gmail_send_runtime_expression_recipient_passes_validation():
+    nodes = valid_nodes()
+    nodes.append(
+        {
+            "id": "gmail",
+            "name": "Gmail",
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.1,
+            "position": [750, 300],
+            "parameters": {
+                "resource": "message",
+                "operation": "send",
+                "sendTo": "={{$json.to}}",
+                "subject": "={{$json.subject}}",
+                "message": "={{$json.message}}",
+            },
+        }
+    )
+
+    errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+
+    assert errors == []
+
+
+def test_gmail_send_missing_message_fails_validation():
+    nodes = valid_nodes()
+    nodes.append(
+        {
+            "id": "gmail",
+            "name": "Gmail",
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.1,
+            "position": [750, 300],
+            "parameters": {
+                "resource": "message",
+                "operation": "send",
+                "sendTo": "user@example.test",
+                "subject": "Hello",
+            },
+        }
+    )
+
+    errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+
+    assert "Gmail node 'Gmail' send operation requires parameters.message" in errors
+
+
 def test_normalize_workflow_connections_resolves_node_ids_to_names():
     nodes = valid_nodes()
     nodes[0]["id"] = "1"
@@ -187,6 +313,28 @@ def test_normalize_workflow_connections_resolves_node_ids_to_names():
 def test_normalize_workflow_connections_resolves_ordinal_aliases_to_names():
     normalized = normalize_workflow_connections(
         {"node1": {"main": [[{"node": "node2", "type": "main", "index": 0}]]}},
+        valid_nodes(),
+    )
+
+    assert normalized == {
+        "Manual Trigger": {"main": [[{"node": "Set", "type": "main", "index": 0}]]}
+    }
+
+
+def test_normalize_workflow_connections_wraps_flat_main_targets():
+    normalized = normalize_workflow_connections(
+        {"Manual Trigger": {"main": [{"node": "Set", "type": "main"}]}},
+        valid_nodes(),
+    )
+
+    assert normalized == {
+        "Manual Trigger": {"main": [[{"node": "Set", "type": "main", "index": 0}]]}
+    }
+
+
+def test_normalize_workflow_connections_adds_main_for_direct_target():
+    normalized = normalize_workflow_connections(
+        {"Manual Trigger": {"node": "Set"}},
         valid_nodes(),
     )
 

@@ -51,3 +51,12 @@ async def test_verify_provider_rejects_unsupported_provider(monkeypatch):
         await settings_route.verify_provider("custom", request=object())
 
     assert exc.value.status_code == 422
+
+
+def test_model_option_includes_reasoning_efforts_for_supported_openai_model():
+    assert settings_route._model_option("openai", "gpt-5") == {
+        "id": "gpt-5",
+        "name": "gpt-5",
+        "supports_reasoning": True,
+        "reasoning_efforts": ["minimal", "low", "medium", "high"],
+    }

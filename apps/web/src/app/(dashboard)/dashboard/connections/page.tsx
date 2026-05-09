@@ -1,130 +1,249 @@
 "use client";
 
-import { Plus } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Mail, Plus, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 import { ConnectionCard } from "@/components/dashboard/connection-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import type { Connection, AvailableService } from "@/types/connection";
+import { Spinner } from "@/components/ui/spinner";
+import { useAuth } from "@/hooks/use-auth";
+import type { AvailableService, Connection } from "@/types/connection";
 import { cn } from "@/lib/utils";
-
-const CONNECTED_SERVICES: Connection[] = [
-  {
-    id: "conn-1",
-    serviceName: "Google",
-    serviceIcon: "google",
-    accountEmail: "burak@gmail.com",
-    status: "connected",
-    connectedAt: "2026-01-10T10:00:00Z",
-  },
-  {
-    id: "conn-2",
-    serviceName: "Slack",
-    serviceIcon: "slack",
-    accountEmail: "burak@myworkspace.slack.com",
-    status: "connected",
-    connectedAt: "2026-01-15T14:00:00Z",
-  },
-  {
-    id: "conn-3",
-    serviceName: "GitHub",
-    serviceIcon: "github",
-    accountEmail: "burak@github.com",
-    status: "expired",
-    connectedAt: "2025-12-01T09:00:00Z",
-  },
-];
 
 const AVAILABLE_SERVICES: AvailableService[] = [
   {
-    name: "Notion",
-    slug: "notion",
-    icon: "notion",
-    description: "Connect your Notion workspace",
-    category: "Productivity",
-  },
-  {
-    name: "Discord",
-    slug: "discord",
-    icon: "discord",
-    description: "Send messages to Discord channels",
-    category: "Communication",
-  },
-  {
-    name: "Telegram",
-    slug: "telegram",
-    icon: "telegram",
-    description: "Send Telegram messages and alerts",
-    category: "Communication",
-  },
-  {
-    name: "Airtable",
-    slug: "airtable",
-    icon: "airtable",
-    description: "Read and write Airtable bases",
-    category: "Database",
-  },
-  {
-    name: "Microsoft Teams",
-    slug: "microsoft",
-    icon: "microsoft",
-    description: "Post messages in Teams channels",
-    category: "Communication",
-  },
-  {
-    name: "Trello",
-    slug: "trello",
-    icon: "trello",
-    description: "Manage Trello boards and cards",
-    category: "Productivity",
+    name: "Google Gmail",
+    slug: "google-gmail",
+    icon: "google",
+    description: "Read and send Gmail messages from workflows",
+    category: "Email",
+    connectionId: "google_gmail",
   },
 ];
 
 const SERVICE_COLORS: Record<string, string> = {
-  notion: "bg-gray-100 text-gray-700",
-  discord: "bg-indigo-100 text-indigo-600",
-  telegram: "bg-sky-100 text-sky-600",
-  airtable: "bg-yellow-100 text-yellow-600",
-  microsoft: "bg-blue-100 text-blue-600",
-  trello: "bg-blue-100 text-blue-600",
+  google: "bg-red-100 text-red-600",
 };
 
+async function getErrorMessage(
+  response: Response,
+  fallback: string
+): Promise<string> {
+  const payload = (await response.json().catch(() => null)) as {
+    detail?: { message?: string } | string;
+    message?: string;
+  } | null;
+  if (typeof payload?.detail === "string") return payload.detail;
+  if (typeof payload?.detail?.message === "string") return payload.detail.message;
+  if (typeof payload?.message === "string") return payload.message;
+  return fallback;
+}
+
 export default function ConnectionsPage() {
+  const { user, loading: authLoading } = useAuth();
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [connectingService, setConnectingService] = useState<string | null>(
+    null
+  );
+  const [busyConnectionId, setBusyConnectionId] = useState<string | null>(null);
+
+  const connectedById = useMemo(
+    () => new Map(connections.map((connection) => [connection.id, connection])),
+    [connections]
+  );
+
+  const loadConnections = useCallback(async () => {
+    if (!user) {
+      setConnections([]);
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch("/api/connections", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        throw new Error(
+          await getErrorMessage(response, "Connections could not be loaded.")
+        );
+      }
+      const data = (await response.json()) as { connections?: Connection[] };
+      setConnections(data.connections ?? []);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Connections could not be loaded."
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    void loadConnections();
+  }, [authLoading, loadConnections]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get("connected");
+    const error = params.get("error");
+
+    if (connected === "google") {
+      toast.success("Google Gmail connected.");
+      void loadConnections();
+    }
+    if (error) {
+      toast.error(error);
+    }
+
+    if (connected || error) {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, [loadConnections]);
+
+  const startGoogleConnect = async () => {
+    if (!user) {
+      toast.error("Please sign in before connecting Google Gmail.");
+      return;
+    }
+
+    setConnectingService("google-gmail");
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch("/api/connections/google/gmail/authorize", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ return_to: "/dashboard/connections" }),
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        authorizationUrl?: string;
+        detail?: string;
+        message?: string;
+      } | null;
+      if (!response.ok || !payload?.authorizationUrl) {
+        throw new Error(
+          payload?.detail ?? payload?.message ?? "Could not start Google OAuth."
+        );
+      }
+      window.location.href = payload.authorizationUrl;
+    } catch (error) {
+      setConnectingService(null);
+      toast.error(
+        error instanceof Error ? error.message : "Could not start Google OAuth."
+      );
+    }
+  };
+
+  const disconnectConnection = async (connection: Connection) => {
+    if (!user) return;
+    const confirmed = window.confirm(`Disconnect ${connection.serviceName}?`);
+    if (!confirmed) return;
+
+    setBusyConnectionId(connection.id);
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch(
+        `/api/connections/${encodeURIComponent(connection.id)}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (!response.ok) {
+        throw new Error(
+          await getErrorMessage(response, "Connection could not be removed.")
+        );
+      }
+      setConnections((prev) =>
+        prev.filter((existing) => existing.id !== connection.id)
+      );
+      toast.success(`${connection.serviceName} disconnected.`);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Connection could not be removed."
+      );
+    } finally {
+      setBusyConnectionId(null);
+    }
+  };
+
   return (
     <div>
       <h1 className="text-2xl font-medium text-foreground mb-6">Connections</h1>
 
-      {/* Connected services */}
       <section className="mb-8">
         <h2 className="text-[16px] font-medium text-foreground mb-3">
           Connected Services
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {CONNECTED_SERVICES.map((conn) => (
-            <ConnectionCard key={conn.id} connection={conn} />
-          ))}
-        </div>
+        {isLoading ? (
+          <div className="flex justify-center py-16">
+            <Spinner />
+          </div>
+        ) : connections.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {connections.map((connection) => (
+              <ConnectionCard
+                key={connection.id}
+                connection={connection}
+                onDisconnect={(conn) => void disconnectConnection(conn)}
+                onReconnect={() => void startGoogleConnect()}
+                isBusy={busyConnectionId === connection.id}
+              />
+            ))}
+          </div>
+        ) : (
+          <Card>
+            <CardContent className="p-5 flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                <Mail className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-[14px] font-medium text-foreground">
+                  No connected services
+                </p>
+                <p className="text-[13px] text-muted-foreground">
+                  Connect Google Gmail to run email workflows.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </section>
 
-      {/* Available services */}
       <section>
         <h2 className="text-[16px] font-medium text-foreground mb-3">
           Available Services
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {AVAILABLE_SERVICES.map((service) => {
+            const existingConnection = connectedById.get(service.connectionId);
             const colorClass =
-              SERVICE_COLORS[service.slug] ?? "bg-conduut-50 text-conduut-700";
+              SERVICE_COLORS[service.icon] ?? "bg-conduut-50 text-conduut-700";
+            const isBusy = connectingService === service.slug;
+
             return (
-              <Card key={service.slug} className="opacity-80">
+              <Card key={service.slug}>
                 <CardContent className="p-4">
                   <div className="flex items-center gap-3">
                     <div
                       className={cn(
-                        "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[16px] font-semibold",
+                        "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
                         colorClass
                       )}
                     >
-                      {service.name[0].toUpperCase()}
+                      <Mail className="h-5 w-5" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-[14px] font-medium text-foreground">
@@ -136,12 +255,27 @@ export default function ConnectionsPage() {
                     </div>
                     <Button
                       size="sm"
-                      variant="outline"
+                      variant={existingConnection ? "outline" : "default"}
                       className="h-7 text-[12px] px-3 shrink-0"
-                      onClick={() => console.log("Connect:", service.slug)}
+                      onClick={() => void startGoogleConnect()}
+                      disabled={isBusy}
                     >
-                      <Plus className="h-3 w-3" />
-                      Connect
+                      {isBusy ? (
+                        <>
+                          <Spinner size="sm" className="text-current" />
+                          Connecting
+                        </>
+                      ) : existingConnection ? (
+                        <>
+                          <RefreshCw className="h-3 w-3" />
+                          Reconnect
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="h-3 w-3" />
+                          Connect
+                        </>
+                      )}
                     </Button>
                   </div>
                 </CardContent>

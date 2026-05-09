@@ -17,7 +17,7 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from src import store
-from src.agent.provider_factory import build_model, classify_provider_error
+from src.agent.provider_factory import build_model, build_model_settings, classify_provider_error
 from src.agent.schemas import AgentDeps, AgentEvent
 from src.agent.tools import create_agent
 
@@ -43,7 +43,7 @@ def _history_from_store_messages(messages: list[dict]) -> tuple[str, list[ModelM
     history: list[ModelMessage] = []
 
     for message in prior_messages:
-        content = str(message.get("content") or "")
+        content = _content_with_attachment_context(message)
         if not content:
             continue
         role = message.get("role")
@@ -53,6 +53,56 @@ def _history_from_store_messages(messages: list[dict]) -> tuple[str, list[ModelM
             history.append(ModelResponse(parts=[TextPart(content=content)]))
 
     return user_prompt, history
+
+
+def _content_with_attachment_context(message: dict) -> str:
+    content = str(message.get("content") or "")
+    attachments = message.get("attachments")
+    if not isinstance(attachments, list):
+        return content
+
+    context_items: list[str] = []
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+        data = attachment.get("data")
+        if not isinstance(data, dict):
+            continue
+        attachment_type = attachment.get("type")
+        if attachment_type == "workflow_preview":
+            workflow_id = data.get("id")
+            name = data.get("name")
+            status = data.get("status")
+            if workflow_id:
+                context_items.append(
+                    f"workflow_preview id={workflow_id} name={name} status={status}"
+                )
+        elif attachment_type == "workflow_run_result":
+            workflow_id = data.get("workflowId")
+            execution_id = data.get("executionId")
+            status = data.get("status")
+            if workflow_id:
+                context_items.append(
+                    "workflow_run "
+                    f"workflowId={workflow_id} "
+                    f"executionId={execution_id} "
+                    f"status={status}"
+                )
+        elif attachment_type == "user_input_request":
+            question = data.get("question")
+            missing_fields = data.get("missingFields")
+            if question:
+                context_items.append(
+                    f"user_input_request question={question} missingFields={missing_fields}"
+                )
+
+    if not context_items:
+        return content
+
+    return (
+        f"{content}\n\n"
+        "[Conduut internal context for future tool calls: " + "; ".join(context_items) + "]"
+    )
 
 
 def _event_to_sse(item: AgentEvent) -> str:
@@ -79,6 +129,9 @@ async def run(
 
     try:
         model = build_model(settings.provider, settings.model, settings.api_key)
+        model_settings = build_model_settings(
+            settings.provider, settings.model, settings.reasoning_effort
+        )
     except Exception as exc:
         yield _sse("error", {"code": "model_config", "message": classify_provider_error(exc)})
         return
@@ -90,6 +143,7 @@ async def run(
             user_prompt,
             deps=deps,
             message_history=message_history,
+            model_settings=model_settings,
             usage_limits=UsageLimits(
                 request_limit=MAX_MODEL_REQUESTS,
                 tool_calls_limit=MAX_TOOL_CALLS,
@@ -161,5 +215,6 @@ async def run(
             "conversation_id": conv_id,
             "provider": settings.provider,
             "model": settings.model,
+            "reasoning_effort": settings.reasoning_effort,
         },
     )

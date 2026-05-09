@@ -69,3 +69,36 @@ export async function DELETE(
     return NextResponse.json({ message: "Agent service is unreachable." }, { status: 503 });
   }
 }
+
+export async function POST(
+  request: NextRequest,
+  context: { params: Promise<{ workflowId: string }> }
+) {
+  const authHeader = getAuthHeader(request);
+  if (!authHeader) {
+    return NextResponse.json({ message: "Missing Authorization header" }, { status: 401 });
+  }
+
+  const { workflowId } = await context.params;
+  const url = new URL(request.url);
+  const action = url.searchParams.get("action") ?? "run";
+  if (action !== "run") {
+    return NextResponse.json({ message: "Unsupported workflow action" }, { status: 400 });
+  }
+
+  try {
+    const body = await request.json().catch(() => ({ input: {}, source: "dashboard" }));
+    const response = await fetch(
+      `${getAgentBaseUrl()}/api/workflows/${encodeURIComponent(workflowId)}/run`,
+      {
+        method: "POST",
+        headers: { Authorization: authHeader, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        cache: "no-store",
+      }
+    );
+    return await toResponsePayload(response);
+  } catch {
+    return NextResponse.json({ message: "Agent service is unreachable." }, { status: 503 });
+  }
+}

@@ -1,7 +1,8 @@
 FROM node:20-alpine AS base
 
 WORKDIR /app
-RUN corepack enable
+ARG PNPM_VERSION=10.19.0
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
@@ -12,7 +13,8 @@ RUN pnpm build
 FROM node:20-alpine AS runtime
 
 WORKDIR /app
-RUN corepack enable
+ARG PNPM_VERSION=10.19.0
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 
 ENV NODE_ENV=production
 

@@ -9,9 +9,9 @@ services:
       N8N_USER_MANAGEMENT_DISABLED: "true"
       N8N_DIAGNOSTICS_ENABLED: "false"
       N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
-      WEBHOOK_URL: "http://localhost:5678"
+      WEBHOOK_URL: "http://localhost:5780"
     ports:
-      - "5678:5678"
+      - "127.0.0.1:5780:5678"
     volumes:
       - n8n-data:/home/node/.n8n
     networks:
@@ -35,11 +35,15 @@ services:
       CONDUUT_ENVIRONMENT: development
       CONDUUT_N8N_URL: http://n8n:5678
       CONDUUT_N8N_API_KEY: ***REMOVED***
+      CONDUUT_PUBLIC_WEB_URL: ${CONDUUT_PUBLIC_WEB_URL:-http://localhost:3000}
+      CONDUUT_GOOGLE_OAUTH_CLIENT_ID: ${CONDUUT_GOOGLE_OAUTH_CLIENT_ID:-}
+      CONDUUT_GOOGLE_OAUTH_CLIENT_SECRET: ${CONDUUT_GOOGLE_OAUTH_CLIENT_SECRET:-}
+      CONDUUT_OAUTH_STATE_TTL_SECONDS: ${CONDUUT_OAUTH_STATE_TTL_SECONDS:-600}
     depends_on:
       n8n:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "8100:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 10s

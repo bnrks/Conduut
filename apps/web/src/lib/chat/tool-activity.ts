@@ -4,6 +4,7 @@ const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   search_n8n_nodes: "Checking available n8n steps",
   get_node_schema: "Reading step requirements",
   find_workflow_template: "Looking for a matching template",
+  request_user_input: "Checking what details are missing",
   list_workflows: "Checking workflows",
   get_workflow: "Loading workflow details",
   create_workflow: "Creating the workflow",

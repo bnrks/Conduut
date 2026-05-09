@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping, Sequence
 from typing import Any
+from uuid import uuid4
 
 from n8n_registry import NodeRegistry
 
@@ -9,6 +10,14 @@ from src.agent.schemas import WorkflowNode
 from src.registry import registry as default_registry
 
 _N8N_TYPE_PREFIXES = ("n8n-nodes-base.", "@n8n/", "n8n-nodes-")
+_PLACEHOLDER_EMAIL_DOMAINS = {"email.com", "example.com", "example.org", "example.net"}
+_PLACEHOLDER_EMAILS = {
+    "receiver@email.com",
+    "recipient@email.com",
+    "test@email.com",
+    "test@example.com",
+    "info@example.com",
+}
 
 
 def _as_node_dict(node: WorkflowNode | Mapping[str, Any]) -> dict[str, Any]:
@@ -66,6 +75,52 @@ def _normalize_connection_value(value: Any, references: Mapping[str, str]) -> An
 
     if isinstance(value, list):
         return [_normalize_connection_value(nested, references) for nested in value]
+
+    return value
+
+
+def _ensure_connection_target(value: Any) -> Any:
+    if not isinstance(value, Mapping) or "node" not in value:
+        return value
+    target = dict(value)
+    target.setdefault("type", "main")
+    target.setdefault("index", 0)
+    return target
+
+
+def _normalize_output_connection_groups(value: Any) -> Any:
+    if isinstance(value, Mapping) and "node" in value:
+        return [[_ensure_connection_target(value)]]
+
+    if not isinstance(value, list):
+        return value
+
+    if all(isinstance(item, Mapping) and "node" in item for item in value):
+        return [[_ensure_connection_target(item) for item in value]]
+
+    groups: list[Any] = []
+    for group in value:
+        if isinstance(group, Mapping) and "node" in group:
+            groups.append([_ensure_connection_target(group)])
+        elif isinstance(group, list):
+            groups.append([_ensure_connection_target(item) for item in group])
+        else:
+            groups.append(group)
+    return groups
+
+
+def _normalize_connection_shape(value: Any) -> Any:
+    if isinstance(value, Mapping) and "node" in value:
+        return {"main": [[_ensure_connection_target(value)]]}
+
+    if isinstance(value, list):
+        return {"main": _normalize_output_connection_groups(value)}
+
+    if isinstance(value, Mapping):
+        return {
+            output_type: _normalize_output_connection_groups(output_groups)
+            for output_type, output_groups in value.items()
+        }
 
     return value
 
@@ -130,6 +185,113 @@ def _validate_set_node(node: Mapping[str, Any], label: str) -> list[str]:
                 errors.append(f"Set node '{item_label}' missing required field: {field}")
 
     return errors
+
+
+def _first_non_empty_mapping_value(mapping: Mapping[str, Any], keys: Sequence[str]) -> Any:
+    for key in keys:
+        value = mapping.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _looks_like_placeholder_email(value: Any) -> bool:
+    email = str(value or "").strip().lower()
+    if email.startswith("=") or "{{$json." in email:
+        return False
+    if not email or "@" not in email:
+        return True
+    if email in _PLACEHOLDER_EMAILS:
+        return True
+    domain = email.rsplit("@", 1)[-1]
+    return domain in _PLACEHOLDER_EMAIL_DOMAINS
+
+
+def _validate_gmail_node(node: Mapping[str, Any], label: str) -> list[str]:
+    if node.get("type") != "n8n-nodes-base.gmail":
+        return []
+    parameters = node.get("parameters")
+    if not isinstance(parameters, Mapping):
+        return [f"Gmail node '{label}' parameters must be an object"]
+    resource = str(parameters.get("resource") or "message").lower()
+    operation = str(parameters.get("operation") or "").lower()
+    if resource != "message" or operation != "send":
+        return []
+
+    errors: list[str] = []
+    send_to = parameters.get("sendTo")
+    if not send_to:
+        errors.append(f"Gmail node '{label}' send operation requires parameters.sendTo")
+    elif _looks_like_placeholder_email(send_to):
+        errors.append(f"Gmail node '{label}' sendTo must be a real recipient email")
+    if not parameters.get("subject"):
+        errors.append(f"Gmail node '{label}' send operation requires parameters.subject")
+    if not parameters.get("message"):
+        errors.append(f"Gmail node '{label}' send operation requires parameters.message")
+    return errors
+
+
+def _normalize_gmail_node(data: dict[str, Any]) -> None:
+    if data.get("type") != "n8n-nodes-base.gmail":
+        return
+    parameters = data.get("parameters")
+    if not isinstance(parameters, dict):
+        return
+    resource = str(parameters.get("resource") or "message").lower()
+    operation = str(parameters.get("operation") or "").lower()
+    if resource == "message" and operation == "create":
+        parameters["operation"] = "send"
+        operation = "send"
+    if resource != "message" or operation != "send":
+        return
+
+    additional_fields = parameters.get("additionalFields")
+    if not isinstance(additional_fields, Mapping):
+        additional_fields = {}
+
+    send_to = _first_non_empty_mapping_value(
+        parameters,
+        ("sendTo", "toEmail", "to", "recipient", "recipientEmail"),
+    ) or _first_non_empty_mapping_value(
+        additional_fields,
+        ("sendTo", "toEmail", "to", "recipient", "recipientEmail"),
+    )
+    subject = _first_non_empty_mapping_value(
+        parameters, ("subject",)
+    ) or _first_non_empty_mapping_value(additional_fields, ("subject",))
+    message = _first_non_empty_mapping_value(
+        parameters,
+        ("message", "body", "bodyContent", "bodyText", "content"),
+    ) or _first_non_empty_mapping_value(
+        additional_fields,
+        ("message", "body", "bodyContent", "bodyText", "content"),
+    )
+
+    if send_to:
+        parameters["sendTo"] = send_to
+    if subject:
+        parameters["subject"] = subject
+    if message:
+        parameters["message"] = message
+    if "emailType" not in parameters:
+        body_type = str(
+            parameters.get("bodyContentType") or additional_fields.get("bodyContentType") or ""
+        ).lower()
+        parameters["emailType"] = "text" if "text" in body_type else "text"
+
+    for alias in (
+        "toEmail",
+        "to",
+        "recipient",
+        "recipientEmail",
+        "body",
+        "bodyContent",
+        "bodyText",
+        "content",
+        "bodyContentType",
+    ):
+        parameters.pop(alias, None)
+    parameters.pop("additionalFields", None)
 
 
 def validate_workflow_payload(
@@ -207,6 +369,7 @@ def validate_workflow_payload(
             errors.append(f"Node '{label}' parameters must be an object")
 
         errors.extend(_validate_set_node(node, label))
+        errors.extend(_validate_gmail_node(node, label))
 
         if _is_trigger_node(node, schema):
             has_trigger = True
@@ -242,6 +405,9 @@ def normalize_workflow_nodes(
         if schema:
             data["type"] = schema.get("type", data.get("type"))
             data["typeVersion"] = schema.get("typeVersion", data.get("typeVersion"))
+        _normalize_gmail_node(data)
+        if data.get("type") == "n8n-nodes-base.webhook" and not data.get("webhookId"):
+            data["webhookId"] = str(uuid4())
         normalized.append(WorkflowNode.model_validate(data))
     return normalized
 
@@ -254,9 +420,11 @@ def normalize_workflow_connections(
 
     references = _node_reference_map(nodes)
     return {
-        _resolve_node_reference(source_name, references): _normalize_connection_value(
-            value,
-            references,
+        _resolve_node_reference(source_name, references): _normalize_connection_shape(
+            _normalize_connection_value(
+                value,
+                references,
+            )
         )
         for source_name, value in connections.items()
     }

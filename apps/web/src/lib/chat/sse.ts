@@ -5,6 +5,7 @@ export interface ChatSendRequest {
   conversation_id?: string;
   provider?: string;
   model?: string;
+  reasoning_effort?: string;
 }
 
 export interface ChatStreamEvent {

@@ -160,7 +160,7 @@ export function Message({ message }: MessageProps) {
         </div>
 
         {/* Attachments */}
-        {message.attachments?.map((attachment, i) => {
+        {message.attachments?.filter((attachment) => attachment.type !== "user_input_request").map((attachment, i) => {
           if (attachment.type === "workflow_preview") {
             return (
               <WorkflowPreview

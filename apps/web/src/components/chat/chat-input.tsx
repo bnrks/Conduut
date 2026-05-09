@@ -1,7 +1,7 @@
 "use client";
 
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
-import { SendHorizontal, ChevronDown, Search, Check, Star } from "lucide-react";
+import { SendHorizontal, ChevronDown, Search, Check, Star, Brain } from "lucide-react";
 import { useAutoResizeTextarea } from "@/hooks/use-auto-resize-textarea";
 import { cn } from "@/lib/utils";
 import type { ModelOption, ProviderOption } from "@/hooks/use-model-selector";
@@ -17,10 +17,79 @@ export interface ChatInputProps {
   models?: ModelOption[];
   selectedModel?: string | null;
   onModelChange?: (model: string) => void;
+  reasoningEfforts?: string[];
+  selectedReasoningEffort?: string | null;
+  onReasoningEffortChange?: (effort: string) => void;
   loadingModels?: boolean;
   lockedModel?: boolean;
   isFavorite?: (provider: string, modelId: string) => boolean;
   onToggleFavorite?: (provider: string, modelId: string) => void;
+}
+
+function ReasoningDropdown({
+  efforts,
+  selected,
+  onChange,
+}: {
+  efforts: string[];
+  selected: string;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  if (efforts.length === 0) return null;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "flex items-center gap-1 rounded-md px-2 py-1",
+          "text-[12px] transition-all duration-150",
+          "border border-transparent hover:border-[#E4E4E7] hover:bg-[#F4F4F5]",
+          open ? "border-[#E4E4E7] bg-[#F4F4F5]" : "",
+          selected ? "text-[#18181B]" : "text-[#71717A]"
+        )}
+        title="Reasoning effort"
+      >
+        <Brain className="h-3 w-3 shrink-0 text-[#71717A]" />
+        <span className="max-w-[64px] truncate">{selected || "Reasoning"}</span>
+        <ChevronDown
+          className={cn("h-3 w-3 shrink-0 text-[#A1A1AA] transition-transform duration-150", open && "rotate-180")}
+        />
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-0 mb-1.5 z-50 min-w-[132px] overflow-hidden rounded-lg border border-[#E4E4E7] bg-white shadow-lg shadow-black/5">
+          {efforts.map((effort) => (
+            <button
+              key={effort}
+              type="button"
+              onClick={() => { onChange(effort); setOpen(false); }}
+              className={cn(
+                "flex w-full items-center justify-between gap-2 px-3 py-2",
+                "text-[13px] transition-colors hover:bg-[#F4F4F5]",
+                effort === selected ? "text-[#534AB7] font-medium" : "text-[#3F3F46]"
+              )}
+            >
+              <span>{effort}</span>
+              {effort === selected && <Check className="h-3 w-3 shrink-0" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ── Provider pill dropdown ───────────────────────────────────────────── */
@@ -314,6 +383,9 @@ export function ChatInput({
   models = [],
   selectedModel = "",
   onModelChange,
+  reasoningEfforts = [],
+  selectedReasoningEffort = "",
+  onReasoningEffortChange,
   loadingModels = false,
   lockedModel = false,
   isFavorite,
@@ -361,6 +433,13 @@ export function ChatInput({
                       <span>{selectedModel}</span>
                     </>
                   )}
+                  {selectedReasoningEffort && (
+                    <>
+                      <span className="text-[#E4E4E7]">/</span>
+                      <Brain className="h-3 w-3 text-[#A1A1AA]" />
+                      <span>{selectedReasoningEffort}</span>
+                    </>
+                  )}
                   <span className="ml-1 text-[10px] text-[#A1A1AA] border border-[#E4E4E7] rounded px-1">locked</span>
                 </div>
               ) : (
@@ -381,6 +460,11 @@ export function ChatInput({
                         provider={selectedProvider}
                         isFavorite={isFavorite}
                         onToggleFavorite={onToggleFavorite}
+                      />
+                      <ReasoningDropdown
+                        efforts={reasoningEfforts}
+                        selected={selectedReasoningEffort ?? ""}
+                        onChange={onReasoningEffortChange ?? (() => {})}
                       />
                     </>
                   )}

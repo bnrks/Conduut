@@ -27,6 +27,8 @@ Router'lar `/api` prefix'i altinda include edilir:
 - `settings`
 - `favorites`
 - `workflows`
+- `credentials`
+- `connections`
 
 Health endpoint: `GET /health`.
 
@@ -59,12 +61,28 @@ Agent runner Pydantic AI tool calling kullanir. Tool'lar event queue uzerinden
 frontend sozlesmesi icin `token` event'leriyle parca parca gonderilir. Tool
 execution uzunsa keep-alive ping yollanir.
 
+Conversation history modele aktarilirken assistant attachment'lari da korunur.
+`workflow_preview` workflow id baglamini, `workflow_run_result` execution
+baglamini, `user_input_request` ise agent'in once sordugu eksik bilgi
+sorusunu ic context olarak modele ekler. Boylece kullanici sadece eksik cevabi
+yazdiginda agent onceki isi devam ettirebilir.
+
 `src/agent/provider_factory.py` Firestore'daki provider/model/API key bilgisine
 gore Pydantic AI model instance uretir. Desteklenen provider'lar: `openai`,
 `anthropic`, `google`, `groq`, `openrouter`. Eski LiteLLM prefix'leri
 (`gemini/`, `google/`, `groq/`, `openrouter/`) normalize edilir. Settings
 route'lari ve chat provider override path'i bu liste disindaki provider
 anahtarlarini 422 ile reddeder.
+OpenAI model listesi donerken Conduut bilinen model id/prefix'lerine gore
+`reasoning_efforts` bilgisini ekler; `gpt-5*` ve `o*` reasoning destekleyen
+modeller icin chat request'i `reasoning_effort` tasiyabilir. Backend secilen
+effort'u modelin destek listesine karsi validate eder ve Pydantic AI
+`model_settings.openai_reasoning_effort` olarak agent run'a iletir. Conversation
+metadata'si provider/model ile birlikte secilen reasoning effort'u da saklar;
+devam eden chat ayni ayara kilitlenir.
+Provider hata siniflandirmasi auth/model-not-found/rate-limit durumlarina ek
+olarak `insufficient_quota`, quota ve billing mesajlarini ayri yakalar; chat
+SSE error event'i kullaniciya provider quota/billing problemini net soyler.
 
 ## Agent Tools
 
@@ -75,6 +93,23 @@ anahtarlarini 422 ile reddeder.
   `update_workflow`, `delete_workflow`.
 - Runtime: `activate_workflow`, `deactivate_workflow`, `execute_workflow`,
   `list_executions`, `analyze_workflow_readiness`, `inspect_execution`.
+- Clarification: `request_user_input`.
+
+`create_workflow` ve `update_workflow` opsiyonel `input_schema` alabilir.
+Schema MVP'de Firestore `users/{uid}/workflow_metadata/{workflowId}` altinda
+saklanir. Gmail send node'u reusable workflow olarak uretildiginde `to`,
+`subject`, `message` runtime field'lari infer edilir ve Gmail parametreleri
+webhook payload expression'larina baglanir.
+
+`request_user_input`, kullanicinin otomasyon isteginde gerekli is bilgisi
+eksikse kullanilir. Ornekler: gercek alici email adresleri, gonderilecek
+metin, hangi hesap/servis kullanilacagi, schedule/trigger zamani veya
+destructive aksiyon onayi. Tool `user_input_request` attachment'i emit eder ve
+ayni agent turunda workflow create/update/activate/run/delete gibi yan etkili
+tool'larin devam etmesini engeller. Kullanici cevabi ayni chat'e yazinca
+history baglami sayesinde agent task'a kaldigi yerden devam eder. Attachment
+opsiyonel `choices` listesi ve `allowSkip` flag'i tasiyabilir; web UI aktif son
+istekte bunu modal benzeri cevap paneli olarak render eder.
 
 Workflow readiness davranisi:
 
@@ -83,11 +118,27 @@ Workflow readiness davranisi:
   `credential_request` attachment emit eder.
 - Activate/run islemleri eksik credential varsa n8n'e side effect yapmadan
   durur ve kullanicidan credential ister.
-- Ilk faz sadece API key/token credential formunu destekler; OAuth proxy henuz
-  yoktur.
+- Gmail read/send operasyonlari icin kullanicinin `google_gmail` connection'i
+  varsa agent n8n workflow node'una `gmailOAuth2` credential'i otomatik attach
+  eder. n8n Gmail v2 message send icin model bazen `operation=create`
+  uretebilir; agent bunu n8n'e yazmadan once canonical `operation=send`
+  degerine normalize eder. Gmail send parameter alias'lari da canonical
+  `sendTo`, `subject`, `message`, `emailType` alanlarina cevrilir; placeholder
+  alici email'leri validation hatasi sayilir.
+- Gmail connection yoksa chat'e `oauth_prompt` attachment emit edilir. Gmail
+  delete/mark-read/mark-unread gibi modify operasyonlari V1 read/send
+  credential ile otomatik attach edilmez.
+- API key/token isteyen diger node'larda eski `credential_request` form akisi
+  korunur.
+- `POST /api/workflows/{workflow_id}/run` dashboard ve agent icin ortak
+  runtime contract'tir. Body `{ input, source }` tasir; backend required input
+  schema validation yapar, credential readiness'i korur ve n8n webhook'una
+  validated payload gonderir. `execute_workflow` ayni helper'i kullanir.
 - `execute_workflow` Conduut'tan sadece webhook-triggered workflow'lari test
-  eder. Diger external trigger'lar icin agent hazirlik/credential durumunu
-  bildirir, gercek event gelmeden calistirdim demez.
+  eder. Manuel tetikleyiciyle olusmus Conduut workflow'lari run isteginde
+  otomatik olarak POST webhook trigger'a cevrilir ve sonra Conduut tarafindan
+  tetiklenir. Diger external trigger'lar icin agent hazirlik/credential
+  durumunu bildirir, gercek event gelmeden calistirdim demez.
 - Workflow run dogrulamasi agent icinde kalir. `execute_workflow` webhook
   response ve n8n execution detayini okuyarak sonucu modele tool sonucu olarak
   verir, fakat chat'e `workflow_run_result` attachment'i emit etmez. Kullanici
@@ -99,6 +150,22 @@ Credential route'lari:
   credential metadata listesini dondurur.
 - `POST /api/credentials`: API-key credential'i n8n public API'ye kaydeder,
   ilgili workflow node'una attach eder ve Firestore'a metadata yazar.
+
+Connection route'lari:
+
+- `GET /api/connections`: kullanicinin app connection metadata listesini
+  dondurur.
+- `POST /api/connections/google/gmail/authorize`: Firebase auth ister,
+  OAuth state ve PKCE verifier uretir, Firestore `oauth_states/{state}` yazar
+  ve Google authorization URL dondurur.
+- `POST /api/connections/google/gmail/callback`: auth header beklemez; state
+  dogrular, Google token exchange ve userinfo okur, n8n'de `gmailOAuth2`
+  credential olusturur ve Firestore metadata yazar. n8n public API schema'si
+  `gmailOAuth2` icin token datasina ek olarak `serverUrl`,
+  `sendAdditionalBodyProperties` ve `additionalBodyProperties` alanlarini da
+  bekler.
+- `DELETE /api/connections/{connection_id}`: metadata'yi siler ve n8n
+  credential'i best-effort siler.
 
 Workflow create/update oncesi `src/agent/validation.py` validator pipeline'i
 calisir:
@@ -125,6 +192,12 @@ validation hatalarinda n8n'e side effect yapilmaz; Pydantic AI `ModelRetry` ile
 modele duzeltme yaptirir. Validation retry'a giden hatalar
 `workflow_validation_failed` log event'iyle kaydedilir.
 
+Connection normalizer, model `{"main": [{"node": "Gmail", "type": "main"}]}`
+gibi flat output listesi uretirse bunu n8n editor'un bekledigi
+`{"main": [[{"node": "Gmail", "type": "main", "index": 0}]]}` formatina
+cevirir. Aksi halde n8n workflow'u API'den kabul etse bile editor
+`object is not iterable` hatasiyla acamayabilir.
+
 ## Persistence
 
 `src/store.py` Firestore kullanir:
@@ -134,6 +207,9 @@ modele duzeltme yaptirir. Validation retry'a giden hatalar
 - `users/{uid}/settings/favorites`
 - `users/{uid}/conversations/{convId}`
 - `users/{uid}/conversations/{convId}/messages/{messageId}`
+- `oauth_states/{state}`
+- `users/{uid}/connections/google_gmail`
+- `users/{uid}/workflow_metadata/{workflowId}`
 
 Firestore sync SDK cagrilari `asyncio.to_thread` ile sarilir.
 
@@ -148,9 +224,10 @@ tarafindan ignore edilir.
 ## n8n Client
 
 `src/n8n_client.py` tek shared n8n instance REST API'siyle konusur. Workflow,
-credential ve execution islemlerinde n8n hata body'lerini koruyan typed hata
-sinifi kullanir. Bu MVP davranisi [[adr-0001-shared-n8n-mvp]] icinde
-kayitlidir.
+credential create/delete/attach ve execution islemlerinde n8n hata body'lerini
+koruyan typed hata sinifi kullanir. Bu MVP davranisi
+[[adr-0001-shared-n8n-mvp]] icinde kayitlidir. Google Gmail connection karari
+[[adr-0003-google-oauth-broker-mvp]] icinde kayitlidir.
 
 Ilgili notlar: [[n8n-registry]], [[chat-workflow-generation]],
 [[known-issues]].

@@ -32,6 +32,14 @@ class WorkflowPreviewAttachment(BaseModel):
     data: WorkflowPreviewData
 
 
+class WorkflowInputField(BaseModel):
+    name: str
+    label: str
+    type: Literal["string", "email", "textarea"] = "string"
+    required: bool = True
+    placeholder: str | None = None
+
+
 class CredentialField(BaseModel):
     name: str
     label: str
@@ -56,6 +64,37 @@ class CredentialRequestAttachment(BaseModel):
     data: CredentialRequestData
 
 
+class OAuthPromptData(BaseModel):
+    service: str
+    description: str
+    authorizePath: str = "/api/connections/google/gmail/authorize"
+    returnTo: str = "/dashboard/connections"
+    iconUrl: str | None = None
+
+
+class OAuthPromptAttachment(BaseModel):
+    type: Literal["oauth_prompt"] = "oauth_prompt"
+    data: OAuthPromptData
+
+
+class UserInputChoice(BaseModel):
+    label: str
+    value: str | None = None
+
+
+class UserInputRequestData(BaseModel):
+    question: str
+    missingFields: list[str] = Field(default_factory=list)
+    choices: list[UserInputChoice] = Field(default_factory=list)
+    allowSkip: bool = False
+    reason: str | None = None
+
+
+class UserInputRequestAttachment(BaseModel):
+    type: Literal["user_input_request"] = "user_input_request"
+    data: UserInputRequestData
+
+
 class WorkflowRunResultData(BaseModel):
     workflowId: str
     executionId: str | None = None
@@ -67,7 +106,12 @@ class WorkflowRunResultData(BaseModel):
     outputs: list[dict[str, Any]] = Field(default_factory=list)
 
 
-AgentAttachment = WorkflowPreviewAttachment | CredentialRequestAttachment
+AgentAttachment = (
+    WorkflowPreviewAttachment
+    | CredentialRequestAttachment
+    | OAuthPromptAttachment
+    | UserInputRequestAttachment
+)
 
 
 AgentEvent = tuple[str, dict[str, Any]]
@@ -81,6 +125,7 @@ class AgentDeps:
     conversation_id: str
     event_queue: asyncio.Queue[AgentEvent]
     attachments: list[dict[str, Any]] = field(default_factory=list)
+    awaiting_user_input: bool = False
 
     async def emit_tool_call(self, tool: str) -> None:
         await self.event_queue.put(

@@ -9,10 +9,11 @@ export interface Message {
   attachments?: MessageAttachment[];
   provider?: string;
   model?: string;
+  reasoningEffort?: string;
 }
 
 export interface MessageAttachment {
-  type: "workflow_preview" | "oauth_prompt" | "credential_request";
+  type: "workflow_preview" | "oauth_prompt" | "credential_request" | "user_input_request";
   data: Record<string, unknown>;
 }
 
@@ -24,4 +25,6 @@ export interface Conversation {
   createdAt: string;
   provider?: string;
   model?: string;
+  reasoning_effort?: string;
+  reasoningEffort?: string;
 }

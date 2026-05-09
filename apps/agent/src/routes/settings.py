@@ -7,6 +7,7 @@ from src.agent.provider_factory import (
     UnsupportedProviderError,
     classify_provider_error,
     normalize_provider,
+    reasoning_efforts_for_model,
     verify_provider_connection,
 )
 from src.auth import get_user_id
@@ -58,6 +59,16 @@ def _provider_or_422(provider: str) -> str:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+def _model_option(provider: str, model_id: str, name: str | None = None) -> dict:
+    reasoning_efforts = list(reasoning_efforts_for_model(provider, model_id))
+    return {
+        "id": model_id,
+        "name": name or model_id,
+        "supports_reasoning": bool(reasoning_efforts),
+        "reasoning_efforts": reasoning_efforts,
+    }
+
+
 # --- Active LLM Settings ---
 
 
@@ -67,7 +78,12 @@ async def get_settings(request: Request):
     s = await store.get_llm_settings(user_id)
     if not s:
         raise HTTPException(status_code=404, detail="No LLM settings configured")
-    return {"provider": s.provider, "model": s.model, "api_key_set": True}
+    return {
+        "provider": s.provider,
+        "model": s.model,
+        "reasoning_effort": s.reasoning_effort,
+        "api_key_set": True,
+    }
 
 
 @router.put("/settings/llm")
@@ -110,7 +126,12 @@ async def get_provider_models(provider: str, request: Request):
         raise HTTPException(status_code=404, detail="Provider not found")
 
     if provider in _HARDCODED_MODELS:
-        return {"models": _HARDCODED_MODELS[provider]}
+        return {
+            "models": [
+                _model_option(provider, item["id"], item.get("name"))
+                for item in _HARDCODED_MODELS[provider]
+            ]
+        }
 
     if provider in _OPENAI_COMPAT_BASE:
         try:
@@ -128,7 +149,7 @@ async def get_provider_models(provider: str, request: Request):
                     mid.startswith(p) for p in ("gpt-", "o1", "o3", "o4")
                 ):  # noqa: E501
                     continue
-                result.append({"id": mid, "name": mid})
+                result.append(_model_option(provider, mid))
             return {"models": sorted(result, key=lambda x: x["id"])}
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Could not fetch models: {e}")
@@ -143,7 +164,9 @@ async def get_provider_models(provider: str, request: Request):
                 r.raise_for_status()
             models = r.json().get("data", [])
             result = [
-                {"id": m["id"], "name": m.get("name") or m["id"]} for m in models if m.get("id")
+                _model_option(provider, m["id"], m.get("name") or m["id"])
+                for m in models
+                if m.get("id")
             ]  # noqa: E501
             return {"models": sorted(result, key=lambda x: x["name"])}
         except Exception as e:

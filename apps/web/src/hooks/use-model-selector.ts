@@ -6,6 +6,8 @@ import { useAuth } from "./use-auth";
 export interface ModelOption {
   id: string;
   name: string;
+  supports_reasoning?: boolean;
+  reasoning_efforts?: string[];
 }
 
 export interface ProviderOption {
@@ -19,6 +21,7 @@ export function useModelSelector() {
   const [selectedProvider, setSelectedProvider] = useState<string>("");
   const [models, setModels] = useState<ModelOption[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
+  const [selectedReasoningEffort, setSelectedReasoningEffort] = useState<string>("");
   const [loadingModels, setLoadingModels] = useState(false);
   // favorites: { provider: Set<model_id> }
   const [favorites, setFavorites] = useState<Record<string, Set<string>>>({});
@@ -27,6 +30,20 @@ export function useModelSelector() {
     if (!user) throw new Error("not authenticated");
     return user.getIdToken();
   }, [user]);
+
+  const defaultReasoningEffort = useCallback((model: ModelOption | undefined) => {
+    const efforts = model?.reasoning_efforts ?? [];
+    if (efforts.includes("medium")) return "medium";
+    return efforts.find((effort) => effort !== "none") ?? efforts[0] ?? "";
+  }, []);
+
+  const selectModel = useCallback(
+    (modelId: string) => {
+      setSelectedModel(modelId);
+      setSelectedReasoningEffort(defaultReasoningEffort(models.find((m) => m.id === modelId)));
+    },
+    [defaultReasoningEffort, models]
+  );
 
   // Load providers + favorites on mount
   useEffect(() => {
@@ -67,6 +84,7 @@ export function useModelSelector() {
       setLoadingModels(true);
       setModels([]);
       setSelectedModel("");
+      setSelectedReasoningEffort("");
       try {
         const token = await getToken();
         const res = await fetch(
@@ -79,12 +97,14 @@ export function useModelSelector() {
         // Seçili model: favori varsa ilk favori, yoksa ilk model
         const favSet = favorites[provider];
         const firstFav = data.models.find((m) => favSet?.has(m.id));
-        setSelectedModel(firstFav?.id ?? data.models[0]?.id ?? "");
+        const nextModel = firstFav ?? data.models[0];
+        setSelectedModel(nextModel?.id ?? "");
+        setSelectedReasoningEffort(defaultReasoningEffort(nextModel));
       } catch {}
       finally { setLoadingModels(false); }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [user, favorites]
+    [user, favorites, defaultReasoningEffort]
   );
 
   useEffect(() => {
@@ -121,7 +141,10 @@ export function useModelSelector() {
     setSelectedProvider,
     models,
     selectedModel,
-    setSelectedModel,
+    setSelectedModel: selectModel,
+    selectedReasoningEffort,
+    setSelectedReasoningEffort,
+    reasoningEfforts: models.find((m) => m.id === selectedModel)?.reasoning_efforts ?? [],
     loadingModels,
     favorites,
     toggleFavorite,

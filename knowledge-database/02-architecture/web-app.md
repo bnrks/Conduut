@@ -18,6 +18,11 @@ Merkez: [[index]]
 bilinen davranislardan farkli olabilir; kod yazmadan once lokal dokuman veya
 mevcut ornekler kontrol edilmeli.
 
+Docker image Node `20-alpine` kullanir. `apps/web/Dockerfile` Corepack ile
+pnpm'i `10.19.0` surumune pinler; aksi halde Corepack pnpm 11 indirebilir ve
+pnpm 11 Node 22.13+ istedigi icin Node 20 runtime'da `node:sqlite` hatasiyla
+web container baslamaz.
+
 ## Route Gruplari
 
 - `(marketing)`: landing/marketing sayfasi.
@@ -42,6 +47,13 @@ Baslica route handler'lar:
 - `api/conversations/[conversationId]`: conversation detail/delete.
 - `api/workflows`: workflow listesi.
 - `api/workflows/[workflowId]`: activate/deactivate/delete proxy.
+- `api/connections`: connection listeleme.
+- `api/connections/[connectionId]`: connection silme proxy.
+- `api/connections/google/gmail/authorize`: Firebase token ile agent Google
+  Gmail authorize endpoint'ine proxy eder.
+- `api/oauth/google/callback`: Google OAuth callback'ini auth header olmadan
+  agent callback endpoint'ine iletir ve dashboard'a success/error redirect
+  yapar.
 - `api/settings/llm`: aktif provider/model/API key ayarlari.
 - `api/settings/llm/providers`: provider ekleme/listeleme.
 - `api/settings/llm/providers/[provider]/models`: model listeleme.
@@ -53,7 +65,12 @@ Baslica route handler'lar:
 Yeni chat sayfasi model/provider secimine izin verir. Conversation olustuktan
 sonra `conversation-cache` ile gecici cache kullanilir ve router
 `/chat/[conversationId]` sayfasina gider. Devam eden conversation'da provider ve
-model kilitlenir.
+model kilitlenir. Model liste endpoint'i her model icin varsa
+`reasoning_efforts` dizisini dondurur; chat input yalnizca destekleyen modelde
+kompakt reasoning effort secicisini gosterir ve secimi chat request body'de
+`reasoning_effort` olarak yollar. Yeni conversation cache'i ve conversation
+detail response'u bu effort'u da tasir, bu yuzden devam mesajlarinda ayar
+degismez.
 
 SSE event'leri `src/lib/chat/sse.ts` ile parse edilir:
 
@@ -61,14 +78,24 @@ SSE event'leri `src/lib/chat/sse.ts` ile parse edilir:
 - `tool_call`: chat input altindaki typing indicator metnini gunceller; UI
   ham tool adini gostermek yerine `src/lib/chat/tool-activity.ts` mapping'iyle
   sade islem durumlari gosterir.
-- `attachment`: workflow preview veya oauth prompt gibi ekleri ekler.
+- `attachment`: workflow preview, oauth prompt, credential request veya
+  user input request gibi ekleri ekler.
 - `done`: provider/model bilgisini mesaj uzerine yazar.
 - `error`: toast ile hata gosterir.
 
 `WorkflowPreview` workflow kaydini daha belirgin bir "Workflow saved" paneliyle
-gosterir. Workflow run sonuclari icin ayri sonuc/kanit karti render edilmez;
-agent execution sonucunu kendi icinde dogrular ve kullaniciya normal assistant
-mesaji olarak cevap verir.
+gosterir. `OAuthPrompt` artik simule connect yapmaz; agent'tan gelen
+`authorizePath` ile Google Gmail OAuth authorize route'unu cagirir ve
+authorization URL'ine yonlendirir. Workflow run sonuclari icin ayri sonuc/kanit
+karti render edilmez; agent execution sonucunu kendi icinde dogrular ve
+kullaniciya normal assistant mesaji olarak cevap verir.
+
+`ClarificationPanel` component'i agent'in `user_input_request` attachment'ini
+render eder. `user_input_request` mesajlari normal chat balonu/karti olarak
+gosterilmez; aktif son soru chat input'unun hemen ustunde Conduut temasina uygun
+bir panel olarak acilir. Panel agent sorusunu, varsa secilebilir cevaplari ve
+tek bir serbest cevap input'unu gosterir. Secenek tiklama veya serbest cevap,
+normal chat mesaji olarak agent'a gonderilir.
 
 ## UI State
 

@@ -6,6 +6,10 @@ import { toast } from "sonner";
 import { MessageList } from "@/components/chat/message-list";
 import { ChatInput } from "@/components/chat/chat-input";
 import { EmptyState } from "@/components/chat/empty-state";
+import {
+  ClarificationPanel,
+  type ClarificationPanelData,
+} from "@/components/chat/clarification-panel";
 import { useAuth } from "@/hooks/use-auth";
 import { useModelSelector } from "@/hooks/use-model-selector";
 import { streamChat } from "@/lib/chat/sse";
@@ -21,6 +25,16 @@ function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+function activeClarification(messages: Message[], isAgentTyping: boolean) {
+  if (isAgentTyping) return undefined;
+  const lastMessage = messages[messages.length - 1];
+  if (!lastMessage || lastMessage.role !== "agent") return undefined;
+  const attachment = lastMessage.attachments?.find(
+    (item) => item.type === "user_input_request"
+  );
+  return attachment?.data as unknown as ClarificationPanelData | undefined;
+}
+
 export default function ConversationPage() {
   const params = useParams<{ conversationId: string | string[] }>();
   const conversationId = useMemo(() => {
@@ -34,6 +48,7 @@ export default function ConversationPage() {
   const hasCachedMessages = useRef((cachedData?.messages?.length ?? 0) > 0);
   const [lockedProvider, setLockedProvider] = useState<string | undefined>(cachedData?.provider);
   const [lockedModel, setLockedModel] = useState<string | undefined>(cachedData?.model);
+  const [lockedReasoningEffort, setLockedReasoningEffort] = useState<string | undefined>(cachedData?.reasoningEffort);
   const [inputValue, setInputValue] = useState("");
   const [isAgentTyping, setIsAgentTyping] = useState(false);
   const [agentActivity, setAgentActivity] = useState<string | undefined>();
@@ -59,6 +74,7 @@ export default function ConversationPage() {
       const data = (await response.json()) as ConversationDetailResponse;
       setLockedProvider(data.provider);
       setLockedModel(data.model);
+      setLockedReasoningEffort(data.reasoning_effort ?? data.reasoningEffort);
       if (!hasCachedMessages.current) {
         // Use updater to avoid overwriting in-flight streaming messages
         setMessages((prev) => (prev.length > 0 ? prev : (data.messages || [])));
@@ -94,7 +110,13 @@ export default function ConversationPage() {
     try {
       await streamChat({
         token,
-        body: { content, conversation_id: conversationId, provider: lockedProvider, model: lockedModel },
+        body: {
+          content,
+          conversation_id: conversationId,
+          provider: lockedProvider,
+          model: lockedModel,
+          reasoning_effort: lockedReasoningEffort,
+        },
         onEvent: ({ event, data }) => {
           if (event === "error") {
             const message = typeof data.message === "string" ? data.message : "An error occurred. Please try again.";
@@ -173,6 +195,7 @@ export default function ConversationPage() {
   const handlePromptClick = (prompt: string) => {
     setInputValue(prompt);
   };
+  const clarification = activeClarification(messages, isAgentTyping);
 
   return (
     <>
@@ -187,6 +210,16 @@ export default function ConversationPage() {
           />
         )}
       </div>
+      {clarification && (
+        <div className="bg-background px-4 pb-2">
+          <div className="mx-auto max-w-3xl">
+            <ClarificationPanel
+              data={clarification}
+              onSubmit={(value) => { void handleSend(value); }}
+            />
+          </div>
+        </div>
+      )}
       <ChatInput
         value={inputValue}
         onChange={setInputValue}
@@ -198,6 +231,9 @@ export default function ConversationPage() {
         models={lockedModel ? [{ id: lockedModel, name: lockedModel }] : []}
         selectedModel={lockedModel ?? null}
         onModelChange={() => {}}
+        reasoningEfforts={lockedReasoningEffort ? [lockedReasoningEffort] : []}
+        selectedReasoningEffort={lockedReasoningEffort ?? null}
+        onReasoningEffortChange={() => {}}
         loadingModels={false}
         lockedModel={true}
         isFavorite={isFavorite}

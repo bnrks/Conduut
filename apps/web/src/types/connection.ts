@@ -15,4 +15,5 @@ export interface AvailableService {
   icon: string;
   description: string;
   category: string;
+  connectionId: string;
 }

@@ -2,9 +2,14 @@ import pytest
 
 from src.agent.provider_factory import (
     UnsupportedProviderError,
+    UnsupportedReasoningEffortError,
     build_model,
+    build_model_settings,
+    classify_provider_error,
     normalize_model_name,
     normalize_provider,
+    normalize_reasoning_effort,
+    reasoning_efforts_for_model,
 )
 
 
@@ -54,3 +59,43 @@ def test_normalize_provider_rejects_unsupported_provider():
 
 def test_normalize_provider_lowercases_supported_provider():
     assert normalize_provider("OpenAI") == "openai"
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("gpt-4o", ()),
+        ("gpt-5", ("minimal", "low", "medium", "high")),
+        ("gpt-5.1", ("none", "low", "medium", "high")),
+        ("gpt-5.4-mini", ("none", "low", "medium", "high", "xhigh")),
+        ("gpt-5.3-codex", ("low", "medium", "high", "xhigh")),
+    ],
+)
+def test_reasoning_efforts_for_openai_models(model: str, expected: tuple[str, ...]):
+    assert reasoning_efforts_for_model("openai", model) == expected
+
+
+def test_normalize_reasoning_effort_rejects_unsupported_model():
+    with pytest.raises(UnsupportedReasoningEffortError):
+        normalize_reasoning_effort("openai", "gpt-4o", "medium")
+
+
+def test_build_model_settings_uses_openai_reasoning_effort():
+    assert build_model_settings("openai", "gpt-5", "medium") == {
+        "openai_reasoning_effort": "medium"
+    }
+
+
+def test_classify_provider_error_reports_quota_separately_from_rate_limit():
+    class QuotaError(Exception):
+        status_code = 429
+
+    error = QuotaError(
+        "status_code: 429, body: {'code': 'insufficient_quota', "
+        "'message': 'You exceeded your current quota, please check your plan and billing details.'}"
+    )
+
+    assert (
+        classify_provider_error(error)
+        == "Provider quota exceeded. Check billing or choose another provider/model."
+    )

@@ -6,6 +6,10 @@ import { toast } from "sonner";
 import { MessageList } from "@/components/chat/message-list";
 import { EmptyState } from "@/components/chat/empty-state";
 import { ChatInput } from "@/components/chat/chat-input";
+import {
+  ClarificationPanel,
+  type ClarificationPanelData,
+} from "@/components/chat/clarification-panel";
 import { useAuth } from "@/hooks/use-auth";
 import { useModelSelector } from "@/hooks/use-model-selector";
 import { streamChat } from "@/lib/chat/sse";
@@ -17,6 +21,16 @@ function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+function activeClarification(messages: Message[], isAgentTyping: boolean) {
+  if (isAgentTyping) return undefined;
+  const lastMessage = messages[messages.length - 1];
+  if (!lastMessage || lastMessage.role !== "agent") return undefined;
+  const attachment = lastMessage.attachments?.find(
+    (item) => item.type === "user_input_request"
+  );
+  return attachment?.data as unknown as ClarificationPanelData | undefined;
+}
+
 export default function NewChatPage() {
   const router = useRouter();
   const { user } = useAuth();
@@ -24,7 +38,20 @@ export default function NewChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isAgentTyping, setIsAgentTyping] = useState(false);
   const [agentActivity, setAgentActivity] = useState<string | undefined>();
-  const { providers, selectedProvider, setSelectedProvider, models, selectedModel, setSelectedModel, loadingModels, isFavorite, toggleFavorite } = useModelSelector();
+  const {
+    providers,
+    selectedProvider,
+    setSelectedProvider,
+    models,
+    selectedModel,
+    setSelectedModel,
+    reasoningEfforts,
+    selectedReasoningEffort,
+    setSelectedReasoningEffort,
+    loadingModels,
+    isFavorite,
+    toggleFavorite,
+  } = useModelSelector();
 
   const handleSend = async (content: string) => {
     if (!user || isAgentTyping) return;
@@ -53,7 +80,12 @@ export default function NewChatPage() {
     try {
       await streamChat({
         token,
-        body: { content, provider: selectedProvider || undefined, model: selectedModel || undefined },
+        body: {
+          content,
+          provider: selectedProvider || undefined,
+          model: selectedModel || undefined,
+          reasoning_effort: selectedReasoningEffort || undefined,
+        },
         onEvent: ({ event, data }) => {
           const streamConversationId =
             typeof data.conversation_id === "string" ? data.conversation_id : "";
@@ -153,7 +185,13 @@ export default function NewChatPage() {
             model: doneModel,
           },
         ];
-        setConversationCache(createdConversationId, finalMessages, selectedProvider ?? undefined, selectedModel ?? undefined);
+        setConversationCache(
+          createdConversationId,
+          finalMessages,
+          selectedProvider ?? undefined,
+          selectedModel ?? undefined,
+          selectedReasoningEffort || undefined
+        );
         router.replace(`/chat/${createdConversationId}`);
       }
     } catch (error) {
@@ -167,6 +205,7 @@ export default function NewChatPage() {
   const handlePromptClick = (prompt: string) => {
     setInputValue(prompt);
   };
+  const clarification = activeClarification(messages, isAgentTyping);
 
   return (
     <>
@@ -181,6 +220,16 @@ export default function NewChatPage() {
           />
         )}
       </div>
+      {clarification && (
+        <div className="bg-background px-4 pb-2">
+          <div className="mx-auto max-w-3xl">
+            <ClarificationPanel
+              data={clarification}
+              onSubmit={(value) => { void handleSend(value); }}
+            />
+          </div>
+        </div>
+      )}
       <ChatInput
         value={inputValue}
         onChange={setInputValue}
@@ -192,6 +241,9 @@ export default function NewChatPage() {
         models={models}
         selectedModel={selectedModel}
         onModelChange={setSelectedModel}
+        reasoningEfforts={reasoningEfforts}
+        selectedReasoningEffort={selectedReasoningEffort}
+        onReasoningEffortChange={setSelectedReasoningEffort}
         loadingModels={loadingModels}
         isFavorite={isFavorite}
         onToggleFavorite={(p, m) => void toggleFavorite(p, m)}

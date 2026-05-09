@@ -19,7 +19,18 @@ class UnsupportedProviderError(ValueError):
     """Raised when the selected provider is not supported by Conduut."""
 
 
+class UnsupportedReasoningEffortError(ValueError):
+    """Raised when the selected model does not support a reasoning effort."""
+
+
 SUPPORTED_PROVIDERS = frozenset({"openai", "anthropic", "google", "groq", "openrouter"})
+ReasoningEffort = str
+
+_GPT5_BASE_EFFORTS = ("minimal", "low", "medium", "high")
+_GPT5_1_EFFORTS = ("none", "low", "medium", "high")
+_GPT5_FRONTIER_EFFORTS = ("none", "low", "medium", "high", "xhigh")
+_GPT5_CODEX_EFFORTS = ("low", "medium", "high", "xhigh")
+_O_SERIES_EFFORTS = ("low", "medium", "high")
 
 _VERIFY_MODELS: dict[str, str] = {
     "openai": "gpt-4o-mini",
@@ -57,6 +68,57 @@ def normalize_provider(provider: str) -> str:
     if provider_key not in SUPPORTED_PROVIDERS:
         raise UnsupportedProviderError(f"Unsupported provider: {provider}")
     return provider_key
+
+
+def reasoning_efforts_for_model(provider: str, model: str) -> tuple[ReasoningEffort, ...]:
+    """Return selectable reasoning efforts for models Conduut knows how to configure."""
+
+    provider_key = normalize_provider(provider)
+    model_name = normalize_model_name(provider_key, model).lower()
+    if provider_key != "openai":
+        return ()
+
+    if model_name.startswith(("gpt-5.2-codex", "gpt-5.3-codex")):
+        return _GPT5_CODEX_EFFORTS
+    if model_name.startswith(("gpt-5.2", "gpt-5.3", "gpt-5.4", "gpt-5.5")):
+        if model_name.startswith("gpt-5.3-chat"):
+            return ()
+        return _GPT5_FRONTIER_EFFORTS
+    if model_name.startswith("gpt-5.1"):
+        return _GPT5_1_EFFORTS
+    if model_name.startswith("gpt-5"):
+        return _GPT5_BASE_EFFORTS
+    if model_name.startswith(("o1", "o3", "o4")):
+        return _O_SERIES_EFFORTS
+    return ()
+
+
+def normalize_reasoning_effort(
+    provider: str, model: str, effort: str | None
+) -> ReasoningEffort | None:
+    if effort is None or effort == "":
+        return None
+
+    normalized = effort.strip().lower()
+    supported = reasoning_efforts_for_model(provider, model)
+    if normalized not in supported:
+        raise UnsupportedReasoningEffortError(
+            f"Reasoning effort '{effort}' is not supported for {provider}/{model}"
+        )
+    return normalized
+
+
+def build_model_settings(
+    provider: str, model: str, reasoning_effort: str | None
+) -> dict[str, Any] | None:
+    """Build provider-specific model settings for Pydantic AI."""
+
+    effort = normalize_reasoning_effort(provider, model, reasoning_effort)
+    if effort is None:
+        return None
+    if normalize_provider(provider) == "openai":
+        return {"openai_reasoning_effort": effort}
+    return None
 
 
 def build_model(provider: str, model: str, api_key: str) -> Any:
@@ -109,6 +171,13 @@ def classify_provider_error(exc: Exception) -> str:
         return "Invalid API key"
     if status == 404 or "notfound" in name or "not found" in message_lower:
         return "Model not found — key may still be valid"
+    if (
+        "insufficient_quota" in message_lower
+        or "exceeded your current quota" in message_lower
+        or "billing" in message_lower
+        or "quota" in message_lower
+    ):
+        return "Provider quota exceeded. Check billing or choose another provider/model."
     if status == 429 or "rate" in name or "rate limit" in message_lower:
         return "Rate limit exceeded — key may still be valid"
     return message[:300]

@@ -4,7 +4,6 @@ n8n_registry paketini wrap eder ve agent config'iyle initialize eder.
 """
 
 import logging
-import logging.config
 from pathlib import Path
 
 from n8n_registry import NodeRegistry

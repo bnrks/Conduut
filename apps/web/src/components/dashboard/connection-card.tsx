@@ -40,9 +40,17 @@ function statusLabel(status: ConnectionStatus): string {
 
 interface ConnectionCardProps {
   connection: Connection;
+  onDisconnect?: (connection: Connection) => void;
+  onReconnect?: (connection: Connection) => void;
+  isBusy?: boolean;
 }
 
-export function ConnectionCard({ connection }: ConnectionCardProps) {
+export function ConnectionCard({
+  connection,
+  onDisconnect,
+  onReconnect,
+  isBusy = false,
+}: ConnectionCardProps) {
   const colorClass = getServiceColor(connection.serviceIcon);
 
   return (
@@ -84,7 +92,8 @@ export function ConnectionCard({ connection }: ConnectionCardProps) {
               size="sm"
               variant="default"
               className="h-7 text-[12px] px-3"
-              onClick={() => console.log("Reconnect:", connection.id)}
+              onClick={() => onReconnect?.(connection)}
+              disabled={isBusy}
             >
               Reconnect
             </Button>
@@ -94,7 +103,8 @@ export function ConnectionCard({ connection }: ConnectionCardProps) {
               size="sm"
               variant="ghost"
               className="h-7 text-[12px] px-3 text-muted-foreground hover:text-error"
-              onClick={() => console.log("Disconnect:", connection.id)}
+              onClick={() => onDisconnect?.(connection)}
+              disabled={isBusy}
             >
               Disconnect
             </Button>
@@ -104,7 +114,8 @@ export function ConnectionCard({ connection }: ConnectionCardProps) {
               size="sm"
               variant="outline"
               className="h-7 text-[12px] px-3"
-              onClick={() => console.log("Reconnect:", connection.id)}
+              onClick={() => onReconnect?.(connection)}
+              disabled={isBusy}
             >
               Reconnect
             </Button>

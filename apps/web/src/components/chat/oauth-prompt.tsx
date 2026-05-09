@@ -2,15 +2,19 @@
 
 import { useState } from "react";
 import { CheckCircle } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 
-export type OAuthStatus = "pending" | "connecting" | "connected";
+export type OAuthStatus = "pending" | "connecting" | "connected" | "error";
 
 export interface OAuthPromptData {
   service: string;
   description: string;
+  authorizePath?: string;
+  returnTo?: string;
   iconUrl?: string;
 }
 
@@ -35,12 +39,48 @@ export function OAuthPrompt({
   initialStatus = "pending",
   className,
 }: OAuthPromptProps) {
+  const { user } = useAuth();
   const [status, setStatus] = useState<OAuthStatus>(initialStatus);
 
-  const handleConnect = () => {
+  const handleConnect = async () => {
+    if (!user) {
+      toast.error("Please sign in before connecting Google Gmail.");
+      return;
+    }
+
     setStatus("connecting");
-    // Simulate connection flow
-    setTimeout(() => setStatus("connected"), 1500);
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch(
+        data.authorizePath ?? "/api/connections/google/gmail/authorize",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            return_to: data.returnTo ?? window.location.pathname,
+          }),
+        }
+      );
+      const payload = (await response.json().catch(() => null)) as {
+        authorizationUrl?: string;
+        detail?: string;
+        message?: string;
+      } | null;
+      if (!response.ok || !payload?.authorizationUrl) {
+        throw new Error(
+          payload?.detail ?? payload?.message ?? "Could not start Google OAuth."
+        );
+      }
+      window.location.href = payload.authorizationUrl;
+    } catch (error) {
+      setStatus("error");
+      toast.error(
+        error instanceof Error ? error.message : "Could not start Google OAuth."
+      );
+    }
   };
 
   const initials =
@@ -61,7 +101,11 @@ export function OAuthPrompt({
       <div className="flex-1 min-w-0">
         <p className="font-medium text-[14px] text-foreground">{data.service}</p>
         <p className="text-[12px] text-muted-foreground truncate">
-          {status === "connected" ? "Connected successfully" : data.description}
+          {status === "connected"
+            ? "Connected successfully"
+            : status === "error"
+              ? "Connection could not be started"
+              : data.description}
         </p>
       </div>
       <div className="shrink-0">
