@@ -23,6 +23,10 @@ pnpm'i `10.19.0` surumune pinler; aksi halde Corepack pnpm 11 indirebilir ve
 pnpm 11 Node 22.13+ istedigi icin Node 20 runtime'da `node:sqlite` hatasiyla
 web container baslamaz.
 
+Tarayici sekme ikonu root metadata'da `/images/icons/conduut-icon.svg` olarak
+tanımlidir; `src/app/icon.svg` ayni Conduut ikonunu Next app icon convention'i
+icin saglar.
+
 ## Route Gruplari
 
 - `(marketing)`: landing/marketing sayfasi.
@@ -65,6 +69,11 @@ Baslica route handler'lar:
 - `api/settings/llm/providers/[provider]/models`: model listeleme.
 - `api/settings/llm/providers/[provider]/verify`: provider key dogrulama.
 - `api/settings/favorites`: favorite modeller.
+
+Local `pnpm dev` ile web host uzerinde calistiginda BFF route'lari agent'a
+`AGENT_API_BASE_URL=http://localhost:8100` ile ulasir; Docker compose icindeki
+web container ise `AGENT_API_BASE_URL=http://agent:8000` kullanir. Env degisirse
+Next dev server yeniden baslatilmalidir.
 
 ## Chat UI
 

@@ -44,6 +44,11 @@ function activeClarification(messages: Message[], isAgentTyping: boolean) {
   } satisfies ActiveClarification;
 }
 
+function appendRecentActivity(items: string[], activity: string) {
+  if (items[items.length - 1] === activity) return items;
+  return [...items, activity].slice(-3);
+}
+
 export default function ConversationPage() {
   const params = useParams<{ conversationId: string | string[] }>();
   const conversationId = useMemo(() => {
@@ -61,6 +66,7 @@ export default function ConversationPage() {
   const [inputValue, setInputValue] = useState("");
   const [isAgentTyping, setIsAgentTyping] = useState(false);
   const [agentActivity, setAgentActivity] = useState<string | undefined>();
+  const [agentActivities, setAgentActivities] = useState<string[]>([]);
   const { providers, isFavorite, toggleFavorite } = useModelSelector();
 
   useEffect(() => {
@@ -115,6 +121,7 @@ export default function ConversationPage() {
     setMessages((prev) => [...prev, userMessage]);
     setIsAgentTyping(true);
     setAgentActivity(undefined);
+    setAgentActivities([]);
 
     try {
       await streamChat({
@@ -138,6 +145,7 @@ export default function ConversationPage() {
             const doneProvider = typeof data.provider === "string" ? data.provider : undefined;
             const doneModel = typeof data.model === "string" ? data.model : undefined;
             setAgentActivity("Finishing the response");
+            setAgentActivities((prev) => appendRecentActivity(prev, "Finishing the response"));
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === assistantMessageId
@@ -149,7 +157,9 @@ export default function ConversationPage() {
           }
 
           if (event === "tool_call") {
-            setAgentActivity(toolActivityLabel(data.tool));
+            const label = toolActivityLabel(data.tool);
+            setAgentActivity(label);
+            setAgentActivities((prev) => appendRecentActivity(prev, label));
             return;
           }
 
@@ -198,6 +208,7 @@ export default function ConversationPage() {
     } finally {
       setIsAgentTyping(false);
       setAgentActivity(undefined);
+      setAgentActivities([]);
     }
   };
 
@@ -216,6 +227,7 @@ export default function ConversationPage() {
             messages={messages}
             isAgentTyping={isAgentTyping}
             agentActivity={agentActivity}
+            agentActivities={agentActivities}
             activeClarificationMessageId={clarification?.messageId}
           />
         )}

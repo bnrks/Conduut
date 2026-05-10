@@ -22,6 +22,10 @@ export const metadata: Metadata = {
   },
   description:
     "Conduut turns your words into n8n workflows. Connect your apps, automate your work — no coding required.",
+  icons: {
+    icon: "/images/icons/conduut-icon.svg",
+    shortcut: "/images/icons/conduut-icon.svg",
+  },
 };
 
 export default function RootLayout({

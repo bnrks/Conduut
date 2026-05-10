@@ -40,6 +40,11 @@ function activeClarification(messages: Message[], isAgentTyping: boolean) {
   } satisfies ActiveClarification;
 }
 
+function appendRecentActivity(items: string[], activity: string) {
+  if (items[items.length - 1] === activity) return items;
+  return [...items, activity].slice(-3);
+}
+
 export default function NewChatPage() {
   const router = useRouter();
   const { user } = useAuth();
@@ -47,6 +52,7 @@ export default function NewChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isAgentTyping, setIsAgentTyping] = useState(false);
   const [agentActivity, setAgentActivity] = useState<string | undefined>();
+  const [agentActivities, setAgentActivities] = useState<string[]>([]);
   const {
     providers,
     selectedProvider,
@@ -85,6 +91,7 @@ export default function NewChatPage() {
     setMessages((prev) => [...prev, userMessage]);
     setIsAgentTyping(true);
     setAgentActivity(undefined);
+    setAgentActivities([]);
 
     try {
       await streamChat({
@@ -113,6 +120,7 @@ export default function NewChatPage() {
             doneProvider = typeof data.provider === "string" ? data.provider : undefined;
             doneModel = typeof data.model === "string" ? data.model : undefined;
             setAgentActivity("Finishing the response");
+            setAgentActivities((prev) => appendRecentActivity(prev, "Finishing the response"));
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === assistantMessageId
@@ -124,7 +132,9 @@ export default function NewChatPage() {
           }
 
           if (event === "tool_call") {
-            setAgentActivity(toolActivityLabel(data.tool));
+            const label = toolActivityLabel(data.tool);
+            setAgentActivity(label);
+            setAgentActivities((prev) => appendRecentActivity(prev, label));
             return;
           }
 
@@ -208,6 +218,7 @@ export default function NewChatPage() {
     } finally {
       setIsAgentTyping(false);
       setAgentActivity(undefined);
+      setAgentActivities([]);
     }
   };
 
@@ -226,6 +237,7 @@ export default function NewChatPage() {
             messages={messages}
             isAgentTyping={isAgentTyping}
             agentActivity={agentActivity}
+            agentActivities={agentActivities}
             activeClarificationMessageId={clarification?.messageId}
           />
         )}

@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { ChevronDown } from "lucide-react";
 import { useScrollToBottom } from "@/hooks/use-scroll-to-bottom";
+import { Logo } from "@/components/ui/logo";
 import { Message } from "./message";
 import { TypingIndicator } from "./typing-indicator";
 import { cn } from "@/lib/utils";
@@ -12,6 +13,7 @@ export interface MessageListProps {
   messages: MessageType[];
   isAgentTyping?: boolean;
   agentActivity?: string;
+  agentActivities?: string[];
   activeClarificationMessageId?: string;
 }
 
@@ -19,6 +21,7 @@ export function MessageList({
   messages,
   isAgentTyping,
   agentActivity,
+  agentActivities,
   activeClarificationMessageId,
 }: MessageListProps) {
   const { containerRef, isAtBottom, scrollToBottom } =
@@ -45,9 +48,11 @@ export function MessageList({
           ))}
           {isAgentTyping && (
             <div className="flex items-start gap-3">
-              <div className="h-8 w-8 shrink-0" />
+              <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center">
+                <Logo variant="icon" className="h-8 w-8" />
+              </div>
               <div className="rounded-2xl rounded-bl-md border border-border bg-card px-4 py-2.5">
-                <TypingIndicator activity={agentActivity} />
+                <TypingIndicator activity={agentActivity} activities={agentActivities} />
               </div>
             </div>
           )}

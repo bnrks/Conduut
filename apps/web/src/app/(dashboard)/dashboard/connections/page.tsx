@@ -1,21 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Mail, Plus, RefreshCw, Table2 } from "lucide-react";
+import { Mail, Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { ConnectionCard } from "@/components/dashboard/connection-card";
+import { ServiceLogo } from "@/components/dashboard/service-logo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { useAuth } from "@/hooks/use-auth";
 import type { AvailableService, Connection } from "@/types/connection";
-import { cn } from "@/lib/utils";
 
 const AVAILABLE_SERVICES: AvailableService[] = [
   {
     name: "Google Gmail",
     slug: "google-gmail",
-    icon: "google",
+    icon: "gmail",
     description: "Read and send Gmail messages from workflows",
     category: "Email",
     connectionId: "google_gmail",
@@ -24,17 +24,13 @@ const AVAILABLE_SERVICES: AvailableService[] = [
   {
     name: "Google Sheets",
     slug: "google-sheets",
-    icon: "google",
+    icon: "google-sheets",
     description: "Read spreadsheet rows from workflows",
     category: "Data",
     connectionId: "google_sheets",
     authorizePath: "/api/connections/google/sheets/authorize",
   },
 ];
-
-const SERVICE_COLORS: Record<string, string> = {
-  google: "bg-red-100 text-red-600",
-};
 
 async function getErrorMessage(
   response: Response,
@@ -251,22 +247,14 @@ export default function ConnectionsPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {AVAILABLE_SERVICES.map((service) => {
             const existingConnection = connectedById.get(service.connectionId);
-            const colorClass =
-              SERVICE_COLORS[service.icon] ?? "bg-conduut-50 text-conduut-700";
             const isBusy = connectingService === service.slug;
-            const Icon = service.slug === "google-sheets" ? Table2 : Mail;
 
             return (
               <Card key={service.slug}>
                 <CardContent className="p-4">
                   <div className="flex items-center gap-3">
-                    <div
-                      className={cn(
-                        "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
-                        colorClass
-                      )}
-                    >
-                      <Icon className="h-5 w-5" />
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-white">
+                      <ServiceLogo service={`${service.name} ${service.icon}`} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-[14px] font-medium text-foreground">

@@ -39,7 +39,11 @@ reasoning effort degistirmez.
 - `token`: assistant cevabinin text parcasini ekler.
 - `tool_call`: tool calistigini UI'a bildirir. Web UI bunu teknik tool adini
   gostermeden "Checking available n8n steps", "Creating the workflow",
-  "Running the workflow" gibi yuksek seviye durum metinlerine cevirir.
+  "Running the workflow" gibi yuksek seviye durum metinlerine cevirir. Agent
+  typing/think indicator'i normal assistant mesajlariyla ayni Conduut ikon
+  avatarini gosterir. Raw model dusuncesi gosterilmez; typing balonu yalnizca
+  mevcut `tool_call` event'lerinden turetilen son 3 guvenli progress adimini
+  listeler.
 - `attachment`: `workflow_preview`, `oauth_prompt`, `credential_request` ve
   `user_input_request` gibi ekleri mesaja ekler.
 - `done`: conversation, provider ve model bilgisini tamamlar.
