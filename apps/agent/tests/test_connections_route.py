@@ -39,6 +39,7 @@ def _app_connection(**overrides):
         "n8n_credential_name": "Google Gmail - user@example.com - Conduut",
         "status": "connected",
         "scopes": google.GMAIL_SEND_SCOPES,
+        "capabilities": google.capabilities_for_scopes(google.GMAIL_SEND_SCOPES),
         "created_at": "now",
         "updated_at": "now",
     }
@@ -67,6 +68,7 @@ def test_google_authorization_url_includes_pkce_offline_and_gmail_scope(monkeypa
     assert "profile" in scopes
     assert "https://www.googleapis.com/auth/gmail.send" in scopes
     assert "https://www.googleapis.com/auth/gmail.readonly" in scopes
+    assert query["include_granted_scopes"] == ["true"]
 
 
 def test_google_authorization_url_includes_sheets_scopes(monkeypatch):
@@ -88,6 +90,28 @@ def test_google_authorization_url_includes_sheets_scopes(monkeypatch):
     assert "https://www.googleapis.com/auth/drive.file" in scopes
     assert "https://www.googleapis.com/auth/spreadsheets" in scopes
     assert "https://www.googleapis.com/auth/drive.metadata" in scopes
+    assert query["include_granted_scopes"] == ["true"]
+
+
+def test_capabilities_are_derived_from_granted_scopes():
+    capabilities = google.capabilities_for_scopes(
+        [
+            "openid",
+            "email",
+            "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/gmail.send",
+            "https://www.googleapis.com/auth/drive.file",
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive.metadata",
+        ]
+    )
+
+    assert capabilities == [
+        "google.gmail.read",
+        "google.gmail.send",
+        "google.sheets.read",
+        "google.sheets.write",
+    ]
 
 
 @pytest.mark.asyncio
@@ -290,8 +314,17 @@ async def test_google_callback_creates_n8n_credential_and_connection(monkeypatch
     assert credential_data["oauthTokenData"]["refresh_token"] == "refresh_token"
     assert saved_connection["user_id"] == "user_1"
     assert saved_connection["connection_id"] == "google_gmail"
+    assert saved_connection["scopes"] == token_response["scope"].split()
+    assert saved_connection["capabilities"] == [
+        "google.gmail.read",
+        "google.gmail.send",
+    ]
     assert response["connection"]["id"] == "google_gmail"
     assert response["connection"]["accountEmail"] == "user@example.com"
+    assert response["connection"]["capabilities"] == [
+        "google.gmail.read",
+        "google.gmail.send",
+    ]
     assert response["returnTo"] == "/dashboard/connections"
 
 
@@ -369,9 +402,18 @@ async def test_google_callback_creates_sheets_n8n_credential_and_connection(monk
     assert credential_data["oauthTokenData"]["refresh_token"] == "refresh_token"
     assert saved_connection["user_id"] == "user_1"
     assert saved_connection["connection_id"] == "google_sheets"
+    assert saved_connection["scopes"] == token_response["scope"].split()
+    assert saved_connection["capabilities"] == [
+        "google.sheets.read",
+        "google.sheets.write",
+    ]
     assert response["connection"]["id"] == "google_sheets"
     assert response["connection"]["serviceName"] == "Google Sheets"
     assert response["connection"]["accountEmail"] == "user@example.com"
+    assert response["connection"]["capabilities"] == [
+        "google.sheets.read",
+        "google.sheets.write",
+    ]
     assert response["returnTo"] == "/dashboard/connections"
 
 

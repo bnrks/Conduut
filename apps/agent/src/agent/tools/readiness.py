@@ -27,6 +27,7 @@ from src.agent.tools.constants import (
     _WEBHOOK_TRIGGER_TYPE,
 )
 from src.agent.tools.workflow_helpers import _workflow_trigger_nodes
+from src.oauth import google
 from src.registry import registry
 
 log = structlog.get_logger()
@@ -98,41 +99,64 @@ def _node_has_credential(node: dict[str, Any], credential_types: list[str]) -> b
     return any(credential_type in credentials for credential_type in credential_types)
 
 
-def _is_managed_gmail_node(node: dict[str, Any], credential_type: str) -> bool:
+def _gmail_required_capability(node: dict[str, Any], credential_type: str) -> str | None:
     if credential_type != _GOOGLE_GMAIL_CREDENTIAL_TYPE:
-        return False
+        return None
     if node.get("type") != "n8n-nodes-base.gmail":
-        return False
+        return None
     parameters = node.get("parameters")
     if not isinstance(parameters, dict):
         parameters = {}
     resource = str(parameters.get("resource") or "message").lower()
     operation = str(parameters.get("operation") or "send").lower()
-    return operation in _GMAIL_MANAGED_OPERATIONS.get(resource, set())
+    if operation not in _GMAIL_MANAGED_OPERATIONS.get(resource, set()):
+        return None
+    if operation in {"send", "reply", "create"}:
+        return google.GOOGLE_GMAIL_SEND_CAPABILITY
+    return google.GOOGLE_GMAIL_READ_CAPABILITY
+
+
+def _sheets_required_capability(node: dict[str, Any], credential_type: str) -> str | None:
+    if credential_type != _GOOGLE_SHEETS_CREDENTIAL_TYPE:
+        return None
+    if node.get("type") != "n8n-nodes-base.googleSheets":
+        return None
+    parameters = node.get("parameters")
+    if not isinstance(parameters, dict):
+        parameters = {}
+    operation = str(parameters.get("operation") or "read").lower()
+    if operation in {"read", "get", "getall", "lookup"}:
+        return google.GOOGLE_SHEETS_READ_CAPABILITY
+    return google.GOOGLE_SHEETS_WRITE_CAPABILITY
+
+
+def _connection_capabilities(connection: store.AppConnection) -> list[str]:
+    return connection.capabilities or google.capabilities_for_scopes(connection.scopes)
 
 
 def _managed_google_connection_for_node(
     node: dict[str, Any],
     credential_type: str,
 ) -> dict[str, str] | None:
-    if _is_managed_gmail_node(node, credential_type):
+    gmail_capability = _gmail_required_capability(node, credential_type)
+    if gmail_capability:
         return {
             "connection_id": _GOOGLE_GMAIL_CONNECTION_ID,
             "credential_type": _GOOGLE_GMAIL_CREDENTIAL_TYPE,
             "service": "Google Gmail",
-            "description": "Connect Google once so Conduut can read and send Gmail messages.",
+            "description": "Grant Google Workspace access so Conduut can use Gmail in workflows.",
             "authorize_path": "/api/connections/google/gmail/authorize",
+            "capability": gmail_capability,
         }
-    if (
-        credential_type == _GOOGLE_SHEETS_CREDENTIAL_TYPE
-        and node.get("type") == "n8n-nodes-base.googleSheets"
-    ):
+    sheets_capability = _sheets_required_capability(node, credential_type)
+    if sheets_capability:
         return {
             "connection_id": _GOOGLE_SHEETS_CONNECTION_ID,
             "credential_type": _GOOGLE_SHEETS_CREDENTIAL_TYPE,
             "service": "Google Sheets",
-            "description": "Connect Google Sheets so Conduut can read spreadsheet rows.",
+            "description": "Grant Google Workspace access so Conduut can use Sheets in workflows.",
             "authorize_path": "/api/connections/google/sheets/authorize",
+            "capability": sheets_capability,
         }
     return None
 
@@ -151,6 +175,8 @@ async def _attach_managed_connection_if_available(
     if not connection or connection.status != "connected":
         return False
     if connection.credential_type != credential_type or not connection.n8n_credential_id:
+        return False
+    if config["capability"] not in _connection_capabilities(connection):
         return False
 
     node_name = str(node.get("name") or "")

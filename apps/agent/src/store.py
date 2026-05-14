@@ -1,7 +1,7 @@
 """Firestore tabanlı store. Tüm sync Firestore çağrıları asyncio.to_thread ile sarılır."""
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -87,6 +87,7 @@ class AppConnection:
     scopes: list[str]
     created_at: str
     updated_at: str
+    capabilities: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -414,6 +415,7 @@ async def get_connection(user_id: str, connection_id: str) -> AppConnection | No
         scopes=list(data.get("scopes") or []),
         created_at=data.get("created_at", ""),
         updated_at=data.get("updated_at", ""),
+        capabilities=list(data.get("capabilities") or []),
     )
 
 
@@ -436,6 +438,7 @@ async def list_connections(user_id: str) -> list[AppConnection]:
                 scopes=list(data.get("scopes") or []),
                 created_at=data.get("created_at", ""),
                 updated_at=data.get("updated_at", ""),
+                capabilities=list(data.get("capabilities") or []),
             )
         )
     return connections
@@ -453,6 +456,7 @@ async def save_connection(
     n8n_credential_id: str,
     n8n_credential_name: str,
     scopes: list[str],
+    capabilities: list[str] | None = None,
 ) -> AppConnection:
     existing = await get_connection(user_id, connection_id)
     now = _now_iso()
@@ -466,6 +470,7 @@ async def save_connection(
         "n8n_credential_name": n8n_credential_name,
         "status": "connected",
         "scopes": scopes,
+        "capabilities": capabilities or [],
         "created_at": existing.created_at if existing else now,
         "updated_at": now,
     }

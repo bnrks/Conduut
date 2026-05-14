@@ -69,6 +69,8 @@ def _connection_payload(connection: store.AppConnection) -> dict[str, Any]:
         "connectedAt": connection.created_at,
         "updatedAt": connection.updated_at,
         "scopes": connection.scopes,
+        "capabilities": connection.capabilities
+        or google.capabilities_for_scopes(connection.scopes),
     }
 
 
@@ -189,6 +191,11 @@ async def _google_callback(body: GoogleCallbackIn, *, expected_service: str | No
     connection_id = config["connection_id"]
     credential_type = config["credential_type"]
     credential_name = f"{config['credential_prefix']} - {account_email} - Conduut"
+    granted_scopes = google.scopes_from_token_response(
+        token_response,
+        default_scopes=config["scopes"],
+    )
+    capabilities = google.capabilities_for_scopes(granted_scopes)
     credential_data = config["credential_data"](token_response)
     existing = await store.get_connection(state.user_id, connection_id)
 
@@ -208,7 +215,8 @@ async def _google_callback(body: GoogleCallbackIn, *, expected_service: str | No
             credential_type=credential_type,
             n8n_credential_id=credential.id,
             n8n_credential_name=credential.name,
-            scopes=config["scopes"],
+            scopes=granted_scopes,
+            capabilities=capabilities,
         )
     except n8n_client.N8nApiError as exc:
         raise HTTPException(status_code=exc.status_code, detail={"message": exc.message}) from exc

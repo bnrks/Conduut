@@ -34,6 +34,19 @@ const SERVICE_INITIALS: Record<string, string> = {
   airtable: "AT",
 };
 
+function getPayloadMessage(
+  payload: {
+    detail?: { message?: string } | string;
+    message?: string;
+  } | null,
+  fallback: string
+): string {
+  if (typeof payload?.detail === "string") return payload.detail;
+  if (typeof payload?.detail?.message === "string") return payload.detail.message;
+  if (typeof payload?.message === "string") return payload.message;
+  return fallback;
+}
+
 export function OAuthPrompt({
   data,
   initialStatus = "pending",
@@ -66,13 +79,11 @@ export function OAuthPrompt({
       );
       const payload = (await response.json().catch(() => null)) as {
         authorizationUrl?: string;
-        detail?: string;
+        detail?: { message?: string } | string;
         message?: string;
       } | null;
       if (!response.ok || !payload?.authorizationUrl) {
-        throw new Error(
-          payload?.detail ?? payload?.message ?? "Could not start Google OAuth."
-        );
+        throw new Error(getPayloadMessage(payload, "Could not start Google OAuth."));
       }
       window.location.href = payload.authorizationUrl;
     } catch (error) {
@@ -125,7 +136,7 @@ export function OAuthPrompt({
                 Connecting
               </>
             ) : (
-              "Connect"
+              "Grant access"
             )}
           </Button>
         )}

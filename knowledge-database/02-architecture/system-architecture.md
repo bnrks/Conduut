@@ -20,8 +20,21 @@ Mevcut `docker-compose.yml` uc servis calistirir:
 - `conduut-agent`: FastAPI agent, container port `8000`; local host port
   `8100` because Windows can reserve host port `8000`.
 - `conduut-n8n`: tek shared n8n instance, container port `5678`; local host
-  port `5880` because this Windows environment reserves ranges including
-  `5678` and `5778-5877`.
+  port `5980` because this Windows environment reserves ranges including
+  `5678`, `5778-5877`, and `5808-5907`.
+
+Lokal hizli gelistirme icin root `start-local-dev.bat` hibrit akis saglar:
+yalnizca `docker compose up -d n8n` ile shared n8n image'ini ayaga kaldirir,
+agent'i `apps/agent` altindan `python -m uvicorn src.main:app --reload --port
+8100` ile lokal koddan calistirir, web'i de `apps/web` altindan
+`npm run dev` ile baslatir. Bu akista agent `CONDUUT_N8N_URL` olarak
+`http://localhost:5980`, web BFF route'lari ise `AGENT_API_BASE_URL` olarak
+`http://localhost:8100` kullanir; web/agent Docker image build'i gerekmez.
+Script agent'i `apps/agent` calisma dizininden baslattigi icin root `.env`
+dosyasi Pydantic tarafindan otomatik okunmaz; bu nedenle
+`CONDUUT_GOOGLE_OAUTH_CLIENT_ID`, `CONDUUT_GOOGLE_OAUTH_CLIENT_SECRET` ve
+opsiyonel `CONDUUT_OAUTH_STATE_TTL_SECONDS` root `.env` icinden agent
+process'ine aktarilir.
 
 `apps/web/src/app/api/*` route handler'lari BFF/proxy gorevi gorur. Firebase ID
 token'i browser'dan Next API route'a, oradan agent servisine Authorization

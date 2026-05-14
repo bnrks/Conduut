@@ -19,16 +19,39 @@ GOOGLE_PROFILE_SCOPES = [
     "email",
     "profile",
 ]
+GOOGLE_GMAIL_READ_CAPABILITY = "google.gmail.read"
+GOOGLE_GMAIL_SEND_CAPABILITY = "google.gmail.send"
+GOOGLE_SHEETS_READ_CAPABILITY = "google.sheets.read"
+GOOGLE_SHEETS_WRITE_CAPABILITY = "google.sheets.write"
+
+GOOGLE_CAPABILITY_SCOPES = {
+    GOOGLE_GMAIL_READ_CAPABILITY: ["https://www.googleapis.com/auth/gmail.readonly"],
+    GOOGLE_GMAIL_SEND_CAPABILITY: ["https://www.googleapis.com/auth/gmail.send"],
+    GOOGLE_SHEETS_READ_CAPABILITY: [
+        "https://www.googleapis.com/auth/drive.file",
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive.metadata",
+    ],
+    GOOGLE_SHEETS_WRITE_CAPABILITY: [
+        "https://www.googleapis.com/auth/drive.file",
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive.metadata",
+    ],
+}
+
+GOOGLE_SERVICE_CAPABILITIES = {
+    "gmail": [GOOGLE_GMAIL_READ_CAPABILITY, GOOGLE_GMAIL_SEND_CAPABILITY],
+    "sheets": [GOOGLE_SHEETS_READ_CAPABILITY, GOOGLE_SHEETS_WRITE_CAPABILITY],
+}
+
 GMAIL_CONNECTION_SCOPES = [
     *GOOGLE_PROFILE_SCOPES,
-    "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/gmail.readonly",
+    *GOOGLE_CAPABILITY_SCOPES[GOOGLE_GMAIL_SEND_CAPABILITY],
+    *GOOGLE_CAPABILITY_SCOPES[GOOGLE_GMAIL_READ_CAPABILITY],
 ]
 GOOGLE_SHEETS_CONNECTION_SCOPES = [
     *GOOGLE_PROFILE_SCOPES,
-    "https://www.googleapis.com/auth/drive.file",
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive.metadata",
+    *GOOGLE_CAPABILITY_SCOPES[GOOGLE_SHEETS_READ_CAPABILITY],
 ]
 
 GMAIL_SEND_SCOPES = GMAIL_CONNECTION_SCOPES
@@ -98,6 +121,46 @@ def connection_scopes(service: str) -> list[str]:
     if not scopes:
         raise GoogleOAuthConfigError(f"Unsupported Google service: {service}.")
     return scopes
+
+
+def service_capabilities(service: str) -> list[str]:
+    capabilities = GOOGLE_SERVICE_CAPABILITIES.get(service)
+    if not capabilities:
+        raise GoogleOAuthConfigError(f"Unsupported Google service: {service}.")
+    return capabilities
+
+
+def scopes_for_capabilities(capabilities: list[str]) -> list[str]:
+    scopes = list(GOOGLE_PROFILE_SCOPES)
+    for capability in capabilities:
+        for scope in GOOGLE_CAPABILITY_SCOPES.get(capability, []):
+            if scope not in scopes:
+                scopes.append(scope)
+    return scopes
+
+
+def scopes_from_token_response(
+    token_response: dict[str, Any],
+    *,
+    default_scopes: list[str],
+) -> list[str]:
+    scope_value = str(token_response.get("scope") or "").strip()
+    if not scope_value:
+        return list(default_scopes)
+    return scope_value.split()
+
+
+def capabilities_for_scopes(scopes: list[str]) -> list[str]:
+    scope_set = set(scopes)
+    capabilities: list[str] = []
+    for capability, required_scopes in GOOGLE_CAPABILITY_SCOPES.items():
+        if all(scope in scope_set for scope in required_scopes):
+            capabilities.append(capability)
+    if "https://www.googleapis.com/auth/spreadsheets" in scope_set:
+        for capability in (GOOGLE_SHEETS_READ_CAPABILITY, GOOGLE_SHEETS_WRITE_CAPABILITY):
+            if capability not in capabilities:
+                capabilities.append(capability)
+    return capabilities
 
 
 def authorization_url(*, state: str, code_verifier: str, service: str = "gmail") -> str:

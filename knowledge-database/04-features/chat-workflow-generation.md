@@ -100,10 +100,12 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
   eski `$json.to`/`$json.subject`/`$json.message` formu korunur.
 - Credential isteyen node'larda eksik credential varsa chat'e
   `credential_request` attachment gelir.
-- Gmail message/thread/label `get` ve `getAll` operasyonlari ile send/reply
-  operasyonlari icin kullanicinin `google_gmail` connection'i varsa readiness
-  analizi n8n workflow node'una `gmailOAuth2` credential'i otomatik attach eder
-  ve missing credential dondurmez. n8n Gmail v2 message send node'u modelden
+- Gmail message/thread/label `get` ve `getAll` operasyonlari icin
+  `google.gmail.read`, send/reply/create operasyonlari icin
+  `google.gmail.send` capability'si gerekir. Kullanici `google_gmail`
+  connection'i bu capability'yi tasiyorsa readiness analizi n8n workflow
+  node'una `gmailOAuth2` credential'i otomatik attach eder ve missing credential
+  dondurmez. n8n Gmail v2 message send node'u modelden
   `operation=create` olarak gelebilir; agent bunu n8n'e yazmadan once
   `operation=send` degerine normalize eder.
 - Gmail send node'unda model `toEmail`, `bodyContent` gibi eski/uydurma alias
@@ -115,11 +117,13 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
   `subject` ve `message` alanlari webhook output shape'ine gore expression'a
   cevrildikten sonra validate edilir. n8n expression recipient degerleri
   placeholder email kontrolunden gecirilmez.
-- Gmail read/send connection yoksa chat'e Gmail `oauth_prompt` attachment
-  gelir. Google Sheets node'u credential istediginde ve kullanicinin
-  `google_sheets` connection'i yoksa chat'e Sheets `oauth_prompt` attachment'i
-  gelir. Web component'i artik simule etmez; attachment `authorizePath`
-  degerine gore `/api/connections/google/gmail/authorize` veya
+- Gmail read/send connection veya gerekli capability yoksa chat'e Gmail
+  `oauth_prompt` attachment gelir. Google Sheets node'u credential istediginde
+  read operasyonlari icin `google.sheets.read`, write operasyonlari icin
+  `google.sheets.write` capability'si aranir; connection veya capability yoksa
+  chat'e Sheets `oauth_prompt` attachment'i gelir. Web component'i artik simule
+  etmez; attachment `authorizePath` degerine gore
+  `/api/connections/google/gmail/authorize` veya
   `/api/connections/google/sheets/authorize` BFF route'undan gercek Google
   authorization URL alir.
 - Eksik credential/OAuth prompt emit edildikten sonra agent ayni turda workflow

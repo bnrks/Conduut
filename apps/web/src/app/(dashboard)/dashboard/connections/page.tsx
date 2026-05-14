@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Mail, Plus, RefreshCw } from "lucide-react";
+import { CheckCircle2, ChevronDown, Plug, Plus, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
-import { ConnectionCard } from "@/components/dashboard/connection-card";
 import { ServiceLogo } from "@/components/dashboard/service-logo";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
@@ -32,6 +32,39 @@ const AVAILABLE_SERVICES: AvailableService[] = [
   },
 ];
 
+const GOOGLE_CAPABILITIES = [
+  {
+    id: "google.gmail.read",
+    label: "Can read Gmail",
+    description: "Read messages, threads, and labels in Gmail workflows",
+    serviceSlug: "google-gmail",
+    connectionId: "google_gmail",
+  },
+  {
+    id: "google.gmail.send",
+    label: "Can send Gmail",
+    description: "Send or reply to messages from Gmail workflows",
+    serviceSlug: "google-gmail",
+    connectionId: "google_gmail",
+  },
+  {
+    id: "google.sheets.read",
+    label: "Can read Sheets",
+    description: "Read spreadsheet rows in Sheets workflows",
+    serviceSlug: "google-sheets",
+    connectionId: "google_sheets",
+  },
+  {
+    id: "google.sheets.write",
+    label: "Can edit Sheets",
+    description: "Create or update spreadsheet content in Sheets workflows",
+    serviceSlug: "google-sheets",
+    connectionId: "google_sheets",
+  },
+];
+
+const DEFAULT_EXPANDED_SERVICES = new Set(["google-gmail", "google-sheets"]);
+
 async function getErrorMessage(
   response: Response,
   fallback: string
@@ -46,6 +79,19 @@ async function getErrorMessage(
   return fallback;
 }
 
+function getPayloadMessage(
+  payload: {
+    detail?: { message?: string } | string;
+    message?: string;
+  } | null,
+  fallback: string
+): string {
+  if (typeof payload?.detail === "string") return payload.detail;
+  if (typeof payload?.detail?.message === "string") return payload.detail.message;
+  if (typeof payload?.message === "string") return payload.message;
+  return fallback;
+}
+
 export default function ConnectionsPage() {
   const { user, loading: authLoading } = useAuth();
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -54,6 +100,9 @@ export default function ConnectionsPage() {
     null
   );
   const [busyConnectionId, setBusyConnectionId] = useState<string | null>(null);
+  const [expandedServices, setExpandedServices] = useState<Set<string>>(
+    DEFAULT_EXPANDED_SERVICES
+  );
 
   const connectedById = useMemo(
     () => new Map(connections.map((connection) => [connection.id, connection])),
@@ -63,6 +112,18 @@ export default function ConnectionsPage() {
     () =>
       new Map(
         AVAILABLE_SERVICES.map((service) => [service.connectionId, service])
+      ),
+    []
+  );
+  const capabilitiesByServiceSlug = useMemo(
+    () =>
+      new Map(
+        AVAILABLE_SERVICES.map((service) => [
+          service.slug,
+          GOOGLE_CAPABILITIES.filter(
+            (capability) => capability.serviceSlug === service.slug
+          ),
+        ])
       ),
     []
   );
@@ -142,13 +203,11 @@ export default function ConnectionsPage() {
       });
       const payload = (await response.json().catch(() => null)) as {
         authorizationUrl?: string;
-        detail?: string;
+        detail?: { message?: string } | string;
         message?: string;
       } | null;
       if (!response.ok || !payload?.authorizationUrl) {
-        throw new Error(
-          payload?.detail ?? payload?.message ?? "Could not start Google OAuth."
-        );
+        throw new Error(getPayloadMessage(payload, "Could not start Google OAuth."));
       }
       window.location.href = payload.authorizationUrl;
     } catch (error) {
@@ -194,11 +253,23 @@ export default function ConnectionsPage() {
     }
   };
 
+  const toggleService = (slug: string) => {
+    setExpandedServices((current) => {
+      const next = new Set(current);
+      if (next.has(slug)) {
+        next.delete(slug);
+      } else {
+        next.add(slug);
+      }
+      return next;
+    });
+  };
+
   return (
     <div>
       <h1 className="text-2xl font-medium text-foreground mb-6">Connections</h1>
 
-      <section className="mb-8">
+      <section>
         <h2 className="text-[16px] font-medium text-foreground mb-3">
           Connected Services
         </h2>
@@ -206,45 +277,160 @@ export default function ConnectionsPage() {
           <div className="flex justify-center py-16">
             <Spinner />
           </div>
-        ) : connections.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {connections.map((connection) => (
-              <ConnectionCard
-                key={connection.id}
-                connection={connection}
-                onDisconnect={(conn) => void disconnectConnection(conn)}
-                onReconnect={(conn) => {
-                  const service = serviceByConnectionId.get(conn.id);
-                  if (service) void startGoogleConnect(service);
-                }}
-                isBusy={busyConnectionId === connection.id}
-              />
-            ))}
-          </div>
         ) : (
-          <Card>
-            <CardContent className="p-5 flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                <Mail className="h-5 w-5" />
-              </div>
-              <div>
-                <p className="text-[14px] font-medium text-foreground">
-                  No connected services
-                </p>
-                <p className="text-[13px] text-muted-foreground">
-                  Connect Google services to run workflows.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+          <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2">
+            {AVAILABLE_SERVICES.map((service) => {
+              const connection = connectedById.get(service.connectionId);
+              const isConnected = connection?.status === "connected";
+              const isExpanded = expandedServices.has(service.slug);
+              const isBusy = connectingService === service.slug;
+              const serviceCapabilities =
+                capabilitiesByServiceSlug.get(service.slug) ?? [];
+
+              return (
+                <Card key={service.slug}>
+                  <CardContent className="p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-white">
+                        <ServiceLogo service={`${service.name} ${service.icon}`} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-[14px] font-medium text-foreground">
+                            {service.name}
+                          </p>
+                          <Badge variant={isConnected ? "success" : "warning"}>
+                            {isConnected ? "Connected" : "Not connected"}
+                          </Badge>
+                        </div>
+                        <p className="mt-0.5 truncate text-[12px] text-muted-foreground">
+                          {connection?.accountEmail ?? service.description}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 shrink-0"
+                        onClick={() => toggleService(service.slug)}
+                        aria-label={`${isExpanded ? "Hide" : "Show"} ${service.name} permissions`}
+                        aria-expanded={isExpanded}
+                      >
+                        <ChevronDown
+                          className={`h-4 w-4 transition-transform ${
+                            isExpanded ? "rotate-180" : ""
+                          }`}
+                        />
+                      </Button>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="mt-4 space-y-2 border-t border-border pt-3">
+                        {serviceCapabilities.map((capability) => {
+                          const granted =
+                            isConnected &&
+                            Boolean(
+                              connection?.capabilities?.includes(capability.id)
+                            );
+                          return (
+                            <div
+                              key={capability.id}
+                              className="flex min-h-[58px] items-center gap-3 rounded-lg border border-border bg-background px-3 py-2"
+                            >
+                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                                {granted ? (
+                                  <CheckCircle2 className="h-4 w-4 text-success" />
+                                ) : (
+                                  <ShieldCheck className="h-4 w-4" />
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-[13px] font-medium text-foreground">
+                                  {capability.label}
+                                </p>
+                                <p className="truncate text-[12px] text-muted-foreground">
+                                  {capability.description}
+                                </p>
+                              </div>
+                              {granted ? (
+                                <Badge variant="success">Granted</Badge>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 shrink-0 px-2 text-[12px]"
+                                  onClick={() => void startGoogleConnect(service)}
+                                  disabled={isBusy}
+                                >
+                                  {isBusy ? (
+                                    <>
+                                      <Spinner
+                                        size="sm"
+                                        className="text-current"
+                                      />
+                                      Granting
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Plus className="h-3 w-3" />
+                                      Grant
+                                    </>
+                                  )}
+                                </Button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <div className="mt-3 flex items-center justify-end gap-2 border-t border-border pt-3">
+                      {!isConnected && (
+                        <Button
+                          size="sm"
+                          variant="default"
+                          className="h-7 px-3 text-[12px]"
+                          onClick={() => void startGoogleConnect(service)}
+                          disabled={isBusy}
+                        >
+                          {isBusy ? (
+                            <>
+                              <Spinner size="sm" className="text-current" />
+                              Connecting
+                            </>
+                          ) : (
+                            <>
+                              <Plug className="h-3 w-3" />
+                              Connect
+                            </>
+                          )}
+                        </Button>
+                      )}
+                      {isConnected && connection && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-3 text-[12px] text-muted-foreground hover:text-error"
+                          onClick={() => void disconnectConnection(connection)}
+                          disabled={busyConnectionId === connection.id}
+                        >
+                          Disconnect
+                        </Button>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
         )}
       </section>
 
-      <section>
+      <section className="mt-8">
         <h2 className="text-[16px] font-medium text-foreground mb-3">
           Available Services
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2">
           {AVAILABLE_SERVICES.map((service) => {
             const existingConnection = connectedById.get(service.connectionId);
             const isBusy = connectingService === service.slug;
@@ -256,18 +442,18 @@ export default function ConnectionsPage() {
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-white">
                       <ServiceLogo service={`${service.name} ${service.icon}`} />
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <div className="min-w-0 flex-1">
                       <p className="text-[14px] font-medium text-foreground">
                         {service.name}
                       </p>
-                      <p className="text-[12px] text-muted-foreground truncate">
+                      <p className="truncate text-[12px] text-muted-foreground">
                         {service.description}
                       </p>
                     </div>
                     <Button
                       size="sm"
                       variant={existingConnection ? "outline" : "default"}
-                      className="h-7 text-[12px] px-3 shrink-0"
+                      className="h-7 shrink-0 px-3 text-[12px]"
                       onClick={() => void startGoogleConnect(service)}
                       disabled={isBusy}
                     >
@@ -278,12 +464,12 @@ export default function ConnectionsPage() {
                         </>
                       ) : existingConnection ? (
                         <>
-                          <RefreshCw className="h-3 w-3" />
-                          Reconnect
+                          <Plus className="h-3 w-3" />
+                          Grant
                         </>
                       ) : (
                         <>
-                          <Plus className="h-3 w-3" />
+                          <Plug className="h-3 w-3" />
                           Connect
                         </>
                       )}

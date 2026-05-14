@@ -101,9 +101,11 @@ SSE event'leri `src/lib/chat/sse.ts` ile parse edilir:
 `WorkflowPreview` workflow kaydini daha belirgin bir "Workflow saved" paneliyle
 gosterir. `OAuthPrompt` artik simule connect yapmaz; agent'tan gelen
 `authorizePath` ile Google Gmail veya Google Sheets OAuth authorize route'unu
-cagirir ve authorization URL'ine yonlendirir. Workflow run sonuclari icin ayri
-sonuc/kanit karti render edilmez; agent execution sonucunu kendi icinde dogrular
-ve kullaniciya normal assistant mesaji olarak cevap verir.
+cagirir ve authorization URL'ine yonlendirir. Buton dili Google Workspace
+capability modeline uygun olarak "Grant access" aksiyonunu kullanir. Workflow
+run sonuclari icin ayri sonuc/kanit karti render edilmez; agent execution
+sonucunu kendi icinde dogrular ve kullaniciya normal assistant mesaji olarak
+cevap verir.
 
 `ClarificationPanel` component'i agent'in aktif `user_input_request`
 attachment'ini render eder. Aktif son soru chat input wrapper'i icinde

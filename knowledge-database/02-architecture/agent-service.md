@@ -160,15 +160,23 @@ Workflow readiness davranisi:
 - Activate/run islemleri eksik credential varsa n8n'e side effect yapmadan
   durur ve kullanicidan credential ister.
 - Gmail read/send operasyonlari icin kullanicinin `google_gmail` connection'i
-  varsa agent n8n workflow node'una `gmailOAuth2` credential'i otomatik attach
-  eder. n8n Gmail v2 message send icin model bazen `operation=create`
+  ve gereken capability'si varsa agent n8n workflow node'una `gmailOAuth2`
+  credential'i otomatik attach eder. Gmail read operasyonlari
+  `google.gmail.read`, send/reply/create operasyonlari `google.gmail.send`
+  ister. n8n Gmail v2 message send icin model bazen `operation=create`
   uretebilir; agent bunu n8n'e yazmadan once canonical `operation=send`
   degerine normalize eder. Gmail send parameter alias'lari da canonical
   `sendTo`, `subject`, `message`, `emailType` alanlarina cevrilir; placeholder
   alici email'leri validation hatasi sayilir.
-- Google Sheets node'lari icin kullanicinin `google_sheets` connection'i varsa
-  agent `googleSheetsOAuth2Api` credential'ini otomatik attach eder. Sheets
-  connection yoksa chat'e Google Sheets `oauth_prompt` attachment'i gelir.
+- Managed Google connection metadata'si `scopes` yaninda capability listesi de
+  tasir: `google.gmail.read`, `google.gmail.send`, `google.sheets.read`,
+  `google.sheets.write`. Eski dokumanlarda capability yoksa agent scope
+  listesinden capability turetir.
+- Google Sheets node'lari icin kullanicinin `google_sheets` connection'i ve
+  gereken Sheets capability'si varsa agent `googleSheetsOAuth2Api`
+  credential'ini otomatik attach eder. Read operasyonlari `google.sheets.read`,
+  write operasyonlari `google.sheets.write` ister. Sheets connection veya
+  capability yoksa chat'e Google Sheets `oauth_prompt` attachment'i gelir.
 - Workflow create/update/activate/run/readiness kontrollerinde eksik credential
   veya managed OAuth connection bulunursa agent runtime `awaiting_user_input`
   durumuna gecer. Bu, workflow olustuktan sonra ayni turda activate/run gibi
@@ -211,7 +219,8 @@ Connection route'lari:
 - `POST /api/connections/google/callback`: auth header beklemez; state icindeki
   Google service degerine gore token exchange ve userinfo okur. Gmail icin
   n8n'de `gmailOAuth2`, Sheets icin `googleSheetsOAuth2Api` credential
-  olusturur ve Firestore connection metadata yazar. Eski
+  olusturur; Google token response `scope` alanindan granted scope ve
+  capability listesini cikarip Firestore connection metadata yazar. Eski
   `/connections/google/gmail/callback` endpoint'i Gmail icin compatibility
   alias'i olarak kalir.
 - n8n public API schema'si Gmail/Sheets Google OAuth credential'lari icin token

@@ -1337,6 +1337,62 @@ async def test_gmail_send_readiness_emits_oauth_prompt_without_connection(monkey
 
 
 @pytest.mark.asyncio
+async def test_gmail_read_readiness_requires_read_capability(monkeypatch):
+    monkeypatch.setattr(
+        "src.agent.tools.registry.get_node_schema",
+        lambda node_type: (
+            {"credentials": ["gmailOAuth2"]} if node_type == "n8n-nodes-base.gmail" else None
+        ),
+    )
+
+    async def fake_get_connection(_user_id: str, _connection_id: str):
+        return store.AppConnection(
+            id="google_gmail",
+            provider="google",
+            service="gmail",
+            account_email="user@example.com",
+            google_sub="google_sub",
+            credential_type="gmailOAuth2",
+            n8n_credential_id="cred_1",
+            n8n_credential_name="Google Gmail - user@example.com - Conduut",
+            status="connected",
+            scopes=["https://www.googleapis.com/auth/gmail.send"],
+            capabilities=["google.gmail.send"],
+            created_at="now",
+            updated_at="now",
+        )
+
+    async def fail_attach(*_args, **_kwargs):
+        raise AssertionError("read capability is required before attach")
+
+    monkeypatch.setattr("src.agent.tools.store.get_connection", fake_get_connection)
+    monkeypatch.setattr(
+        "src.agent.tools.n8n_client.attach_credential_to_workflow",
+        fail_attach,
+    )
+
+    readiness = await analyze_workflow_readiness_payload(
+        {
+            "id": "wf_1",
+            "name": "Read mail",
+            "nodes": [
+                {
+                    "name": "Gmail",
+                    "type": "n8n-nodes-base.gmail",
+                    "parameters": {"resource": "message", "operation": "get"},
+                }
+            ],
+        },
+        user_id="user_1",
+    )
+
+    assert readiness["ready"] is False
+    attachment = readiness["missing_credentials"][0]
+    assert attachment.type == "oauth_prompt"
+    assert attachment.data.authorizePath == "/api/connections/google/gmail/authorize"
+
+
+@pytest.mark.asyncio
 async def test_google_sheets_readiness_auto_attaches_existing_connection(monkeypatch):
     monkeypatch.setattr(
         "src.agent.tools.registry.get_node_schema",
@@ -1449,6 +1505,64 @@ async def test_google_sheets_readiness_emits_oauth_prompt_without_connection(mon
     attachment = readiness["missing_credentials"][0]
     assert attachment.type == "oauth_prompt"
     assert attachment.data.service == "Google Sheets"
+    assert attachment.data.authorizePath == "/api/connections/google/sheets/authorize"
+
+
+@pytest.mark.asyncio
+async def test_google_sheets_write_readiness_requires_write_capability(monkeypatch):
+    monkeypatch.setattr(
+        "src.agent.tools.registry.get_node_schema",
+        lambda node_type: (
+            {"credentials": ["googleSheetsOAuth2Api"]}
+            if node_type == "n8n-nodes-base.googleSheets"
+            else None
+        ),
+    )
+
+    async def fake_get_connection(_user_id: str, _connection_id: str):
+        return store.AppConnection(
+            id="google_sheets",
+            provider="google",
+            service="sheets",
+            account_email="user@example.com",
+            google_sub="google_sub",
+            credential_type="googleSheetsOAuth2Api",
+            n8n_credential_id="cred_sheets",
+            n8n_credential_name="Google Sheets - user@example.com - Conduut",
+            status="connected",
+            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+            capabilities=["google.sheets.read"],
+            created_at="now",
+            updated_at="now",
+        )
+
+    async def fail_attach(*_args, **_kwargs):
+        raise AssertionError("write capability is required before attach")
+
+    monkeypatch.setattr("src.agent.tools.store.get_connection", fake_get_connection)
+    monkeypatch.setattr(
+        "src.agent.tools.n8n_client.attach_credential_to_workflow",
+        fail_attach,
+    )
+
+    readiness = await analyze_workflow_readiness_payload(
+        {
+            "id": "wf_1",
+            "name": "Append row",
+            "nodes": [
+                {
+                    "name": "Google Sheets",
+                    "type": "n8n-nodes-base.googleSheets",
+                    "parameters": {"authentication": "oAuth2", "operation": "append"},
+                }
+            ],
+        },
+        user_id="user_1",
+    )
+
+    assert readiness["ready"] is False
+    attachment = readiness["missing_credentials"][0]
+    assert attachment.type == "oauth_prompt"
     assert attachment.data.authorizePath == "/api/connections/google/sheets/authorize"
 
 
