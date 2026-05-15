@@ -145,7 +145,7 @@ def _managed_google_connection_for_node(
             "credential_type": _GOOGLE_GMAIL_CREDENTIAL_TYPE,
             "service": "Google Gmail",
             "description": "Grant Google Workspace access so Conduut can use Gmail in workflows.",
-            "authorize_path": "/api/connections/google/gmail/authorize",
+            "authorize_path": "/api/oauth/google/authorize?service=gmail",
             "capability": gmail_capability,
         }
     sheets_capability = _sheets_required_capability(node, credential_type)
@@ -155,7 +155,7 @@ def _managed_google_connection_for_node(
             "credential_type": _GOOGLE_SHEETS_CREDENTIAL_TYPE,
             "service": "Google Sheets",
             "description": "Grant Google Workspace access so Conduut can use Sheets in workflows.",
-            "authorize_path": "/api/connections/google/sheets/authorize",
+            "authorize_path": "/api/oauth/google/authorize?service=sheets",
             "capability": sheets_capability,
         }
     return None

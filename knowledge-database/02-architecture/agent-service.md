@@ -46,6 +46,17 @@ test/dev ortaminda ise `apps/agent/serviceAccount.json` dosyasini kullanir.
 Firebase Admin uygulamasi daha once initialize edildiyse yeniden initialize
 etmez.
 
+## Konfigurasyon
+
+`src/config.py` Pydantic settings'i `CONDUUT_` env prefix'iyle okur. Lokal
+calismada agent genellikle `apps/agent` klasorunden `python -m uvicorn
+src.main:app --reload --host 0.0.0.0 --port 8100` ile baslatildigi icin sadece
+calisma dizinindeki `.env` dosyasina guvenilmez. Config artik repo root
+`.env` ve `apps/agent/.env` dosyalarini mutlak path ile okur; `apps/agent/.env`
+varsa root degerlerinin uzerine yazabilir. Lokal n8n default URL'i Windows port
+mapping'iyle uyumlu olacak sekilde `http://localhost:5980`'dir; Docker compose
+agent container'inda `CONDUUT_N8N_URL=http://n8n:5678` env override'i kullanilir.
+
 ## Chat Flow
 
 `POST /api/chat/send` akisi:

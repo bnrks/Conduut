@@ -123,9 +123,11 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
   `google.sheets.write` capability'si aranir; connection veya capability yoksa
   chat'e Sheets `oauth_prompt` attachment'i gelir. Web component'i artik simule
   etmez; attachment `authorizePath` degerine gore
-  `/api/connections/google/gmail/authorize` veya
-  `/api/connections/google/sheets/authorize` BFF route'undan gercek Google
-  authorization URL alir.
+  `/api/oauth/google/authorize?service=gmail` veya
+  `/api/oauth/google/authorize?service=sheets` BFF route'undan gercek Google
+  authorization URL alir. Bu path, Next 16 dev ortaminda eski
+  `/api/connections/google/.../authorize` nested route'larinin 404'e dusmesi
+  nedeniyle kullanilir.
 - Eksik credential/OAuth prompt emit edildikten sonra agent ayni turda workflow
   calistirma veya aktive etme denemesi yapmamalidir. Tool sonucu
   `missing_credentials > 0`, `ready=false` veya `waiting_for_user_input=true`

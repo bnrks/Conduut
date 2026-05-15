@@ -57,10 +57,11 @@ Baslica route handler'lar:
 - `api/workflows/[workflowId]`: activate/deactivate/delete proxy.
 - `api/connections`: connection listeleme.
 - `api/connections/[connectionId]`: connection silme proxy.
-- `api/connections/google/gmail/authorize`: Firebase token ile agent Google
-  Gmail authorize endpoint'ine proxy eder.
-- `api/connections/google/sheets/authorize`: Firebase token ile agent Google
-  Sheets authorize endpoint'ine proxy eder.
+- `api/oauth/google/authorize?service=gmail|sheets`: Firebase token ile agent
+  Google Gmail veya Google Sheets authorize endpoint'ine proxy eder. Next 16
+  dev ortaminda `api/connections/[connectionId]` dinamik route'u ile ayni dal
+  altindaki `api/connections/google/.../authorize` route'lari 404'e dustugu
+  icin authorize BFF yuzeyi `api/oauth/google` agacina tasindi.
 - `api/oauth/google/callback`: Google OAuth callback'ini auth header olmadan
   generic agent Google callback endpoint'ine iletir ve connection id ile
   dashboard'a success/error redirect yapar.
@@ -101,7 +102,8 @@ SSE event'leri `src/lib/chat/sse.ts` ile parse edilir:
 `WorkflowPreview` workflow kaydini daha belirgin bir "Workflow saved" paneliyle
 gosterir. `OAuthPrompt` artik simule connect yapmaz; agent'tan gelen
 `authorizePath` ile Google Gmail veya Google Sheets OAuth authorize route'unu
-cagirir ve authorization URL'ine yonlendirir. Buton dili Google Workspace
+cagirir ve authorization URL'ine yonlendirir. Varsayilan Gmail authorize path'i
+`/api/oauth/google/authorize?service=gmail`'dir. Buton dili Google Workspace
 capability modeline uygun olarak "Grant access" aksiyonunu kullanir. Workflow
 run sonuclari icin ayri sonuc/kanit karti render edilmez; agent execution
 sonucunu kendi icinde dogrular ve kullaniciya normal assistant mesaji olarak

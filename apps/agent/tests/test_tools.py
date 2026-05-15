@@ -1333,7 +1333,7 @@ async def test_gmail_send_readiness_emits_oauth_prompt_without_connection(monkey
     attachment = readiness["missing_credentials"][0]
     assert attachment.type == "oauth_prompt"
     assert attachment.data.service == "Google Gmail"
-    assert attachment.data.authorizePath == "/api/connections/google/gmail/authorize"
+    assert attachment.data.authorizePath == "/api/oauth/google/authorize?service=gmail"
 
 
 @pytest.mark.asyncio
@@ -1389,7 +1389,7 @@ async def test_gmail_read_readiness_requires_read_capability(monkeypatch):
     assert readiness["ready"] is False
     attachment = readiness["missing_credentials"][0]
     assert attachment.type == "oauth_prompt"
-    assert attachment.data.authorizePath == "/api/connections/google/gmail/authorize"
+    assert attachment.data.authorizePath == "/api/oauth/google/authorize?service=gmail"
 
 
 @pytest.mark.asyncio
@@ -1505,7 +1505,7 @@ async def test_google_sheets_readiness_emits_oauth_prompt_without_connection(mon
     attachment = readiness["missing_credentials"][0]
     assert attachment.type == "oauth_prompt"
     assert attachment.data.service == "Google Sheets"
-    assert attachment.data.authorizePath == "/api/connections/google/sheets/authorize"
+    assert attachment.data.authorizePath == "/api/oauth/google/authorize?service=sheets"
 
 
 @pytest.mark.asyncio
@@ -1563,7 +1563,7 @@ async def test_google_sheets_write_readiness_requires_write_capability(monkeypat
     assert readiness["ready"] is False
     attachment = readiness["missing_credentials"][0]
     assert attachment.type == "oauth_prompt"
-    assert attachment.data.authorizePath == "/api/connections/google/sheets/authorize"
+    assert attachment.data.authorizePath == "/api/oauth/google/authorize?service=sheets"
 
 
 @pytest.mark.asyncio

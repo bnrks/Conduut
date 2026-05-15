@@ -65,7 +65,7 @@ export function OAuthPrompt({
     try {
       const token = await user.getIdToken();
       const response = await fetch(
-        data.authorizePath ?? "/api/connections/google/gmail/authorize",
+        data.authorizePath ?? "/api/oauth/google/authorize?service=gmail",
         {
           method: "POST",
           headers: {

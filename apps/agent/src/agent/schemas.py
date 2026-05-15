@@ -91,7 +91,7 @@ class CredentialRequestAttachment(BaseModel):
 class OAuthPromptData(BaseModel):
     service: str
     description: str
-    authorizePath: str = "/api/connections/google/gmail/authorize"
+    authorizePath: str = "/api/oauth/google/authorize?service=gmail"
     returnTo: str = "/dashboard/connections"
     iconUrl: str | None = None
 

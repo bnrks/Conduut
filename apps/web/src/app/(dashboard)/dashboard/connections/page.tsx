@@ -19,7 +19,7 @@ const AVAILABLE_SERVICES: AvailableService[] = [
     description: "Read and send Gmail messages from workflows",
     category: "Email",
     connectionId: "google_gmail",
-    authorizePath: "/api/connections/google/gmail/authorize",
+    authorizePath: "/api/oauth/google/authorize?service=gmail",
   },
   {
     name: "Google Sheets",
@@ -28,7 +28,7 @@ const AVAILABLE_SERVICES: AvailableService[] = [
     description: "Read spreadsheet rows from workflows",
     category: "Data",
     connectionId: "google_sheets",
-    authorizePath: "/api/connections/google/sheets/authorize",
+    authorizePath: "/api/oauth/google/authorize?service=sheets",
   },
 ];
 

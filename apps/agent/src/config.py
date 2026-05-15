@@ -1,4 +1,9 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
+
+_APP_DIR = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class Settings(BaseSettings):
@@ -9,7 +14,7 @@ class Settings(BaseSettings):
     default_model: str = "gpt-4o-mini"
 
     # n8n
-    n8n_url: str = "http://localhost:5678"
+    n8n_url: str = "http://localhost:5980"
     n8n_api_key: str = ""
 
     # OAuth broker
@@ -18,7 +23,13 @@ class Settings(BaseSettings):
     google_oauth_client_secret: str = ""
     oauth_state_ttl_seconds: int = 600
 
-    model_config = {"env_prefix": "CONDUUT_", "env_file": ".env"}
+    model_config = {
+        "env_prefix": "CONDUUT_",
+        "env_file": (
+            _REPO_ROOT / ".env",
+            _APP_DIR / ".env",
+        ),
+    }
 
 
 settings = Settings()
