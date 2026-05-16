@@ -27,9 +27,11 @@ Lokal hizli gelistirme icin root `start-local-dev.bat` hibrit akis saglar:
 yalnizca `docker compose up -d n8n` ile shared n8n image'ini ayaga kaldirir,
 agent'i `apps/agent` altindan `python -m uvicorn src.main:app --reload --port
 8100` ile lokal koddan calistirir, web'i de `apps/web` altindan
-`npm run dev` ile baslatir. Bu akista agent `CONDUUT_N8N_URL` olarak
-`http://localhost:5980`, web BFF route'lari ise `AGENT_API_BASE_URL` olarak
-`http://localhost:8100` kullanir; web/agent Docker image build'i gerekmez.
+`npm run dev -- --hostname 127.0.0.1 --port 3007` ile baslatir. Bu akista
+agent `CONDUUT_N8N_URL` olarak `http://localhost:5980`,
+`CONDUUT_PUBLIC_WEB_URL` olarak `http://localhost:3007`, web BFF route'lari ise
+`AGENT_API_BASE_URL` olarak `http://localhost:8100` kullanir; web/agent Docker
+image build'i gerekmez. Web portu `CONDUUT_WEB_PORT` ile override edilebilir.
 Script agent'i `apps/agent` calisma dizininden baslattigi icin root `.env`
 dosyasi Pydantic tarafindan otomatik okunmaz; bu nedenle
 `CONDUUT_GOOGLE_OAUTH_CLIENT_ID`, `CONDUUT_GOOGLE_OAUTH_CLIENT_SECRET` ve

@@ -27,7 +27,23 @@ from src.agent.tools import (
     create_workflow_from_spec_payload,
     run_workflow_with_input,
 )
+from src.agent.tools.factory import _normalized_user_input_request
 from src.agent.tools.spec_compiler import WorkflowSpecCompileError
+
+
+def test_normalized_user_input_request_limits_missing_fields_to_current_step():
+    question, fields, choices, reason, remaining = _normalized_user_input_request(
+        "Bu otomasyon icin bilgileri paylasin",
+        ["E-posta servisi", "Google Sheet ID", "Sheet adi"],
+        ["Gmail", "SMTP"],
+        "Servis secimi sonraki sorulari belirler.",
+    )
+
+    assert question == "Bu otomasyon icin bilgileri paylasin"
+    assert fields == ["E-posta servisi"]
+    assert [choice.label for choice in choices] == ["Gmail", "SMTP"]
+    assert reason == "Servis secimi sonraki sorulari belirler."
+    assert remaining == ["Google Sheet ID", "Sheet adi"]
 
 
 def test_validated_workflow_canonicalizes_nodes_and_connections(monkeypatch):
@@ -1234,6 +1250,77 @@ async def test_gmail_send_readiness_auto_attaches_existing_connection(monkeypatc
     assert attached["workflow_id"] == "wf_1"
     assert attached["node_name"] == "Gmail"
     assert workflow["nodes"][0]["credentials"]["gmailOAuth2"]["id"] == "cred_1"
+
+
+@pytest.mark.asyncio
+async def test_gmail_send_readiness_replaces_stale_existing_credential(monkeypatch):
+    monkeypatch.setattr(
+        "src.agent.tools.registry.get_node_schema",
+        lambda node_type: (
+            {"credentials": ["gmailOAuth2"]} if node_type == "n8n-nodes-base.gmail" else None
+        ),
+    )
+
+    async def fake_get_connection(_user_id: str, _connection_id: str):
+        return store.AppConnection(
+            id="google_gmail",
+            provider="google",
+            service="gmail",
+            account_email="user@example.com",
+            google_sub="google_sub",
+            credential_type="gmailOAuth2",
+            n8n_credential_id="fresh_cred",
+            n8n_credential_name="Google Gmail - user@example.com - Conduut",
+            status="connected",
+            scopes=["https://www.googleapis.com/auth/gmail.send"],
+            created_at="now",
+            updated_at="now",
+        )
+
+    attached: dict[str, str] = {}
+
+    async def fake_attach(workflow_id, node_name, credential_type, credential_id, credential_name):
+        attached.update(
+            {
+                "workflow_id": workflow_id,
+                "node_name": node_name,
+                "credential_type": credential_type,
+                "credential_id": credential_id,
+                "credential_name": credential_name,
+            }
+        )
+        return {}
+
+    monkeypatch.setattr("src.agent.tools.store.get_connection", fake_get_connection)
+    monkeypatch.setattr(
+        "src.agent.tools.n8n_client.attach_credential_to_workflow",
+        fake_attach,
+    )
+
+    workflow = {
+        "id": "wf_1",
+        "name": "Send mail",
+        "nodes": [
+            {
+                "name": "Gmail",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"resource": "message", "operation": "send"},
+                "credentials": {
+                    "gmailOAuth2": {
+                        "id": "deleted_cred",
+                        "name": "Deleted Gmail credential",
+                    }
+                },
+            }
+        ],
+    }
+
+    readiness = await analyze_workflow_readiness_payload(workflow, user_id="user_1")
+
+    assert readiness["ready"] is True
+    assert readiness["missing_credentials"] == []
+    assert attached["credential_id"] == "fresh_cred"
+    assert workflow["nodes"][0]["credentials"]["gmailOAuth2"]["id"] == "fresh_cred"
 
 
 @pytest.mark.asyncio

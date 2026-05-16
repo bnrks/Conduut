@@ -31,8 +31,15 @@ services:
     container_name: conduut-agent
     volumes:
       - ./apps/agent/serviceAccount.json:/app/serviceAccount.json:ro
+      - ./logs/agent:/app/logs
     environment:
       CONDUUT_ENVIRONMENT: development
+      CONDUUT_LOG_DIR: /app/logs
+      CONDUUT_LOG_FILE_ENABLED: ${CONDUUT_LOG_FILE_ENABLED:-true}
+      CONDUUT_LOG_LEVEL: ${CONDUUT_LOG_LEVEL:-INFO}
+      CONDUUT_LOG_MAX_BYTES: ${CONDUUT_LOG_MAX_BYTES:-10485760}
+      CONDUUT_LOG_BACKUP_COUNT: ${CONDUUT_LOG_BACKUP_COUNT:-5}
+      CONDUUT_LOG_PAYLOAD_PREVIEW_CHARS: ${CONDUUT_LOG_PAYLOAD_PREVIEW_CHARS:-1000}
       CONDUUT_N8N_URL: http://n8n:5678
       CONDUUT_N8N_API_KEY: ***REMOVED***
       CONDUUT_PUBLIC_WEB_URL: ${CONDUUT_PUBLIC_WEB_URL:-http://localhost:3000}

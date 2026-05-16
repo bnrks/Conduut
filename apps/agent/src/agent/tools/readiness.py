@@ -194,6 +194,14 @@ async def _attach_managed_connection_if_available(
         "id": connection.n8n_credential_id,
         "name": connection.n8n_credential_name,
     }
+    log.info(
+        "managed_connection_attached",
+        workflow_id=workflow_id,
+        node=node_name,
+        connection_id=config["connection_id"],
+        credential_type=credential_type,
+        capability=config["capability"],
+    )
     return True
 
 
@@ -279,16 +287,22 @@ async def analyze_workflow_readiness_payload(
             continue
         schema = registry.get_node_schema(node.get("type", ""))
         credential_types = _required_credential_types_for_node(node, schema)
-        if not credential_types or _node_has_credential(node, credential_types):
+        if not credential_types:
             continue
         credential_type = _select_credential_type(node, credential_types)
         if credential_type:
+            has_credential = _node_has_credential(node, credential_types)
+            managed_connection = _managed_google_connection_for_node(node, credential_type)
             try:
-                attached = await _attach_managed_connection_if_available(
-                    user_id,
-                    workflow_id,
-                    node,
-                    credential_type,
+                attached = (
+                    await _attach_managed_connection_if_available(
+                        user_id,
+                        workflow_id,
+                        node,
+                        credential_type,
+                    )
+                    if managed_connection
+                    else False
                 )
             except Exception as exc:
                 log.warning(
@@ -301,6 +315,16 @@ async def analyze_workflow_readiness_payload(
                 attached = False
             if attached:
                 continue
+            if has_credential:
+                continue
+            log.info(
+                "workflow_missing_credential",
+                workflow_id=workflow_id,
+                node=node.get("name"),
+                node_type=node.get("type"),
+                credential_type=credential_type,
+                managed_connection=bool(managed_connection),
+            )
             missing.append(
                 await _credential_request_for_node(
                     workflow.get("id", ""),

@@ -3,13 +3,12 @@ Agent servisi için n8n node registry singleton'u.
 n8n_registry paketini wrap eder ve agent config'iyle initialize eder.
 """
 
-import logging
 from pathlib import Path
 
+import structlog
 from n8n_registry import NodeRegistry
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 # Uygulama genelinde tek instance
 registry: NodeRegistry = NodeRegistry()
@@ -28,7 +27,7 @@ async def initialize_registry(n8n_base_url: str) -> None:
         templates_path=_TEMPLATES_PATH if _TEMPLATES_PATH.exists() else None,
     )
     log.info(
-        "Node registry ready: %d nodes, %d templates",
-        registry.node_count,
-        registry.template_count,
+        "node_registry_ready",
+        node_count=registry.node_count,
+        template_count=registry.template_count,
     )

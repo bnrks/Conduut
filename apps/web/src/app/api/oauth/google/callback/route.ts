@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { agentHeaders } from "@/lib/request-id";
+
 function getAgentBaseUrl(): string {
   const fromEnv =
     process.env.AGENT_API_BASE_URL || process.env.NEXT_PUBLIC_AGENT_API_BASE_URL;
@@ -61,7 +63,7 @@ export async function GET(request: NextRequest) {
       `${getAgentBaseUrl()}/api/connections/google/callback`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: agentHeaders(request, { "Content-Type": "application/json" }),
         body: JSON.stringify({ code, state }),
         cache: "no-store",
       }

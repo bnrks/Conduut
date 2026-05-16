@@ -3,6 +3,7 @@
 from typing import Any
 
 import httpx
+import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
@@ -11,6 +12,7 @@ from src.auth import get_user_id
 from src.oauth import google
 
 router = APIRouter()
+log = structlog.get_logger()
 
 GOOGLE_GMAIL_CONNECTION_ID = "google_gmail"
 GOOGLE_GMAIL_CREDENTIAL_TYPE = "gmailOAuth2"
@@ -107,6 +109,13 @@ async def list_connections(request: Request):
 async def _authorize_google_service(request: Request, body: AuthorizeIn, service: str):
     user_id = get_user_id(request)
     config = _google_connection_config(service)
+    log.info(
+        "oauth_authorize_started",
+        user_id=user_id,
+        provider="google",
+        service=config["service"],
+        return_to=body.return_to,
+    )
     try:
         google.ensure_google_oauth_configured()
         state = google.generate_state()
@@ -120,6 +129,12 @@ async def _authorize_google_service(request: Request, body: AuthorizeIn, service
             return_to=google.safe_return_to(body.return_to),
             expires_at=google.expires_at(),
         )
+        log.info(
+            "oauth_authorize_created",
+            user_id=user_id,
+            provider="google",
+            service=config["service"],
+        )
         return {
             "authorizationUrl": google.authorization_url(
                 state=state,
@@ -128,6 +143,13 @@ async def _authorize_google_service(request: Request, body: AuthorizeIn, service
             )
         }
     except google.GoogleOAuthConfigError as exc:
+        log.error(
+            "oauth_authorize_config_error",
+            user_id=user_id,
+            provider="google",
+            service=config["service"],
+            error=str(exc),
+        )
         raise HTTPException(status_code=503, detail={"message": str(exc)}) from exc
 
 
@@ -142,16 +164,46 @@ async def authorize_google_sheets(request: Request, body: AuthorizeIn):
 
 
 async def _google_callback(body: GoogleCallbackIn, *, expected_service: str | None = None):
+    log.info(
+        "oauth_callback_started",
+        provider="google",
+        expected_service=expected_service,
+    )
     state = await store.get_oauth_state(body.state)
     if state is None or state.provider != "google":
+        log.warning(
+            "oauth_callback_rejected",
+            provider="google",
+            reason="invalid_state",
+            expected_service=expected_service,
+        )
         raise HTTPException(status_code=400, detail={"message": "Invalid OAuth state."})
     if expected_service and state.service != expected_service:
+        log.warning(
+            "oauth_callback_rejected",
+            provider="google",
+            service=state.service,
+            expected_service=expected_service,
+            reason="service_mismatch",
+        )
         raise HTTPException(status_code=400, detail={"message": "Invalid OAuth state."})
     if state.used:
+        log.warning(
+            "oauth_callback_rejected",
+            provider="google",
+            service=state.service,
+            reason="state_used",
+        )
         raise HTTPException(
             status_code=400, detail={"message": "OAuth state has already been used."}
         )
     if google.is_expired(state.expires_at):
+        log.warning(
+            "oauth_callback_rejected",
+            provider="google",
+            service=state.service,
+            reason="state_expired",
+        )
         raise HTTPException(status_code=400, detail={"message": "OAuth state has expired."})
 
     config = _google_connection_config(state.service)
@@ -162,14 +214,37 @@ async def _google_callback(body: GoogleCallbackIn, *, expected_service: str | No
             code=body.code,
             code_verifier=state.code_verifier,
         )
+        log.info(
+            "oauth_token_exchange_succeeded",
+            provider="google",
+            service=config["service"],
+        )
     except httpx.HTTPStatusError as exc:
+        log.warning(
+            "oauth_token_exchange_failed",
+            provider="google",
+            service=config["service"],
+            status_code=exc.response.status_code,
+            error_type=type(exc).__name__,
+        )
         raise _oauth_http_error(exc, "Google token exchange failed.") from exc
     except google.GoogleOAuthConfigError as exc:
+        log.error(
+            "oauth_token_exchange_config_error",
+            provider="google",
+            service=config["service"],
+            error=str(exc),
+        )
         raise HTTPException(status_code=503, detail={"message": str(exc)}) from exc
 
     access_token = str(token_response.get("access_token") or "")
     refresh_token = str(token_response.get("refresh_token") or "")
     if not access_token or not refresh_token:
+        log.warning(
+            "oauth_callback_missing_offline_token",
+            provider="google",
+            service=config["service"],
+        )
         raise HTTPException(
             status_code=400,
             detail={"message": "Google did not return an offline refresh token. Please reconnect."},
@@ -177,12 +252,29 @@ async def _google_callback(body: GoogleCallbackIn, *, expected_service: str | No
 
     try:
         userinfo = await google.fetch_userinfo(access_token)
+        log.info(
+            "oauth_userinfo_loaded",
+            provider="google",
+            service=config["service"],
+        )
     except httpx.HTTPStatusError as exc:
+        log.warning(
+            "oauth_userinfo_failed",
+            provider="google",
+            service=config["service"],
+            status_code=exc.response.status_code,
+            error_type=type(exc).__name__,
+        )
         raise _oauth_http_error(exc, "Could not read Google account profile.") from exc
 
     account_email = str(userinfo.get("email") or "")
     google_sub = str(userinfo.get("sub") or "")
     if not account_email or not google_sub:
+        log.warning(
+            "oauth_userinfo_missing_identity",
+            provider="google",
+            service=config["service"],
+        )
         raise HTTPException(
             status_code=400,
             detail={"message": "Google account profile did not include email/sub."},
@@ -218,19 +310,60 @@ async def _google_callback(body: GoogleCallbackIn, *, expected_service: str | No
             scopes=granted_scopes,
             capabilities=capabilities,
         )
+        log.info(
+            "oauth_connection_saved",
+            user_id=state.user_id,
+            provider="google",
+            service=config["service"],
+            connection_id=connection_id,
+            credential_type=credential_type,
+            capability_count=len(capabilities),
+        )
     except n8n_client.N8nApiError as exc:
+        log.warning(
+            "oauth_n8n_credential_failed",
+            user_id=state.user_id,
+            provider="google",
+            service=config["service"],
+            credential_type=credential_type,
+            status_code=exc.status_code,
+            error=exc.message,
+        )
         raise HTTPException(status_code=exc.status_code, detail={"message": exc.message}) from exc
     except Exception as exc:
         if "credential" in locals():
             try:
                 await n8n_client.delete_credential(credential.id)
+                log.info(
+                    "oauth_orphan_credential_deleted",
+                    user_id=state.user_id,
+                    provider="google",
+                    service=config["service"],
+                    credential_id=credential.id,
+                )
             except Exception:
                 pass
+        log.error(
+            "oauth_connection_save_failed",
+            user_id=state.user_id,
+            provider="google",
+            service=config["service"],
+            error_type=type(exc).__name__,
+            error=str(exc),
+            exc_info=True,
+        )
         raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
 
     if existing and existing.n8n_credential_id != connection.n8n_credential_id:
         try:
             await n8n_client.delete_credential(existing.n8n_credential_id)
+            log.info(
+                "oauth_replaced_old_credential_deleted",
+                user_id=state.user_id,
+                provider="google",
+                service=config["service"],
+                connection_id=connection_id,
+            )
         except Exception:
             pass
 

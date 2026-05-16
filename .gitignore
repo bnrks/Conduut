@@ -1,6 +1,9 @@
 node_modules/
 bower_components/
 *.log
+*.jsonl
+*.jsonl.*
+logs/
 
 build/
 dist/

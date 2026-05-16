@@ -166,18 +166,22 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
   mesaji yazdiginda model onceki `workflow_preview.id` degerini kullanabilir ve
   `workflow_id=1` gibi uydurma id'lere dusmez.
 - `user_input_request` attachment'i da history context'ine eklenir. Agent eksik
-  alici, mesaj metni, servis hesabi veya zamanlama gibi is bilgilerini sorduktan
-  sonra kullanici sadece cevabi yazarsa agent onceki otomasyon istegini devam
-  ettirebilir. Web tarafinda `user_input_request` normal chat balonu/karti
-  olarak gosterilmez; aktif son soru chat input wrapper'i icinde
-  `absolute bottom-full` overlay panel olarak gosterilir. Bu aktif soru ayni
-  anda mesaj listesinde kompakt ozet olarak render edilmez; sadece onceki
+  alici, mesaj metni, servis hesabi veya zamanlama gibi is bilgilerini adim
+  adim sorar; once en bloklayici karar/alan sorulur, kullanici cevabindan sonra
+  bir sonraki eksik alan sorulur. Kullanici sadece cevabi yazarsa agent onceki
+  otomasyon istegini devam ettirebilir. Web tarafinda aktif
+  `user_input_request` varken ana chat composer'i gizlenir ve alt cevap alaninda
+  sadece clarification paneli gosterilir. Bu aktif soru ayni anda mesaj
+  listesinde kompakt ozet olarak render edilmez; sadece onceki
   `user_input_request` attachment'lari mesaj listesinde kompakt ozet olarak
   kalir, boylece clarification gecmisi kaybolmaz. Panel `missingFields`
-  listesini de render eder; bu yuzden agent `request_user_input` cagrilarinda
-  eksik alanlari insan tarafindan okunabilir etiketlerle doldurmalidir. Tool
-  isterse 2-4 secenek de gonderebilir, kullanici secenege tiklayarak, klavye ile
-  secerek veya serbest cevap yazarak devam eder.
+  degerlerini cevap kontrolu etiketlerine cevirir; bu yuzden agent
+  `request_user_input` cagrilarinda tek eksik alani insan tarafindan okunabilir
+  etiketle doldurmalidir. Tool isterse 2-4 secenek de gonderebilir. Web paneli
+  coklu `missingFields` icin fallback olarak ayri kontroller gostermeyi
+  destekler, fakat tool model yanlislikla coklu alan gonderirse attachment'i ilk
+  alanla sinirlar. Tek eksik alan ya da sadece secenekle cevaplanabilecek
+  sorularda secenek tiklama dogrudan cevap gonderebilir.
 - Runner conversation history'ye, `user_input_request` sonrasi gelen user
   mesajlari icin internal "bu mesaj onceki clarification'a cevap olabilir"
   context'i ekler. Bu modelin cevaplanmis alanlari biriktirmesine ve ayni eksik
@@ -210,11 +214,13 @@ Agent artik kullanicidan n8n, webhook, workflow veya node terminolojisi
 beklememelidir. "Su mail adreslerine bu paragrafi gonder" gibi dogal dil
 isteklerinde otomasyon niyetini kendisi cikarmali, teknik yapiyi kendisi
 secmeli ve sadece gerekli is bilgisi eksikse `request_user_input` tool'u ile
-tek, net ve kendi basina anlasilir bir soru sormalidir. Soru genel kalacaksa
-`missing_fields` mutlaka "Google Sheet ID", "sheet/tab name", "kaydedilecek
-input alanlari" gibi acik etiketlerle doldurulmalidir. Placeholder alici, fake
-URL veya ornek metin uydurmak yerine bu soru akisi kullanilir; tool
-cagrildiktan sonra ayni turda workflow yazilmaz.
+tek, net ve kendi basina anlasilir bir soru sormalidir. Birden fazla bilgi
+eksikse hepsi tek seferde istenmez; servis/hesap gibi akisi belirleyen en
+bloklayici karar once sorulur, sonra kullanici cevabina gore bir sonraki alan
+sorulur. `missing_fields` tek alan icermeli ve "Google Sheet ID",
+"sheet/tab name", "kaydedilecek input alanlari" gibi acik etiketlerle
+doldurulmalidir. Placeholder alici, fake URL veya ornek metin uydurmak yerine
+bu soru akisi kullanilir; tool cagrildiktan sonra ayni turda workflow yazilmaz.
 
 Conduut'un chat'ten "sen tetikle/test et" diyerek calistirabilecegi on-demand
 workflow'larda agent kullaniciya webhook terimini soylemeden internal POST

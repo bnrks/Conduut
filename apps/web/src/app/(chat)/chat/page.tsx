@@ -242,35 +242,37 @@ export default function NewChatPage() {
           />
         )}
       </div>
-      <div className="relative shrink-0">
-        {clarification && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-full z-30 px-4 pb-3">
-            <div className="pointer-events-auto mx-auto max-w-3xl">
+      <div className="shrink-0">
+        {clarification ? (
+          <div className="px-4 pb-4">
+            <div className="mx-auto max-w-3xl">
               <ClarificationPanel
+                key={clarification.messageId}
                 data={clarification.data}
                 onSubmit={(value) => { void handleSend(value); }}
               />
             </div>
           </div>
+        ) : (
+          <ChatInput
+            value={inputValue}
+            onChange={setInputValue}
+            onSend={(content) => { void handleSend(content); }}
+            disabled={!user}
+            providers={providers}
+            selectedProvider={selectedProvider}
+            onProviderChange={setSelectedProvider}
+            models={models}
+            selectedModel={selectedModel}
+            onModelChange={setSelectedModel}
+            reasoningEfforts={reasoningEfforts}
+            selectedReasoningEffort={selectedReasoningEffort}
+            onReasoningEffortChange={setSelectedReasoningEffort}
+            loadingModels={loadingModels}
+            isFavorite={isFavorite}
+            onToggleFavorite={(p, m) => void toggleFavorite(p, m)}
+          />
         )}
-        <ChatInput
-          value={inputValue}
-          onChange={setInputValue}
-          onSend={(content) => { void handleSend(content); }}
-          disabled={!user}
-          providers={providers}
-          selectedProvider={selectedProvider}
-          onProviderChange={setSelectedProvider}
-          models={models}
-          selectedModel={selectedModel}
-          onModelChange={setSelectedModel}
-          reasoningEfforts={reasoningEfforts}
-          selectedReasoningEffort={selectedReasoningEffort}
-          onReasoningEffortChange={setSelectedReasoningEffort}
-          loadingModels={loadingModels}
-          isFavorite={isFavorite}
-          onToggleFavorite={(p, m) => void toggleFavorite(p, m)}
-        />
       </div>
     </>
   );

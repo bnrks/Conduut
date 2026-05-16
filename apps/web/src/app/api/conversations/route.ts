@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { agentHeaders } from "@/lib/request-id";
+
 function getAgentBaseUrl(): string {
   const fromEnv = process.env.AGENT_API_BASE_URL || process.env.NEXT_PUBLIC_AGENT_API_BASE_URL;
   return fromEnv || "http://localhost:8000";
@@ -23,9 +25,9 @@ export async function GET(request: NextRequest) {
   try {
     const response = await fetch(`${getAgentBaseUrl()}/api/conversations`, {
       method: "GET",
-      headers: {
+      headers: agentHeaders(request, {
         Authorization: authHeader,
-      },
+      }),
       cache: "no-store",
     });
     return await toResponsePayload(response);

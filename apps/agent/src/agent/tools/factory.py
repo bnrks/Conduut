@@ -1,5 +1,6 @@
 """Pydantic AI agent factory and tool registrations."""
 
+from time import perf_counter
 from typing import Any
 
 import structlog
@@ -41,6 +42,64 @@ from src.agent.tools.workflow_runner import run_workflow_with_input
 from src.registry import registry
 
 log = structlog.get_logger()
+
+
+def _tool_status(result: Any) -> str:
+    if isinstance(result, dict):
+        if result.get("error"):
+            return "error"
+        if result.get("status") in {"waiting_for_user", "error", "failed"}:
+            return str(result["status"])
+        if result.get("ready") is False or result.get("success") is False:
+            return "needs_attention"
+    if (
+        isinstance(result, list)
+        and result
+        and isinstance(result[0], dict)
+        and result[0].get("error")
+    ):
+        return "error"
+    return "success"
+
+
+def _log_tool_finished(tool: str, started_at: float, result: Any) -> None:
+    result_keys = list(result.keys()) if isinstance(result, dict) else None
+    log.info(
+        "agent_tool_call_finished",
+        tool=tool,
+        duration_ms=round((perf_counter() - started_at) * 1000, 2),
+        status=_tool_status(result),
+        result_keys=result_keys,
+    )
+
+
+def _normalized_user_input_request(
+    question: str,
+    missing_fields: list[str] | None,
+    choices: list[str] | None,
+    reason: str | None,
+) -> tuple[str, list[str], list[UserInputChoice], str | None, list[str]]:
+    normalized_question = question.strip()
+    if not normalized_question:
+        normalized_question = "What information should I use to continue?"
+    all_fields = [
+        field.strip()
+        for field in (missing_fields or [])
+        if isinstance(field, str) and field.strip()
+    ]
+    normalized_choices = [
+        UserInputChoice(label=choice.strip())
+        for choice in (choices or [])
+        if isinstance(choice, str) and choice.strip()
+    ][:4]
+    normalized_reason = reason.strip() if isinstance(reason, str) and reason.strip() else None
+    return (
+        normalized_question,
+        all_fields[:1],
+        normalized_choices,
+        normalized_reason,
+        all_fields[1:],
+    )
 
 
 def create_agent(model: Any) -> Agent[AgentDeps, str]:
@@ -113,23 +172,24 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         allow_skip: bool = False,
         reason: str | None = None,
     ) -> dict[str, Any]:
-        """Ask the user for required missing business information before continuing."""
+        """Ask one required missing business detail before continuing."""
 
-        normalized_question = question.strip()
-        if not normalized_question:
-            normalized_question = "What information should I use to continue?"
-        normalized_fields = [
-            field.strip()
-            for field in (missing_fields or [])
-            if isinstance(field, str) and field.strip()
-        ]
-        normalized_choices = [
-            UserInputChoice(label=choice.strip())
-            for choice in (choices or [])
-            if isinstance(choice, str) and choice.strip()
-        ][:4]
-        normalized_reason = reason.strip() if isinstance(reason, str) and reason.strip() else None
+        (
+            normalized_question,
+            normalized_fields,
+            normalized_choices,
+            normalized_reason,
+            remaining_fields,
+        ) = _normalized_user_input_request(question, missing_fields, choices, reason)
         await ctx.deps.emit_tool_call("request_user_input")
+        started_at = perf_counter()
+        if remaining_fields:
+            log.info(
+                "user_input_request_stepwise_limited",
+                requested_fields=[*normalized_fields, *remaining_fields],
+                emitted_fields=normalized_fields,
+                remaining_fields=remaining_fields,
+            )
         await ctx.deps.emit_attachment(
             UserInputRequestAttachment(
                 data=UserInputRequestData(
@@ -142,39 +202,54 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             )
         )
         ctx.deps.awaiting_user_input = True
-        return {
+        result = {
             "status": "waiting_for_user",
             "question": normalized_question,
             "missing_fields": normalized_fields,
             "choices": [choice.label for choice in normalized_choices],
+            "remaining_missing_fields": remaining_fields,
             "instruction": (
-                "Stop now. Ask only this question and wait for the user's next message. "
-                "Do not create or update workflows until the user answers."
+                "Stop now. Ask only this one question and wait for the user's next "
+                "message. Treat the user's answer as accumulated context, then ask "
+                "the next missing detail if needed. Do not create or update workflows "
+                "until enough information is available."
             ),
         }
+        _log_tool_finished("request_user_input", started_at, result)
+        return result
 
     @agent.tool
     async def list_workflows(ctx: RunContext[AgentDeps]) -> list[dict[str, Any]]:
         """List all n8n workflows in the shared MVP instance."""
 
         await ctx.deps.emit_tool_call("list_workflows")
+        started_at = perf_counter()
         try:
             workflows = await n8n_client.list_workflows()
         except Exception as exc:
             log.error("tool_error", tool="list_workflows", error=str(exc))
-            return [{"error": _safe_error(exc)}]
-        return [{"id": w.id, "name": w.name, "active": w.active} for w in workflows]
+            result = [{"error": _safe_error(exc)}]
+            _log_tool_finished("list_workflows", started_at, result)
+            return result
+        result = [{"id": w.id, "name": w.name, "active": w.active} for w in workflows]
+        _log_tool_finished("list_workflows", started_at, result)
+        return result
 
     @agent.tool
     async def get_workflow(ctx: RunContext[AgentDeps], workflow_id: str) -> dict[str, Any]:
         """Get the full details and node structure of a specific n8n workflow."""
 
         await ctx.deps.emit_tool_call("get_workflow")
+        started_at = perf_counter()
         try:
-            return await n8n_client.get_workflow(workflow_id)
+            result = await n8n_client.get_workflow(workflow_id)
+            _log_tool_finished("get_workflow", started_at, result)
+            return result
         except Exception as exc:
             log.error("tool_error", tool="get_workflow", error=str(exc))
-            return {"error": _safe_error(exc)}
+            result = {"error": _safe_error(exc)}
+            _log_tool_finished("get_workflow", started_at, result)
+            return result
 
     @agent.tool
     async def create_workflow_from_spec(
@@ -188,12 +263,15 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         if ctx.deps.awaiting_user_input:
             return _waiting_for_user_input_result()
         await ctx.deps.emit_tool_call("create_workflow_from_spec")
-        return await create_workflow_from_spec_payload(
+        started_at = perf_counter()
+        result = await create_workflow_from_spec_payload(
             ctx.deps,
             name,
             spec,
             input_schema,
         )
+        _log_tool_finished("create_workflow_from_spec", started_at, result)
+        return result
 
     @agent.tool
     async def create_workflow(
@@ -208,6 +286,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         if ctx.deps.awaiting_user_input:
             return _waiting_for_user_input_result()
         await ctx.deps.emit_tool_call("create_workflow")
+        started_at = perf_counter()
         validated_nodes, validated_connections, runtime_schema = _validated_runtime_workflow(
             nodes,
             connections,
@@ -223,7 +302,9 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             )
         except Exception as exc:
             log.error("tool_error", tool="create_workflow", error=str(exc))
-            return {"error": _safe_error(exc)}
+            result = {"error": _safe_error(exc)}
+            _log_tool_finished("create_workflow", started_at, result)
+            return result
 
         await store.save_workflow_metadata(
             ctx.deps.user_id,
@@ -244,7 +325,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         full_workflow = await n8n_client.get_workflow(workflow.id)
         missing_count = await _emit_missing_credentials(ctx, full_workflow)
         if missing_count:
-            return {
+            result = {
                 "id": workflow.id,
                 "name": workflow.name,
                 "active": workflow.active,
@@ -252,7 +333,11 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                 "missing_credentials": missing_count,
                 "instruction": _missing_credentials_instruction(),
             }
-        return {"id": workflow.id, "name": workflow.name, "active": workflow.active}
+            _log_tool_finished("create_workflow", started_at, result)
+            return result
+        result = {"id": workflow.id, "name": workflow.name, "active": workflow.active}
+        _log_tool_finished("create_workflow", started_at, result)
+        return result
 
     @agent.tool
     async def update_workflow(
@@ -268,6 +353,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         if ctx.deps.awaiting_user_input:
             return _waiting_for_user_input_result()
         await ctx.deps.emit_tool_call("update_workflow")
+        started_at = perf_counter()
         validated_nodes, validated_connections, runtime_schema = _validated_runtime_workflow(
             nodes,
             connections,
@@ -290,7 +376,9 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             )
         except Exception as exc:
             log.error("tool_error", tool="update_workflow", error=str(exc))
-            return {"error": _safe_error(exc)}
+            result = {"error": _safe_error(exc)}
+            _log_tool_finished("update_workflow", started_at, result)
+            return result
 
         await store.save_workflow_metadata(
             ctx.deps.user_id,
@@ -311,7 +399,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         full_workflow = await n8n_client.get_workflow(workflow.id)
         missing_count = await _emit_missing_credentials(ctx, full_workflow)
         if missing_count:
-            return {
+            result = {
                 "id": workflow.id,
                 "name": workflow.name,
                 "active": workflow.active,
@@ -319,7 +407,11 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                 "missing_credentials": missing_count,
                 "instruction": _missing_credentials_instruction(),
             }
-        return {"id": workflow.id, "name": workflow.name, "active": workflow.active}
+            _log_tool_finished("update_workflow", started_at, result)
+            return result
+        result = {"id": workflow.id, "name": workflow.name, "active": workflow.active}
+        _log_tool_finished("update_workflow", started_at, result)
+        return result
 
     @agent.tool
     async def activate_workflow(ctx: RunContext[AgentDeps], workflow_id: str) -> dict[str, Any]:
@@ -328,22 +420,29 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         if ctx.deps.awaiting_user_input:
             return _waiting_for_user_input_result()
         await ctx.deps.emit_tool_call("activate_workflow")
+        started_at = perf_counter()
         try:
             workflow = await _get_workflow_for_reference(workflow_id)
             workflow_id = str(workflow.get("id") or workflow_id)
             missing_count = await _emit_missing_credentials(ctx, workflow)
             if missing_count:
-                return {
+                result = {
                     "success": False,
                     "workflow_id": workflow_id,
                     "error": "Missing credentials. Ask the user to submit the credential request.",
                     "instruction": _missing_credentials_instruction(),
                 }
+                _log_tool_finished("activate_workflow", started_at, result)
+                return result
             await n8n_client.activate_workflow(workflow_id)
-            return {"success": True, "workflow_id": workflow_id}
+            result = {"success": True, "workflow_id": workflow_id}
+            _log_tool_finished("activate_workflow", started_at, result)
+            return result
         except Exception as exc:
             log.error("tool_error", tool="activate_workflow", error=str(exc))
-            return {"error": _safe_error(exc)}
+            result = {"error": _safe_error(exc)}
+            _log_tool_finished("activate_workflow", started_at, result)
+            return result
 
     @agent.tool
     async def deactivate_workflow(ctx: RunContext[AgentDeps], workflow_id: str) -> dict[str, Any]:
@@ -352,12 +451,17 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         if ctx.deps.awaiting_user_input:
             return _waiting_for_user_input_result()
         await ctx.deps.emit_tool_call("deactivate_workflow")
+        started_at = perf_counter()
         try:
             await n8n_client.deactivate_workflow(workflow_id)
-            return {"success": True, "workflow_id": workflow_id}
+            result = {"success": True, "workflow_id": workflow_id}
+            _log_tool_finished("deactivate_workflow", started_at, result)
+            return result
         except Exception as exc:
             log.error("tool_error", tool="deactivate_workflow", error=str(exc))
-            return {"error": _safe_error(exc)}
+            result = {"error": _safe_error(exc)}
+            _log_tool_finished("deactivate_workflow", started_at, result)
+            return result
 
     @agent.tool
     async def execute_workflow(
@@ -370,46 +474,59 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         if ctx.deps.awaiting_user_input:
             return _waiting_for_user_input_result()
         await ctx.deps.emit_tool_call("execute_workflow")
+        started_at = perf_counter()
         try:
             workflow = await _get_workflow_for_reference(workflow_id)
             workflow_id = str(workflow.get("id") or workflow_id)
             missing_count = await _emit_missing_credentials(ctx, workflow)
             if missing_count:
-                return {
+                result = {
                     "success": False,
                     "workflow_id": workflow_id,
                     "error": "Missing credentials. Ask the user to submit the credential request.",
                     "instruction": _missing_credentials_instruction(),
                 }
+                _log_tool_finished("execute_workflow", started_at, result)
+                return result
 
             metadata = await store.get_workflow_metadata(ctx.deps.user_id, workflow_id)
             input_schema = _workflow_input_schema_from_metadata(metadata)
             _validated, missing = _validated_workflow_input(input_schema, input)
             if missing:
-                missing_labels = [
-                    field.label for field in input_schema if field.name in set(missing)
-                ]
+                first_missing = missing[0]
+                first_label = next(
+                    (field.label for field in input_schema if field.name == first_missing),
+                    first_missing,
+                )
                 await request_user_input(
                     ctx,
-                    question=f"What should I use for {', '.join(missing_labels or missing)}?",
-                    missing_fields=missing,
+                    question=f"What should I use for {first_label}?",
+                    missing_fields=[first_label],
                     choices=None,
                     allow_skip=False,
                     reason="This workflow needs runtime input before it can run.",
                 )
-                return _waiting_for_user_input_result()
+                result = _waiting_for_user_input_result()
+                _log_tool_finished("execute_workflow", started_at, result)
+                return result
 
             result = await run_workflow_with_input(
                 workflow,
                 user_id=ctx.deps.user_id,
                 input_payload=input,
             )
-            return result.model_dump(exclude_none=True)
+            payload = result.model_dump(exclude_none=True)
+            _log_tool_finished("execute_workflow", started_at, payload)
+            return payload
         except ValueError as exc:
-            return {"success": False, "workflow_id": workflow_id, "error": str(exc)}
+            result = {"success": False, "workflow_id": workflow_id, "error": str(exc)}
+            _log_tool_finished("execute_workflow", started_at, result)
+            return result
         except Exception as exc:
             log.error("tool_error", tool="execute_workflow", error=str(exc))
-            return {"error": _safe_error(exc)}
+            result = {"error": _safe_error(exc)}
+            _log_tool_finished("execute_workflow", started_at, result)
+            return result
 
     @agent.tool
     async def analyze_workflow_readiness(
@@ -418,6 +535,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         """Check whether a workflow has credentials and can be run by Conduut."""
 
         await ctx.deps.emit_tool_call("analyze_workflow_readiness")
+        started_at = perf_counter()
         try:
             workflow = await _get_workflow_for_reference(workflow_id)
             readiness = await analyze_workflow_readiness_payload(workflow, user_id=ctx.deps.user_id)
@@ -425,7 +543,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                 await ctx.deps.emit_attachment(attachment)
             if readiness["missing_credentials"]:
                 ctx.deps.awaiting_user_input = True
-            return {
+            result = {
                 "ready": readiness["ready"],
                 "testable": readiness["testable"],
                 "missing_credentials": len(readiness["missing_credentials"]),
@@ -435,22 +553,31 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                     else "No missing credentials were found."
                 ),
             }
+            _log_tool_finished("analyze_workflow_readiness", started_at, result)
+            return result
         except Exception as exc:
             log.error("tool_error", tool="analyze_workflow_readiness", error=str(exc))
-            return {"error": _safe_error(exc)}
+            result = {"error": _safe_error(exc)}
+            _log_tool_finished("analyze_workflow_readiness", started_at, result)
+            return result
 
     @agent.tool
     async def inspect_execution(ctx: RunContext[AgentDeps], execution_id: str) -> dict[str, Any]:
         """Read an n8n execution and return a summarized result."""
 
         await ctx.deps.emit_tool_call("inspect_execution")
+        started_at = perf_counter()
         try:
             detail = await n8n_client.get_execution_detail(execution_id)
             result = _summarize_execution(detail)
-            return result.model_dump(exclude_none=True)
+            payload = result.model_dump(exclude_none=True)
+            _log_tool_finished("inspect_execution", started_at, payload)
+            return payload
         except Exception as exc:
             log.error("tool_error", tool="inspect_execution", error=str(exc))
-            return {"error": _safe_error(exc)}
+            result = {"error": _safe_error(exc)}
+            _log_tool_finished("inspect_execution", started_at, result)
+            return result
 
     @agent.tool
     async def list_executions(
@@ -459,12 +586,15 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         """List recent workflow execution history."""
 
         await ctx.deps.emit_tool_call("list_executions")
+        started_at = perf_counter()
         try:
             executions = await n8n_client.list_executions(workflow_id=workflow_id, limit=10)
         except Exception as exc:
             log.error("tool_error", tool="list_executions", error=str(exc))
-            return [{"error": _safe_error(exc)}]
-        return [
+            result = [{"error": _safe_error(exc)}]
+            _log_tool_finished("list_executions", started_at, result)
+            return result
+        result = [
             {
                 "id": e.id,
                 "workflow_id": e.workflow_id,
@@ -473,6 +603,8 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             }
             for e in executions
         ]
+        _log_tool_finished("list_executions", started_at, result)
+        return result
 
     @agent.tool
     async def delete_workflow(ctx: RunContext[AgentDeps], workflow_id: str) -> dict[str, Any]:
@@ -481,11 +613,16 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         if ctx.deps.awaiting_user_input:
             return _waiting_for_user_input_result()
         await ctx.deps.emit_tool_call("delete_workflow")
+        started_at = perf_counter()
         try:
             await n8n_client.delete_workflow(workflow_id)
-            return {"success": True, "workflow_id": workflow_id}
+            result = {"success": True, "workflow_id": workflow_id}
+            _log_tool_finished("delete_workflow", started_at, result)
+            return result
         except Exception as exc:
             log.error("tool_error", tool="delete_workflow", error=str(exc))
-            return {"error": _safe_error(exc)}
+            result = {"error": _safe_error(exc)}
+            _log_tool_finished("delete_workflow", started_at, result)
+            return result
 
     return agent

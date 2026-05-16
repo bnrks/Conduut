@@ -20,6 +20,7 @@ from src import store
 from src.agent.provider_factory import build_model, build_model_settings, classify_provider_error
 from src.agent.schemas import AgentDeps, AgentEvent
 from src.agent.tools import create_agent
+from src.logging_config import bind_log_context, clear_log_context
 
 log = structlog.get_logger()
 
@@ -164,9 +165,21 @@ async def run(
     conv_id: str,
     messages: list[dict],
     settings: store.LLMSettings,
+    *,
+    request_id: str | None = None,
 ) -> AsyncIterator[str]:
     """Run the Conduut agent and stream events compatible with the existing frontend."""
 
+    clear_log_context()
+    bind_log_context(
+        request_id=request_id,
+        user_id=user_id,
+        conversation_id=conv_id,
+        provider=settings.provider,
+        model=settings.model,
+        reasoning_effort=settings.reasoning_effort,
+    )
+    log.info("agent_run_started", message_count=len(messages))
     event_queue: asyncio.Queue[AgentEvent] = asyncio.Queue()
     deps = AgentDeps(user_id=user_id, conversation_id=conv_id, event_queue=event_queue)
     user_prompt, message_history = _history_from_store_messages(messages)
@@ -177,7 +190,13 @@ async def run(
             settings.provider, settings.model, settings.reasoning_effort
         )
     except Exception as exc:
+        log.error(
+            "agent_model_config_error",
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
         yield _sse("error", {"code": "model_config", "message": classify_provider_error(exc)})
+        clear_log_context()
         return
 
     agent = create_agent(model)
@@ -209,7 +228,11 @@ async def run(
     try:
         result = task.result()
     except UsageLimitExceeded as exc:
-        log.warning("agent_usage_limit_exceeded", error=str(exc))
+        log.warning(
+            "agent_usage_limit_exceeded",
+            error=str(exc),
+            attachment_count=len(deps.attachments),
+        )
         yield _sse(
             "error",
             {
@@ -217,9 +240,14 @@ async def run(
                 "message": "Agent could not complete the task. Please try again.",
             },
         )
+        clear_log_context()
         return
     except UnexpectedModelBehavior as exc:
-        log.error("agent_unexpected_model_behavior", error=str(exc))
+        log.error(
+            "agent_unexpected_model_behavior",
+            error=str(exc),
+            attachment_count=len(deps.attachments),
+        )
         yield _sse(
             "error",
             {
@@ -227,13 +255,31 @@ async def run(
                 "message": "The model could not produce a valid response. Please try again.",
             },
         )
+        clear_log_context()
         return
     except Exception as exc:
-        log.error("agent_run_error", error=str(exc))
+        log.error(
+            "agent_run_error",
+            error_type=type(exc).__name__,
+            error=str(exc),
+            attachment_count=len(deps.attachments),
+            exc_info=True,
+        )
         yield _sse("error", {"code": "unknown", "message": classify_provider_error(exc)})
+        clear_log_context()
         return
 
     text = result.output or ""
+    attachment_types = [
+        str(attachment.get("type"))
+        for attachment in deps.attachments
+        if isinstance(attachment, dict)
+    ]
+    log.info(
+        "agent_run_finished",
+        output_chars=len(text),
+        attachment_types=attachment_types,
+    )
     full_content = ""
     chunk_size = 10
     for i in range(0, len(text), chunk_size):
@@ -251,8 +297,14 @@ async def run(
             model=settings.model,
             attachments=deps.attachments or None,
         )
+        log.info("assistant_message_saved", content_length=len(full_content))
     except Exception as exc:
-        log.error("store_add_message_error", error=str(exc))
+        log.error(
+            "store_add_message_error",
+            error_type=type(exc).__name__,
+            error=str(exc),
+            exc_info=True,
+        )
 
     yield _sse(
         "done",
@@ -263,3 +315,4 @@ async def run(
             "reasoning_effort": settings.reasoning_effort,
         },
     )
+    clear_log_context()

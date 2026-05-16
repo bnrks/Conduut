@@ -4,7 +4,10 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+import structlog
 from pydantic import BaseModel, ConfigDict, Field
+
+log = structlog.get_logger()
 
 
 class WorkflowNode(BaseModel):
@@ -152,6 +155,12 @@ class AgentDeps:
     awaiting_user_input: bool = False
 
     async def emit_tool_call(self, tool: str) -> None:
+        log.info(
+            "agent_tool_call_started",
+            tool=tool,
+            user_id=self.user_id,
+            conversation_id=self.conversation_id,
+        )
         await self.event_queue.put(
             ("tool_call", {"tool": tool, "conversation_id": self.conversation_id})
         )
@@ -161,6 +170,12 @@ class AgentDeps:
         if payload in self.attachments:
             return
         self.attachments.append(payload)
+        log.info(
+            "agent_attachment_emitted",
+            attachment_type=payload["type"],
+            user_id=self.user_id,
+            conversation_id=self.conversation_id,
+        )
         await self.event_queue.put(
             (
                 "attachment",

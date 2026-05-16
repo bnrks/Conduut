@@ -73,8 +73,11 @@ Baslica route handler'lar:
 
 Local `pnpm dev` ile web host uzerinde calistiginda BFF route'lari agent'a
 `AGENT_API_BASE_URL=http://localhost:8100` ile ulasir; Docker compose icindeki
-web container ise `AGENT_API_BASE_URL=http://agent:8000` kullanir. Env degisirse
-Next dev server yeniden baslatilmalidir.
+web container ise `AGENT_API_BASE_URL=http://agent:8000` kullanir. Root
+`start-local-dev.bat`, Windows'ta port `3000` excluded olabildigi icin web'i
+default olarak `127.0.0.1:3007` uzerinde baslatir; port `CONDUUT_WEB_PORT` ile
+degistirilebilir. Env veya port degisirse Next dev server yeniden
+baslatilmalidir.
 
 ## Chat UI
 
@@ -110,13 +113,19 @@ sonucunu kendi icinde dogrular ve kullaniciya normal assistant mesaji olarak
 cevap verir.
 
 `ClarificationPanel` component'i agent'in aktif `user_input_request`
-attachment'ini render eder. Aktif son soru chat input wrapper'i icinde
-`absolute bottom-full` overlay panel olarak acilir ve ayni anda message list
-icinde ozet karti olarak tekrar gosterilmez. Panel agent sorusunu, varsa
-secilebilir cevaplari ve `missingFields` listesini gosterir; boylece agent genel
-bir soru sorsa bile kullanici hangi alanlarin beklendigini gorur. Tek bir
-serbest cevap input'u vardir. Secenek tiklama veya serbest cevap, normal chat
-mesaji olarak agent'a gonderilir.
+attachment'ini render eder. Aktif son soru varken ana `ChatInput` composer'i
+gizlenir; alt cevap alaninda sadece clarification paneli gosterilir ve ayni
+anda message list icinde ozet karti olarak tekrar render edilmez. Panel agent
+sorusunu ve `missingFields` etiketlerinden uretilen cevap kontrollerini
+gosterir; boylece agent genel bir soru sorsa bile kullanici hangi alanlarin
+beklendigini gorur.
+Birden fazla `missingFields` varsa panel ayrica ozet/kart listesi acmaz, her
+alan icin dogrudan doldurulacak kontrol gosterir ve hepsi dolmadan submit aktif
+olmaz. Coklu alanda `choices` gelirse bunlar ayri cevap kartlari olarak degil
+ilk eksik alanin secim kontrolu olarak render edilir; o alan icin ayrica text
+input gosterilmez. Tek eksik alan veya seceneklerin tek basina yeterli oldugu
+sorularda secenek tiklama normal chat mesaji olarak agent'a gonderilir. Coklu
+alan cevabi modele `Alan: deger` satirlari olarak iletilir.
 
 Gecmis `user_input_request` mesajlari tamamen gizlenmez. `Message` component'i
 bunlari kompakt "Conduut asked for details" ozeti olarak render eder; boylece

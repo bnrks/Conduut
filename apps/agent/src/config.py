@@ -9,6 +9,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 class Settings(BaseSettings):
     environment: str = "development"
     log_level: str = "INFO"
+    log_file_enabled: bool = True
+    log_dir: str = "logs/agent"
+    log_max_bytes: int = 10 * 1024 * 1024
+    log_backup_count: int = 5
+    log_payload_preview_chars: int = 1000
 
     # LLM defaults (kullanıcı kendi key'ini gönderir, bunlar fallback)
     default_model: str = "gpt-4o-mini"

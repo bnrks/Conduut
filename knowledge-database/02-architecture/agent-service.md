@@ -57,6 +57,37 @@ varsa root degerlerinin uzerine yazabilir. Lokal n8n default URL'i Windows port
 mapping'iyle uyumlu olacak sekilde `http://localhost:5980`'dir; Docker compose
 agent container'inda `CONDUUT_N8N_URL=http://n8n:5678` env override'i kullanilir.
 
+## Diagnostic Logging
+
+Agent servisinde merkezi structured logging `src/logging_config.py` uzerinden
+kurulur. `structlog` stdout'a JSON event basmaya devam eder; local ve Docker
+gelistirme icin ayrica rotating JSONL dosyasi yazar. Varsayilan dosya
+`logs/agent/conduut-agent.jsonl`, Docker container icinde `/app/logs` altidir.
+`docker-compose.yml` agent servisine `./logs/agent:/app/logs` volume'u baglar;
+`start-local-dev.bat` lokal uvicorn akisi icin `CONDUUT_LOG_DIR` degerini repo
+root `logs\agent` klasorune ayarlar.
+
+Ilgili env ayarlari:
+
+- `CONDUUT_LOG_LEVEL`
+- `CONDUUT_LOG_FILE_ENABLED`
+- `CONDUUT_LOG_DIR`
+- `CONDUUT_LOG_MAX_BYTES`
+- `CONDUUT_LOG_BACKUP_COUNT`
+- `CONDUUT_LOG_PAYLOAD_PREVIEW_CHARS`
+
+Loglar hata triage icin tasarlanmistir. FastAPI middleware her istege
+`X-Request-ID` uretir veya gelen degeri korur; web BFF route'lari bu header'i
+agent'a tasir. Agent run, tool call, n8n API, OAuth callback, credential
+readiness ve workflow run event'leri ayni `request_id`, `conversation_id` ve
+varsa `workflow_id` baglaminda izlenebilir. Redaction processor
+`authorization`, `api_key`, token, secret, password, `clientSecret`,
+`code_verifier` ve `oauthTokenData` gibi alanlari maskeler; buyuk string/list
+degerleri truncate eder. Raw kullanici mesaji, provider API key'i ve OAuth token
+degerleri loglanmamalidir. `structlog` disindaki stdlib loglari da
+`ProcessorFormatter` uzerinden JSON satirina cevrilir; aksi halde `httpx` gibi
+kutuphaneler JSONL dosyasina duz metin satirlari karistirabilir.
+
 ## Chat Flow
 
 `POST /api/chat/send` akisi:
@@ -159,7 +190,11 @@ metin, hangi hesap/servis kullanilacagi, schedule/trigger zamani veya
 destructive aksiyon onayi. Tool `user_input_request` attachment'i emit eder ve
 ayni agent turunda workflow create/update/activate/run/delete gibi yan etkili
 tool'larin devam etmesini engeller. Kullanici cevabi ayni chat'e yazinca
-history baglami sayesinde agent task'a kaldigi yerden devam eder. Attachment
+history baglami sayesinde agent task'a kaldigi yerden devam eder. Agent
+varsayilan olarak eksik bilgileri adim adim sorar: her `request_user_input`
+cagrisi tek eksik karar/alan icindir. Tool tarafinda model yanlislikla birden
+fazla `missing_fields` verirse attachment ilk alanla sinirlanir; kalan alanlar
+sonraki user cevabindan sonra yeniden sorulacak baglam olarak kalir. Attachment
 opsiyonel `choices` listesi ve `allowSkip` flag'i tasiyabilir; web UI aktif son
 istekte bunu modal benzeri cevap paneli olarak render eder.
 
@@ -179,6 +214,10 @@ Workflow readiness davranisi:
   degerine normalize eder. Gmail send parameter alias'lari da canonical
   `sendTo`, `subject`, `message`, `emailType` alanlarina cevrilir; placeholder
   alici email'leri validation hatasi sayilir.
+  Reconnect sonrasi eski n8n credential id'leri workflow node'larinda stale
+  kalabilecegi icin readiness analizi managed Gmail/Sheets connection varsa
+  node'da credential alani dolu olsa bile guncel connection credential id'sini
+  workflow'a yeniden attach eder.
 - Managed Google connection metadata'si `scopes` yaninda capability listesi de
   tasir: `google.gmail.read`, `google.gmail.send`, `google.sheets.read`,
   `google.sheets.write`. Eski dokumanlarda capability yoksa agent scope

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { agentHeaders } from "@/lib/request-id";
+
 function getAgentBaseUrl(): string {
   const fromEnv = process.env.AGENT_API_BASE_URL || process.env.NEXT_PUBLIC_AGENT_API_BASE_URL;
   return fromEnv || "http://localhost:8000";
@@ -35,7 +37,7 @@ export async function PATCH(
       `${getAgentBaseUrl()}/api/workflows/${encodeURIComponent(workflowId)}/${action}`,
       {
         method: "PATCH",
-        headers: { Authorization: authHeader },
+        headers: agentHeaders(request, { Authorization: authHeader }),
         cache: "no-store",
       }
     );
@@ -60,7 +62,7 @@ export async function DELETE(
       `${getAgentBaseUrl()}/api/workflows/${encodeURIComponent(workflowId)}`,
       {
         method: "DELETE",
-        headers: { Authorization: authHeader },
+        headers: agentHeaders(request, { Authorization: authHeader }),
         cache: "no-store",
       }
     );
@@ -92,7 +94,10 @@ export async function POST(
       `${getAgentBaseUrl()}/api/workflows/${encodeURIComponent(workflowId)}/run`,
       {
         method: "POST",
-        headers: { Authorization: authHeader, "Content-Type": "application/json" },
+        headers: agentHeaders(request, {
+          Authorization: authHeader,
+          "Content-Type": "application/json",
+        }),
         body: JSON.stringify(body),
         cache: "no-store",
       }

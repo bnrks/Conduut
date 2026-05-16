@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { agentHeaders } from "@/lib/request-id";
+
 function getAgentBaseUrl(): string {
   const fromEnv =
     process.env.AGENT_API_BASE_URL || process.env.NEXT_PUBLIC_AGENT_API_BASE_URL;
@@ -35,7 +37,7 @@ export async function DELETE(
       )}`,
       {
         method: "DELETE",
-        headers: { Authorization: authHeader },
+        headers: agentHeaders(request, { Authorization: authHeader }),
         cache: "no-store",
       }
     );

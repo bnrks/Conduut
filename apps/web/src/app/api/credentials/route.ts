@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { agentHeaders } from "@/lib/request-id";
+
 function getAgentBaseUrl(): string {
   const fromEnv = process.env.AGENT_API_BASE_URL || process.env.NEXT_PUBLIC_AGENT_API_BASE_URL;
   return fromEnv || "http://localhost:8000";
@@ -23,7 +25,7 @@ export async function GET(request: NextRequest) {
   try {
     const response = await fetch(`${getAgentBaseUrl()}/api/credentials`, {
       method: "GET",
-      headers: { Authorization: authHeader },
+      headers: agentHeaders(request, { Authorization: authHeader }),
       cache: "no-store",
     });
     return await toResponsePayload(response);
@@ -42,10 +44,10 @@ export async function POST(request: NextRequest) {
   try {
     const response = await fetch(`${getAgentBaseUrl()}/api/credentials`, {
       method: "POST",
-      headers: {
+      headers: agentHeaders(request, {
         "Content-Type": "application/json",
         Authorization: authHeader,
-      },
+      }),
       body: JSON.stringify(body),
       cache: "no-store",
     });

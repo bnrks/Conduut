@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { agentHeaders } from "@/lib/request-id";
+
 const SUPPORTED_SERVICES = new Set(["gmail", "sheets"]);
 
 function getAgentBaseUrl(): string {
@@ -43,10 +45,10 @@ export async function POST(request: NextRequest) {
       `${getAgentBaseUrl()}/api/connections/google/${service}/authorize`,
       {
         method: "POST",
-        headers: {
+        headers: agentHeaders(request, {
           "Content-Type": "application/json",
           Authorization: authHeader,
-        },
+        }),
         body: JSON.stringify(agentBody),
         cache: "no-store",
       }

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { agentHeaders } from "@/lib/request-id";
+
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -24,10 +26,10 @@ export async function POST(request: NextRequest) {
   try {
     upstream = await fetch(`${getAgentBaseUrl()}/api/chat/send`, {
       method: "POST",
-      headers: {
+      headers: agentHeaders(request, {
         "Content-Type": "application/json",
         Authorization: authHeader,
-      },
+      }),
       body: JSON.stringify(body),
       cache: "no-store",
     });

@@ -4,6 +4,8 @@ from copy import deepcopy
 from typing import Any
 from uuid import uuid4
 
+import structlog
+
 from src import n8n_client, store
 from src.agent.schemas import WorkflowRunResultData
 from src.agent.tools.common import _response_preview
@@ -20,6 +22,8 @@ from src.agent.tools.workflow_helpers import (
     _workflow_trigger_nodes,
 )
 
+log = structlog.get_logger()
+
 
 async def run_workflow_with_input(
     workflow: dict[str, Any],
@@ -28,31 +32,47 @@ async def run_workflow_with_input(
     input_payload: dict[str, Any] | None = None,
 ) -> WorkflowRunResultData:
     workflow_id = str(workflow.get("id") or "")
+    log.info("workflow_run_started", workflow_id=workflow_id)
     metadata = await store.get_workflow_metadata(user_id, workflow_id)
     input_schema = _workflow_input_schema_from_metadata(metadata)
     validated_input, missing = _validated_workflow_input(input_schema, input_payload)
     if missing:
         labels = [field.label for field in input_schema if field.name in missing]
+        log.warning(
+            "workflow_run_missing_input",
+            workflow_id=workflow_id,
+            missing=missing,
+        )
         raise ValueError(f"Missing required workflow input: {', '.join(labels or missing)}")
 
     workflow, converted_trigger = await ensure_conduut_runnable_workflow(workflow)
     readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id)
     webhook_nodes = readiness["webhook_nodes"]
     if not webhook_nodes:
+        log.warning("workflow_run_not_testable", workflow_id=workflow_id)
         raise ValueError("Only webhook-triggered workflows can run from Conduut now.")
 
     if converted_trigger and workflow.get("active"):
+        log.info("workflow_run_deactivating_for_trigger_patch", workflow_id=workflow_id)
         await n8n_client.deactivate_workflow(workflow_id)
         workflow["active"] = False
     if not workflow.get("active"):
+        log.info("workflow_run_activating_workflow", workflow_id=workflow_id)
         await n8n_client.activate_workflow(workflow_id)
     path = webhook_nodes[0].get("parameters", {}).get("path")
     if not path:
+        log.warning("workflow_run_missing_webhook_path", workflow_id=workflow_id)
         raise ValueError("Webhook path missing.")
 
     webhook_response = await n8n_client.call_webhook(str(path), validated_input)
     response = _response_preview(webhook_response)
     if webhook_response.status_code >= 400:
+        log.warning(
+            "workflow_run_webhook_error",
+            workflow_id=workflow_id,
+            status_code=webhook_response.status_code,
+            response=response,
+        )
         return WorkflowRunResultData(
             workflowId=workflow_id,
             status="error",
@@ -63,6 +83,7 @@ async def run_workflow_with_input(
 
     executions = await n8n_client.list_executions(workflow_id=workflow_id, limit=1)
     if not executions:
+        log.info("workflow_run_triggered_without_execution_detail", workflow_id=workflow_id)
         return WorkflowRunResultData(
             workflowId=workflow_id,
             status="triggered",
@@ -71,7 +92,16 @@ async def run_workflow_with_input(
         )
 
     detail = await n8n_client.get_execution_detail(executions[0].id)
-    return _summarize_execution(detail, response=response, workflow=workflow)
+    result = _summarize_execution(detail, response=response, workflow=workflow)
+    log.info(
+        "workflow_run_finished",
+        workflow_id=workflow_id,
+        execution_id=result.executionId,
+        status=result.status,
+        failed_node=result.failedNode,
+        error=result.error,
+    )
+    return result
 
 
 def _workflow_with_conduut_webhook_trigger(workflow: dict[str, Any]) -> dict[str, Any] | None:
@@ -143,8 +173,8 @@ def _workflow_with_post_webhook_trigger(workflow: dict[str, Any]) -> dict[str, A
 async def ensure_conduut_runnable_workflow(
     workflow: dict[str, Any],
 ) -> tuple[dict[str, Any], bool]:
-    converted = _workflow_with_conduut_webhook_trigger(workflow)
-    converted = converted or _workflow_with_post_webhook_trigger(workflow)
+    manual_trigger_conversion = _workflow_with_conduut_webhook_trigger(workflow)
+    converted = manual_trigger_conversion or _workflow_with_post_webhook_trigger(workflow)
     if not converted:
         return workflow, False
 
@@ -160,4 +190,9 @@ async def ensure_conduut_runnable_workflow(
         settings=workflow.get("settings") if isinstance(workflow.get("settings"), dict) else None,
     )
     refreshed = await n8n_client.get_workflow(updated.id)
+    log.info(
+        "workflow_runnable_trigger_patched",
+        workflow_id=workflow_id,
+        converted_manual_trigger=manual_trigger_conversion is not None,
+    )
     return refreshed, True

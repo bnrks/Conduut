@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { agentHeaders } from "@/lib/request-id";
+
 function getAgentBaseUrl(): string {
   const fromEnv =
     process.env.AGENT_API_BASE_URL || process.env.NEXT_PUBLIC_AGENT_API_BASE_URL;
@@ -30,10 +32,10 @@ export async function POST(request: NextRequest) {
       `${getAgentBaseUrl()}/api/connections/google/sheets/authorize`,
       {
         method: "POST",
-        headers: {
+        headers: agentHeaders(request, {
           "Content-Type": "application/json",
           Authorization: authHeader,
-        },
+        }),
         body: JSON.stringify(body),
         cache: "no-store",
       }

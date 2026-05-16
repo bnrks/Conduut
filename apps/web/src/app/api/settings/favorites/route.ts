@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { agentHeaders } from "@/lib/request-id";
+
 const agent = () =>
   process.env.AGENT_API_BASE_URL || process.env.NEXT_PUBLIC_AGENT_API_BASE_URL || "http://localhost:8000";
 
@@ -9,7 +11,7 @@ async function proxy(req: NextRequest, path: string, method: string, body?: unkn
   try {
     const res = await fetch(`${agent()}${path}`, {
       method,
-      headers: { Authorization: auth, "Content-Type": "application/json" },
+      headers: agentHeaders(req, { Authorization: auth, "Content-Type": "application/json" }),
       body: body ? JSON.stringify(body) : undefined,
       cache: "no-store",
     });
