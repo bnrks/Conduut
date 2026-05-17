@@ -8,7 +8,9 @@ from pydantic_ai import ModelRetry
 from src import store
 from src.agent.schemas import (
     AgentDeps,
+    WorkflowActionSpec,
     WorkflowNode,
+    WorkflowPlan,
     WorkflowSpec,
     WorkflowStepSpec,
     WorkflowTriggerSpec,
@@ -23,12 +25,14 @@ from src.agent.tools import (
     _workflow_with_conduut_webhook_trigger,
     _workflow_with_post_webhook_trigger,
     analyze_workflow_readiness_payload,
+    compile_workflow_plan,
     compile_workflow_spec,
+    create_workflow_from_plan_payload,
     create_workflow_from_spec_payload,
     run_workflow_with_input,
 )
 from src.agent.tools.factory import _normalized_user_input_request
-from src.agent.tools.spec_compiler import WorkflowSpecCompileError
+from src.agent.tools.spec_compiler import WorkflowPlanCompileError, WorkflowSpecCompileError
 
 
 def test_normalized_user_input_request_limits_missing_fields_to_current_step():
@@ -244,6 +248,183 @@ def test_workflow_with_post_webhook_trigger_sets_missing_http_method():
     trigger = converted["nodes"][0]
     assert trigger["parameters"]["httpMethod"] == "POST"
     assert trigger["parameters"]["multipleMethods"] is False
+
+
+def test_compile_workflow_plan_creates_gmail_on_demand_workflow(monkeypatch):
+    schemas = {
+        "n8n-nodes-base.webhook": {"type": "n8n-nodes-base.webhook", "typeVersion": 2.1},
+        "n8n-nodes-base.gmail": {"type": "n8n-nodes-base.gmail", "typeVersion": 2.1},
+    }
+    monkeypatch.setattr(
+        "src.agent.tools.registry.get_node_schema",
+        lambda node_type: schemas.get(node_type),
+    )
+
+    compiled = compile_workflow_plan(
+        "Send Gmail",
+        WorkflowPlan(
+            trigger=WorkflowTriggerSpec(kind="on_demand"),
+            actions=[
+                WorkflowActionSpec(
+                    id="send_email",
+                    action="gmail.send",
+                    params={
+                        "to": {"ref": "input.to"},
+                        "subject": {"ref": "input.subject"},
+                        "message": {"ref": "input.message"},
+                    },
+                )
+            ],
+        ),
+    )
+
+    assert [node.type for node in compiled.nodes] == [
+        "n8n-nodes-base.webhook",
+        "n8n-nodes-base.gmail",
+    ]
+    gmail = compiled.nodes[1].model_dump()
+    assert gmail["parameters"] == {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": '={{$(\'Webhook\').first().json["body"]["to"]}}',
+        "subject": '={{$(\'Webhook\').first().json["body"]["subject"]}}',
+        "message": '={{$(\'Webhook\').first().json["body"]["message"]}}',
+        "emailType": "text",
+    }
+    assert compiled.connections == {
+        "Webhook": {"main": [[{"node": "Gmail", "type": "main", "index": 0}]]}
+    }
+    assert [field.name for field in compiled.input_schema] == ["to", "subject", "message"]
+
+
+def test_compile_workflow_plan_creates_gmail_then_sheets_append_workflow(monkeypatch):
+    schemas = {
+        "n8n-nodes-base.webhook": {"type": "n8n-nodes-base.webhook", "typeVersion": 2.1},
+        "n8n-nodes-base.gmail": {"type": "n8n-nodes-base.gmail", "typeVersion": 2.1},
+        "n8n-nodes-base.googleSheets": {
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.7,
+        },
+        "n8n-nodes-base.set": {"type": "n8n-nodes-base.set", "typeVersion": 3.4},
+    }
+    monkeypatch.setattr(
+        "src.agent.tools.registry.get_node_schema",
+        lambda node_type: schemas.get(node_type),
+    )
+
+    compiled = compile_workflow_plan(
+        "Send and log Gmail",
+        WorkflowPlan(
+            trigger=WorkflowTriggerSpec(kind="on_demand"),
+            actions=[
+                WorkflowActionSpec(
+                    id="send_email",
+                    action="gmail.send",
+                    params={
+                        "to": {"ref": "input.to"},
+                        "subject": {"ref": "input.subject"},
+                        "message": {"ref": "input.message"},
+                    },
+                ),
+                WorkflowActionSpec(
+                    id="log_email",
+                    action="sheets.row.append",
+                    after="send_email",
+                    params={
+                        "spreadsheet_id": "sheet_123",
+                        "sheet_name": "Logs",
+                        "columns": {
+                            "To": {"ref": "input.to"},
+                            "Subject": {"ref": "input.subject"},
+                            "Message": {"ref": "input.message"},
+                        },
+                    },
+                ),
+            ],
+        ),
+    )
+
+    assert [node.name for node in compiled.nodes] == [
+        "Webhook",
+        "Gmail",
+        "Prepare Sheets Row",
+        "Google Sheets Append",
+    ]
+    prepare = compiled.nodes[2].model_dump()
+    assert prepare["type"] == "n8n-nodes-base.set"
+    assert prepare["parameters"] == {
+        "mode": "manual",
+        "assignments": {
+            "assignments": [
+                {
+                    "id": "To",
+                    "name": "To",
+                    "type": "string",
+                    "value": '={{$(\'Webhook\').first().json["body"]["to"]}}',
+                },
+                {
+                    "id": "Subject",
+                    "name": "Subject",
+                    "type": "string",
+                    "value": '={{$(\'Webhook\').first().json["body"]["subject"]}}',
+                },
+                {
+                    "id": "Message",
+                    "name": "Message",
+                    "type": "string",
+                    "value": '={{$(\'Webhook\').first().json["body"]["message"]}}',
+                },
+            ]
+        },
+        "includeOtherFields": False,
+        "options": {},
+    }
+    sheets = compiled.nodes[3].model_dump()
+    assert sheets["parameters"]["operation"] == "append"
+    assert sheets["parameters"]["documentId"] == {
+        "__rl": True,
+        "mode": "id",
+        "value": "sheet_123",
+    }
+    assert sheets["parameters"]["sheetName"] == {
+        "__rl": True,
+        "mode": "name",
+        "value": "Logs",
+    }
+    assert sheets["parameters"]["columns"] == {
+        "mappingMode": "autoMapInputData",
+        "value": {},
+    }
+    assert sheets["parameters"]["options"] == {"handlingExtraData": "insertInNewColumn"}
+    assert compiled.connections == {
+        "Webhook": {"main": [[{"node": "Gmail", "type": "main", "index": 0}]]},
+        "Gmail": {"main": [[{"node": "Prepare Sheets Row", "type": "main", "index": 0}]]},
+        "Prepare Sheets Row": {
+            "main": [[{"node": "Google Sheets Append", "type": "main", "index": 0}]]
+        },
+    }
+
+
+def test_compile_workflow_plan_rejects_missing_semantic_params(monkeypatch):
+    monkeypatch.setattr(
+        "src.agent.tools.registry.get_node_schema",
+        lambda _node_type: {"typeVersion": 1},
+    )
+
+    with pytest.raises(WorkflowPlanCompileError, match="columns"):
+        compile_workflow_plan(
+            "Missing columns",
+            WorkflowPlan(
+                trigger=WorkflowTriggerSpec(kind="on_demand"),
+                actions=[
+                    WorkflowActionSpec(
+                        id="log_email",
+                        action="sheets.row.append",
+                        params={"spreadsheet_id": "sheet_123", "sheet_name": "Logs"},
+                    )
+                ],
+            ),
+        )
 
 
 def test_compile_workflow_spec_creates_gmail_on_demand_workflow(monkeypatch):
@@ -604,6 +785,173 @@ def test_validated_workflow_input_reports_missing_required_fields():
 
     assert payload == {"to": "person@example.com", "subject": "Hi"}
     assert missing == ["message"]
+
+
+@pytest.mark.asyncio
+async def test_create_workflow_from_plan_payload_creates_workflow_and_emits_oauth_prompts(
+    monkeypatch,
+):
+    schemas = {
+        "n8n-nodes-base.webhook": {
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2.1,
+        },
+        "n8n-nodes-base.gmail": {
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.1,
+            "credentials": ["gmailOAuth2"],
+        },
+        "n8n-nodes-base.googleSheets": {
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.7,
+            "credentials": ["googleSheetsOAuth2Api"],
+        },
+        "n8n-nodes-base.set": {
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+        },
+    }
+    created: dict = {}
+    saved: dict = {}
+
+    monkeypatch.setattr(
+        "src.agent.tools.registry.get_node_schema",
+        lambda node_type: schemas.get(node_type),
+    )
+
+    async def fake_create_workflow(name: str, nodes: list[dict], connections: dict):
+        created["name"] = name
+        created["nodes"] = nodes
+        created["connections"] = connections
+        return SimpleNamespace(id="wf_plan", name=name, active=False)
+
+    async def fake_get_workflow(_workflow_id: str):
+        return {
+            "id": "wf_plan",
+            "name": created["name"],
+            "nodes": created["nodes"],
+            "connections": created["connections"],
+        }
+
+    async def fake_save_workflow_metadata(user_id: str, workflow_id: str, input_schema: list[dict]):
+        saved["user_id"] = user_id
+        saved["workflow_id"] = workflow_id
+        saved["input_schema"] = input_schema
+
+    async def fake_get_connection(_user_id: str, _connection_id: str):
+        return None
+
+    monkeypatch.setattr("src.agent.tools.n8n_client.create_workflow", fake_create_workflow)
+    monkeypatch.setattr("src.agent.tools.n8n_client.get_workflow", fake_get_workflow)
+    monkeypatch.setattr("src.agent.tools.store.save_workflow_metadata", fake_save_workflow_metadata)
+    monkeypatch.setattr("src.agent.tools.store.get_connection", fake_get_connection)
+
+    deps = AgentDeps(
+        user_id="user_1",
+        conversation_id="conv_1",
+        event_queue=asyncio.Queue(),
+    )
+
+    result = await create_workflow_from_plan_payload(
+        deps,
+        "Plan Gmail Log",
+        WorkflowPlan(
+            trigger=WorkflowTriggerSpec(kind="on_demand"),
+            actions=[
+                WorkflowActionSpec(
+                    id="send_email",
+                    action="gmail.send",
+                    params={
+                        "to": {"ref": "input.to"},
+                        "subject": {"ref": "input.subject"},
+                        "message": {"ref": "input.message"},
+                    },
+                ),
+                WorkflowActionSpec(
+                    id="log_email",
+                    action="sheets.row.append",
+                    after="send_email",
+                    params={
+                        "spreadsheet_id": "sheet_123",
+                        "sheet_name": "Logs",
+                        "columns": {
+                            "To": {"ref": "input.to"},
+                            "Subject": {"ref": "input.subject"},
+                            "Message": {"ref": "input.message"},
+                        },
+                    },
+                ),
+            ],
+        ),
+    )
+
+    assert result == {
+        "id": "wf_plan",
+        "name": "Plan Gmail Log",
+        "active": False,
+        "ready": False,
+        "missing_credentials": 2,
+        "instruction": (
+            "Stop now. A credential or app connection request was shown to the user. "
+            "Tell the user the workflow was created but needs that connection before it "
+            "can run. Do not activate or execute the workflow until the user connects it."
+        ),
+    }
+    assert [node["name"] for node in created["nodes"]] == [
+        "Webhook",
+        "Gmail",
+        "Prepare Sheets Row",
+        "Google Sheets Append",
+    ]
+    assert created["nodes"][2]["type"] == "n8n-nodes-base.set"
+    assert created["nodes"][2]["parameters"]["includeOtherFields"] is False
+    assert created["nodes"][3]["parameters"]["operation"] == "append"
+    assert [field["name"] for field in saved["input_schema"]] == ["to", "subject", "message"]
+    assert [attachment["type"] for attachment in deps.attachments] == [
+        "workflow_preview",
+        "oauth_prompt",
+        "oauth_prompt",
+    ]
+    assert deps.awaiting_user_input is True
+
+
+@pytest.mark.asyncio
+async def test_create_workflow_from_plan_payload_returns_error_before_side_effects(
+    monkeypatch,
+):
+    monkeypatch.setattr("src.agent.tools.registry.get_node_schema", lambda _node_type: None)
+
+    async def fail_create_workflow(*_args, **_kwargs):
+        raise AssertionError("n8n create should not run when compile fails")
+
+    monkeypatch.setattr("src.agent.tools.n8n_client.create_workflow", fail_create_workflow)
+    deps = AgentDeps(
+        user_id="user_1",
+        conversation_id="conv_1",
+        event_queue=asyncio.Queue(),
+    )
+
+    result = await create_workflow_from_plan_payload(
+        deps,
+        "Plan Gmail",
+        WorkflowPlan(
+            trigger=WorkflowTriggerSpec(kind="on_demand"),
+            actions=[
+                WorkflowActionSpec(
+                    id="send_email",
+                    action="gmail.send",
+                    params={
+                        "to": {"ref": "input.to"},
+                        "subject": {"ref": "input.subject"},
+                        "message": {"ref": "input.message"},
+                    },
+                )
+            ],
+        ),
+    )
+
+    assert "registry schema" in result["error"]
+    assert deps.attachments == []
 
 
 @pytest.mark.asyncio

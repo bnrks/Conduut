@@ -14,6 +14,7 @@ from src.agent.schemas import (
     UserInputRequestData,
     WorkflowInputField,
     WorkflowNode,
+    WorkflowPlan,
     WorkflowPreviewAttachment,
     WorkflowPreviewData,
     WorkflowSpec,
@@ -36,7 +37,10 @@ from src.agent.tools.runtime_inputs import (
     _validated_workflow_input,
     _workflow_input_schema_from_metadata,
 )
-from src.agent.tools.spec_compiler import create_workflow_from_spec_payload
+from src.agent.tools.spec_compiler import (
+    create_workflow_from_plan_payload,
+    create_workflow_from_spec_payload,
+)
 from src.agent.tools.validation import _validated_runtime_workflow
 from src.agent.tools.workflow_runner import run_workflow_with_input
 from src.registry import registry
@@ -250,6 +254,26 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             result = {"error": _safe_error(exc)}
             _log_tool_finished("get_workflow", started_at, result)
             return result
+
+    @agent.tool
+    async def create_workflow_from_plan(
+        ctx: RunContext[AgentDeps],
+        name: str,
+        plan: WorkflowPlan,
+    ) -> dict[str, Any]:
+        """Create a supported workflow from semantic WorkflowPlan action graph."""
+
+        if ctx.deps.awaiting_user_input:
+            return _waiting_for_user_input_result()
+        await ctx.deps.emit_tool_call("create_workflow_from_plan")
+        started_at = perf_counter()
+        result = await create_workflow_from_plan_payload(
+            ctx.deps,
+            name,
+            plan,
+        )
+        _log_tool_finished("create_workflow_from_plan", started_at, result)
+        return result
 
     @agent.tool
     async def create_workflow_from_spec(

@@ -51,11 +51,14 @@ etmez.
 `src/config.py` Pydantic settings'i `CONDUUT_` env prefix'iyle okur. Lokal
 calismada agent genellikle `apps/agent` klasorunden `python -m uvicorn
 src.main:app --reload --host 0.0.0.0 --port 8100` ile baslatildigi icin sadece
-calisma dizinindeki `.env` dosyasina guvenilmez. Config artik repo root
-`.env` ve `apps/agent/.env` dosyalarini mutlak path ile okur; `apps/agent/.env`
-varsa root degerlerinin uzerine yazabilir. Lokal n8n default URL'i Windows port
-mapping'iyle uyumlu olacak sekilde `http://localhost:5980`'dir; Docker compose
-agent container'inda `CONDUUT_N8N_URL=http://n8n:5678` env override'i kullanilir.
+calisma dizinindeki `.env` dosyasina guvenilmez. Config repo kokunu
+`docker-compose.yml` veya `AGENTS.md` marker'iyle yukariya dogru arayarak bulur;
+marker yoksa mevcut app dizinine duser. Boylece local dosya yolu
+`apps/agent/src/config.py` iken root `.env` ve `apps/agent/.env` okunur, Docker
+image icinde `/app/src/config.py` iken `parents[3]` gibi sabit path varsayimi
+yuzunden startup kirilmaz. Lokal n8n default URL'i Windows port mapping'iyle
+uyumlu olacak sekilde `http://localhost:5980`'dir; Docker compose agent
+container'inda `CONDUUT_N8N_URL=http://n8n:5678` env override'i kullanilir.
 
 ## Diagnostic Logging
 
@@ -144,14 +147,16 @@ moduller:
   attach davranisi.
 - `validation.py`: create/update oncesi workflow normalize/validate akisi.
 - `execution.py`: execution output ozetleme.
-- `spec_compiler.py`: desteklenen `WorkflowSpec` IR'larini deterministic n8n
-  node/connection/input schema payload'una ceviren pilot compiler.
+- `spec_compiler.py`: yeni `WorkflowPlan` action graph IR'larini ve eski
+  `WorkflowSpec` pilot IR'larini deterministic n8n node/connection/input schema
+  payload'una ceviren compiler.
 
 Kayitli tool'lar:
 
 - Registry: `search_n8n_nodes`, `get_node_schema`, `find_workflow_template`.
-- Workflow CRUD: `list_workflows`, `get_workflow`, `create_workflow_from_spec`,
-  `create_workflow`, `update_workflow`, `delete_workflow`.
+- Workflow CRUD: `list_workflows`, `get_workflow`, `create_workflow_from_plan`,
+  `create_workflow_from_spec`, `create_workflow`, `update_workflow`,
+  `delete_workflow`.
 - Runtime: `activate_workflow`, `deactivate_workflow`, `execute_workflow`,
   `list_executions`, `analyze_workflow_readiness`, `inspect_execution`.
 - Clarification: `request_user_input`.
@@ -165,8 +170,30 @@ webhook payload expression'larina baglanir. Webhook trigger output'u body'yi
 compiler/normalizer `={{$json.body.to}}`, `={{$json.body.subject}}` ve
 `={{$json.body.message}}` kullanir.
 
-`create_workflow_from_spec`, WorkflowSpec IR pilotudur. Desteklenen compiler
-sekilleri:
+`create_workflow_from_plan`, action graph IR icin tercih edilen yoldur. Agent
+`gmail.send`, `sheets.row.append`, `sheets.read_rows` ve `core.filter` gibi
+semantic action primitive'leri, `input.*`/`item.*` ref'leri ve `after`
+baglantilari gonderir. Compiler Webhook/Schedule trigger'i, action node'larini,
+expression'lari, nested `connections` yapisini ve runtime `input_schema`
+metadata'sini uretir. Gmail send -> Google Sheets append log akisi bu yolla
+desteklenir; `sheets.row.append` action'i n8n tarafinda `Prepare Sheets Row`
+Set node'u + Google Sheets Append node'u olarak compile edilir. Sheets Append
+node'u Set cikisini `autoMapInputData` ile yazar. Bu ekstra Set node'u n8n
+Google Sheets append'in bos sheet'te kendi kendine `autoMapInputData`
+fallback'ine gecip onceki Gmail output alanlarini (`id`, `threadId`,
+`labelIds`) yazmasini engeller. Sheet belirtilmemisse otomatik spreadsheet
+provisioning yapilmaz, agent kullanicidan gercek Sheet bilgisini ister.
+
+Action factory'ler su an `spec_compiler.py` icindedir. Mevcut Gmail/Sheets
+kapsami icin bu kabul edilebilir; ancak Slack, Calendar veya benzeri ilk yeni
+platform/action eklenirken bu factory'ler Action Registry / platform action pack
+yapisina tasinmalidir. Bu refactor'un amaci n8n'in tum node'larini tamamen
+otomatik anlamak degil; desteklenen platform action'larini reusable,
+deterministic node/subgraph mapping'leri olarak tanimlayip workflow
+kombinasyonlarini dynamic compose etmektir.
+
+`create_workflow_from_spec`, geriye donuk WorkflowSpec IR pilotudur. Desteklenen
+compiler sekilleri:
 
 - `trigger.kind=on_demand` ve tek `send_email`/`gmail` step'i: Webhook + Gmail
   send workflow'u uretir ve `to`/`subject`/`message` runtime input schema'si

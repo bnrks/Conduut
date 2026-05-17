@@ -67,6 +67,23 @@ class WorkflowSpec(BaseModel):
     steps: list[WorkflowStepSpec] = Field(min_length=1)
 
 
+class WorkflowActionSpec(BaseModel):
+    """Semantic action representation compiled into concrete n8n nodes."""
+
+    id: str = Field(min_length=1)
+    action: Literal["gmail.send", "sheets.row.append", "sheets.read_rows", "core.filter"]
+    params: dict[str, Any] = Field(default_factory=dict)
+    after: str | None = None
+
+
+class WorkflowPlan(BaseModel):
+    """Action-graph workflow IR used before deterministic n8n JSON compilation."""
+
+    trigger: WorkflowTriggerSpec
+    inputs: list[WorkflowInputField] = Field(default_factory=list)
+    actions: list[WorkflowActionSpec] = Field(min_length=1)
+
+
 class CredentialField(BaseModel):
     name: str
     label: str

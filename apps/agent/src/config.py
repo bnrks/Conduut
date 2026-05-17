@@ -3,7 +3,16 @@ from pathlib import Path
 from pydantic_settings import BaseSettings
 
 _APP_DIR = Path(__file__).resolve().parents[1]
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _find_repo_root(start: Path) -> Path:
+    for path in (start, *start.parents):
+        if (path / "docker-compose.yml").exists() or (path / "AGENTS.md").exists():
+            return path
+    return start
+
+
+_REPO_ROOT = _find_repo_root(_APP_DIR)
 
 
 class Settings(BaseSettings):

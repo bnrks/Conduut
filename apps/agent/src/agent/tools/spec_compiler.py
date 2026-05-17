@@ -9,11 +9,14 @@ from pydantic_ai import ModelRetry
 from src import n8n_client, store
 from src.agent.schemas import (
     AgentDeps,
+    WorkflowActionSpec,
     WorkflowInputField,
     WorkflowNode,
+    WorkflowPlan,
     WorkflowPreviewAttachment,
     WorkflowPreviewData,
     WorkflowSpec,
+    WorkflowTriggerSpec,
     dump_workflow_nodes,
 )
 from src.agent.tools.common import _missing_credentials_instruction, _safe_error
@@ -25,17 +28,22 @@ from src.agent.tools.runtime_inputs import (
     _normalized_input_schema,
     _runtime_expression,
 )
-from src.agent.tools.validation import _validated_runtime_workflow
+from src.agent.tools.validation import _validated_runtime_workflow, _validated_workflow
 from src.registry import registry
 
 _GMAIL_NODE_TYPE = "n8n-nodes-base.gmail"
 _GOOGLE_SHEETS_NODE_TYPE = "n8n-nodes-base.googleSheets"
 _FILTER_NODE_TYPE = "n8n-nodes-base.filter"
+_SET_NODE_TYPE = "n8n-nodes-base.set"
 _SCHEDULE_TRIGGER_TYPE = "n8n-nodes-base.scheduleTrigger"
 
 
 class WorkflowSpecCompileError(ValueError):
     """Raised when WorkflowSpec cannot be compiled without guessing."""
+
+
+class WorkflowPlanCompileError(WorkflowSpecCompileError):
+    """Raised when WorkflowPlan cannot be compiled without guessing."""
 
 
 @dataclass
@@ -87,6 +95,17 @@ def _sheet_locator(value: str, *, mode: str) -> dict[str, Any]:
 def _json_field_expression(field_name: str) -> str:
     escaped = field_name.replace("\\", "\\\\").replace('"', '\\"')
     return '={{$json["' + escaped + '"]}}'
+
+
+def _json_path_segment(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'["{escaped}"]'
+
+
+def _json_path_expression(node_name: str, path: list[str]) -> str:
+    safe_node = node_name.replace("\\", "\\\\").replace("'", "\\'")
+    json_path = "".join(_json_path_segment(part) for part in path)
+    return "={{$('" + safe_node + "').first().json" + json_path + "}}"
 
 
 def _email_value_expression(inputs: dict[str, Any], value_key: str, field_key: str) -> str:
@@ -149,8 +168,8 @@ def _parse_daily_time(value: str | None) -> tuple[int, int]:
     return hour, minute
 
 
-def _compile_trigger(name: str, spec: WorkflowSpec) -> WorkflowNode:
-    if spec.trigger.kind == "on_demand":
+def _compile_trigger_spec(name: str, trigger: WorkflowTriggerSpec) -> WorkflowNode:
+    if trigger.kind == "on_demand":
         return WorkflowNode(
             id="trigger",
             name="Webhook",
@@ -165,10 +184,10 @@ def _compile_trigger(name: str, spec: WorkflowSpec) -> WorkflowNode:
             },
             webhookId=str(uuid4()),
         )
-    if spec.trigger.kind == "schedule":
-        if spec.trigger.frequency != "daily":
+    if trigger.kind == "schedule":
+        if trigger.frequency != "daily":
             raise WorkflowSpecCompileError("WorkflowSpec V2 only supports daily schedules.")
-        hour, minute = _parse_daily_time(spec.trigger.time)
+        hour, minute = _parse_daily_time(trigger.time)
         return WorkflowNode(
             id="trigger",
             name="Schedule",
@@ -188,7 +207,460 @@ def _compile_trigger(name: str, spec: WorkflowSpec) -> WorkflowNode:
                 }
             },
         )
-    raise WorkflowSpecCompileError(f"Unsupported trigger kind: {spec.trigger.kind}")
+    raise WorkflowSpecCompileError(f"Unsupported trigger kind: {trigger.kind}")
+
+
+def _compile_trigger(name: str, spec: WorkflowSpec) -> WorkflowNode:
+    return _compile_trigger_spec(name, spec.trigger)
+
+
+def _required_plan_param(params: dict[str, Any], *keys: str) -> Any:
+    value = _input_value(params, *keys)
+    if value is None:
+        raise WorkflowPlanCompileError(f"Missing required param: {keys[0]}")
+    return value
+
+
+def _ref_value(value: Any) -> str | None:
+    if isinstance(value, dict):
+        ref = value.get("ref")
+        return str(ref).strip() if isinstance(ref, str) and ref.strip() else None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith(("input.", "item.", "json.")):
+            return stripped
+    return None
+
+
+def _plan_value_expression(value: Any, *, trigger_name: str) -> Any:
+    ref = _ref_value(value)
+    if ref:
+        if ref.startswith("input."):
+            field = ref.removeprefix("input.").strip()
+            if not field:
+                raise WorkflowPlanCompileError(f"Invalid input ref: {ref}")
+            return _json_path_expression(trigger_name, ["body", field])
+        if ref.startswith(("item.", "json.")):
+            field = ref.split(".", 1)[1].strip()
+            if not field:
+                raise WorkflowPlanCompileError(f"Invalid item ref: {ref}")
+            return _json_field_expression(field)
+        raise WorkflowPlanCompileError(f"Unsupported ref: {ref}")
+    if isinstance(value, str):
+        if value.startswith("="):
+            return value
+        if "{{" in value:
+            return f"={value}"
+    return value
+
+
+def _iter_input_refs(value: Any):
+    ref = _ref_value(value)
+    if ref and ref.startswith("input."):
+        field = ref.removeprefix("input.").strip()
+        if field:
+            yield field
+        return
+    if isinstance(value, dict):
+        for nested in value.values():
+            yield from _iter_input_refs(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            yield from _iter_input_refs(nested)
+
+
+def _default_input_field(name: str) -> WorkflowInputField:
+    if name == "to":
+        return WorkflowInputField(
+            name="to",
+            label="Recipient email",
+            type="email",
+            placeholder="name@example.com",
+        )
+    if name == "subject":
+        return WorkflowInputField(
+            name="subject",
+            label="Subject",
+            type="string",
+            placeholder="Email subject",
+        )
+    if name == "message":
+        return WorkflowInputField(
+            name="message",
+            label="Message",
+            type="textarea",
+            placeholder="Email body",
+        )
+    return WorkflowInputField(name=name, label=name.replace("_", " ").title())
+
+
+def _plan_input_schema(plan: WorkflowPlan) -> list[WorkflowInputField]:
+    fields = _normalized_input_schema(plan.inputs)
+    seen = {field.name for field in fields}
+    for action in plan.actions:
+        for field_name in _iter_input_refs(action.params):
+            if field_name in seen:
+                continue
+            fields.append(_default_input_field(field_name))
+            seen.add(field_name)
+    return fields
+
+
+def _sheet_schema(column_names: list[str]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": column,
+            "type": "string",
+            "display": True,
+            "removed": False,
+            "required": False,
+            "displayName": column,
+            "defaultMatch": False,
+            "canBeUsedToMatch": True,
+        }
+        for column in column_names
+    ]
+
+
+def _plan_sheets_append_values(params: dict[str, Any], *, trigger_name: str) -> dict[str, Any]:
+    columns = params.get("columns")
+    if not isinstance(columns, dict) or not columns:
+        raise WorkflowPlanCompileError("Missing required param: columns")
+    values = {
+        column_name: _plan_value_expression(value, trigger_name=trigger_name)
+        for column, value in columns.items()
+        if (column_name := str(column).strip())
+    }
+    if not values:
+        raise WorkflowPlanCompileError("Sheets append columns must not be empty.")
+    return values
+
+
+def _unique_node_name(base: str, used: set[str]) -> str:
+    if base not in used:
+        used.add(base)
+        return base
+    index = 2
+    while f"{base} {index}" in used:
+        index += 1
+    name = f"{base} {index}"
+    used.add(name)
+    return name
+
+
+def _unique_node_id(base: str, used: set[str], reserved: set[str] | None = None) -> str:
+    reserved = reserved or set()
+    candidate = base
+    index = 2
+    while candidate in used or candidate in reserved:
+        candidate = f"{base}_{index}"
+        index += 1
+    used.add(candidate)
+    return candidate
+
+
+def _add_connection(connections: dict[str, Any], source: str, target: str) -> None:
+    source_connections = connections.setdefault(source, {})
+    outputs = source_connections.setdefault("main", [[]])
+    if not outputs:
+        outputs.append([])
+    outputs[0].append({"node": target, "type": "main", "index": 0})
+
+
+def _compile_plan_gmail_send(
+    action: WorkflowActionSpec,
+    *,
+    node_name: str,
+    position: list[int],
+    trigger_name: str,
+) -> WorkflowNode:
+    params = action.params
+    return WorkflowNode(
+        id=action.id,
+        name=node_name,
+        type=_GMAIL_NODE_TYPE,
+        typeVersion=_schema_type_version(_GMAIL_NODE_TYPE),
+        position=position,
+        parameters={
+            "resource": "message",
+            "operation": "send",
+            "sendTo": _plan_value_expression(
+                _required_plan_param(params, "to"),
+                trigger_name=trigger_name,
+            ),
+            "subject": _plan_value_expression(
+                _required_plan_param(params, "subject"),
+                trigger_name=trigger_name,
+            ),
+            "message": _plan_value_expression(
+                _required_plan_param(params, "message"),
+                trigger_name=trigger_name,
+            ),
+            "emailType": "text",
+        },
+    )
+
+
+def _compile_plan_set_row(
+    *,
+    node_id: str,
+    node_name: str,
+    position: list[int],
+    values: dict[str, Any],
+) -> WorkflowNode:
+    return WorkflowNode(
+        id=node_id,
+        name=node_name,
+        type=_SET_NODE_TYPE,
+        typeVersion=_schema_type_version(_SET_NODE_TYPE),
+        position=position,
+        parameters={
+            "mode": "manual",
+            "assignments": {
+                "assignments": [
+                    {
+                        "id": column,
+                        "name": column,
+                        "type": "string",
+                        "value": value,
+                    }
+                    for column, value in values.items()
+                ]
+            },
+            "includeOtherFields": False,
+            "options": {},
+        },
+    )
+
+
+def _compile_plan_sheets_read_rows(
+    action: WorkflowActionSpec,
+    *,
+    node_name: str,
+    position: list[int],
+) -> WorkflowNode:
+    params = action.params
+    document_id = str(_required_plan_param(params, "document_id", "spreadsheet_id")).strip()
+    sheet_value = str(_required_plan_param(params, "sheet_name", "sheet_id", "sheet")).strip()
+    sheet_mode = "id" if _input_value(params, "sheet_id") is not None else "name"
+    return WorkflowNode(
+        id=action.id,
+        name=node_name,
+        type=_GOOGLE_SHEETS_NODE_TYPE,
+        typeVersion=_schema_type_version(_GOOGLE_SHEETS_NODE_TYPE),
+        position=position,
+        parameters={
+            "authentication": "oAuth2",
+            "resource": "sheet",
+            "operation": "read",
+            "documentId": _sheet_locator(document_id, mode="id"),
+            "sheetName": _sheet_locator(sheet_value, mode=sheet_mode),
+            "options": {},
+        },
+    )
+
+
+def _compile_plan_sheets_append(
+    action: WorkflowActionSpec,
+    *,
+    node_name: str,
+    position: list[int],
+    trigger_name: str,
+    values: dict[str, Any] | None = None,
+) -> WorkflowNode:
+    params = action.params
+    document_id = str(_required_plan_param(params, "document_id", "spreadsheet_id")).strip()
+    sheet_value = str(_required_plan_param(params, "sheet_name", "sheet_id", "sheet")).strip()
+    sheet_mode = "id" if _input_value(params, "sheet_id") is not None else "name"
+    if values is None:
+        _plan_sheets_append_values(params, trigger_name=trigger_name)
+    return WorkflowNode(
+        id=action.id,
+        name=node_name,
+        type=_GOOGLE_SHEETS_NODE_TYPE,
+        typeVersion=_schema_type_version(_GOOGLE_SHEETS_NODE_TYPE),
+        position=position,
+        parameters={
+            "authentication": "oAuth2",
+            "resource": "sheet",
+            "operation": "append",
+            "documentId": _sheet_locator(document_id, mode="id"),
+            "sheetName": _sheet_locator(sheet_value, mode=sheet_mode),
+            "columns": {
+                "mappingMode": "autoMapInputData",
+                "value": {},
+            },
+            "options": {"handlingExtraData": "insertInNewColumn"},
+        },
+    )
+
+
+def _compile_plan_filter(
+    action: WorkflowActionSpec,
+    *,
+    node_name: str,
+    position: list[int],
+    trigger_name: str,
+) -> WorkflowNode:
+    params = action.params
+    filter_field = _required_plan_param(params, "field", "column")
+    filter_value = _required_plan_param(params, "value")
+    operator_type, operation = _filter_operation(params.get("operator"), filter_value)
+    left_value = (
+        _plan_value_expression(filter_field, trigger_name=trigger_name)
+        if _ref_value(filter_field)
+        else _json_field_expression(str(filter_field))
+    )
+    return WorkflowNode(
+        id=action.id,
+        name=node_name,
+        type=_FILTER_NODE_TYPE,
+        typeVersion=_schema_type_version(_FILTER_NODE_TYPE),
+        position=position,
+        parameters={
+            "options": {},
+            "conditions": {
+                "options": {
+                    "version": 2,
+                    "leftValue": "",
+                    "caseSensitive": True,
+                    "typeValidation": "strict",
+                },
+                "combinator": "and",
+                "conditions": [
+                    {
+                        "id": "filter-condition",
+                        "operator": {
+                            "type": operator_type,
+                            "operation": operation,
+                        },
+                        "leftValue": left_value,
+                        "rightValue": _plan_value_expression(
+                            filter_value,
+                            trigger_name=trigger_name,
+                        ),
+                    }
+                ],
+            },
+        },
+    )
+
+
+def _compile_plan_action(
+    action: WorkflowActionSpec,
+    *,
+    node_name: str,
+    position: list[int],
+    trigger_name: str,
+) -> WorkflowNode:
+    if action.action == "gmail.send":
+        return _compile_plan_gmail_send(
+            action,
+            node_name=node_name,
+            position=position,
+            trigger_name=trigger_name,
+        )
+    if action.action == "sheets.read_rows":
+        return _compile_plan_sheets_read_rows(action, node_name=node_name, position=position)
+    if action.action == "sheets.row.append":
+        return _compile_plan_sheets_append(
+            action,
+            node_name=node_name,
+            position=position,
+            trigger_name=trigger_name,
+        )
+    if action.action == "core.filter":
+        return _compile_plan_filter(
+            action,
+            node_name=node_name,
+            position=position,
+            trigger_name=trigger_name,
+        )
+    raise WorkflowPlanCompileError(f"Unsupported action: {action.action}")
+
+
+_ACTION_NODE_BASE = {
+    "gmail.send": "Gmail",
+    "sheets.read_rows": "Google Sheets",
+    "sheets.row.append": "Google Sheets Append",
+    "core.filter": "Filter",
+}
+
+
+def compile_workflow_plan(name: str, plan: WorkflowPlan) -> CompiledWorkflowSpec:
+    """Compile a semantic action graph into n8n workflow pieces."""
+
+    trigger = _compile_trigger_spec(name, plan.trigger)
+    nodes = [trigger]
+    connections: dict[str, Any] = {}
+    action_nodes: dict[str, str] = {}
+    used_names = {trigger.name}
+    used_node_ids = {trigger.id}
+    reserved_action_ids = {action.id for action in plan.actions}
+    previous_action_id: str | None = None
+    x_position = 500
+
+    for action in plan.actions:
+        if action.id in action_nodes:
+            raise WorkflowPlanCompileError(f"Duplicate action id: {action.id}")
+        if action.id in used_node_ids:
+            raise WorkflowPlanCompileError(f"Duplicate node id: {action.id}")
+        used_node_ids.add(action.id)
+        source_ref = action.after or previous_action_id or "trigger"
+        if source_ref in {"trigger", trigger.name}:
+            source_name = trigger.name
+        else:
+            source_name = action_nodes.get(source_ref)
+            if not source_name:
+                raise WorkflowPlanCompileError(f"Unknown action dependency: {source_ref}")
+
+        base_name = _ACTION_NODE_BASE.get(action.action, action.action)
+        node_name = _unique_node_name(base_name, used_names)
+        if action.action == "sheets.row.append":
+            values = _plan_sheets_append_values(action.params, trigger_name=trigger.name)
+            prepare_node = _compile_plan_set_row(
+                node_id=_unique_node_id(
+                    f"{action.id}_row",
+                    used_node_ids,
+                    reserved=reserved_action_ids,
+                ),
+                node_name=_unique_node_name("Prepare Sheets Row", used_names),
+                position=[x_position, 300],
+                values=values,
+            )
+            x_position += 250
+            append_node = _compile_plan_sheets_append(
+                action,
+                node_name=node_name,
+                position=[x_position, 300],
+                trigger_name=trigger.name,
+                values=values,
+            )
+            x_position += 250
+            nodes.extend([prepare_node, append_node])
+            action_nodes[action.id] = append_node.name
+            _add_connection(connections, source_name, prepare_node.name)
+            _add_connection(connections, prepare_node.name, append_node.name)
+            previous_action_id = action.id
+            continue
+
+        node = _compile_plan_action(
+            action,
+            node_name=node_name,
+            position=[x_position, 300],
+            trigger_name=trigger.name,
+        )
+        x_position += 250
+        nodes.append(node)
+        action_nodes[action.id] = node.name
+        _add_connection(connections, source_name, node.name)
+        previous_action_id = action.id
+
+    return CompiledWorkflowSpec(
+        nodes=nodes,
+        connections=connections,
+        input_schema=_plan_input_schema(plan),
+    )
 
 
 def _compile_gmail_on_demand(
@@ -343,30 +815,13 @@ def compile_workflow_spec(
     )
 
 
-async def create_workflow_from_spec_payload(
+async def _create_compiled_workflow_payload(
     deps: AgentDeps,
     name: str,
-    spec: WorkflowSpec,
-    input_schema: list[WorkflowInputField] | None = None,
+    validated_nodes: list[WorkflowNode],
+    validated_connections: dict[str, Any],
+    runtime_schema: list[WorkflowInputField],
 ) -> dict[str, Any]:
-    """Compile WorkflowSpec and create the resulting n8n workflow."""
-
-    try:
-        compiled = compile_workflow_spec(name, spec, input_schema)
-        validated_nodes, validated_connections, runtime_schema = _validated_runtime_workflow(
-            compiled.nodes,
-            compiled.connections,
-            compiled.input_schema,
-        )
-    except (WorkflowSpecCompileError, ModelRetry) as exc:
-        return {
-            "error": str(exc),
-            "fallback": (
-                "Use create_workflow only if the requested workflow is outside the "
-                "supported WorkflowSpec compiler."
-            ),
-        }
-
     node_dicts = dump_workflow_nodes(validated_nodes)
     try:
         workflow = await n8n_client.create_workflow(
@@ -413,3 +868,67 @@ async def create_workflow_from_spec_payload(
             "instruction": _missing_credentials_instruction(),
         }
     return {"id": workflow.id, "name": workflow.name, "active": workflow.active}
+
+
+async def create_workflow_from_plan_payload(
+    deps: AgentDeps,
+    name: str,
+    plan: WorkflowPlan,
+) -> dict[str, Any]:
+    """Compile WorkflowPlan and create the resulting n8n workflow."""
+
+    try:
+        compiled = compile_workflow_plan(name, plan)
+        validated_nodes, validated_connections = _validated_workflow(
+            compiled.nodes,
+            compiled.connections,
+        )
+    except (WorkflowSpecCompileError, ModelRetry) as exc:
+        return {
+            "error": str(exc),
+            "fallback": (
+                "Use create_workflow only if the requested workflow is outside the "
+                "supported WorkflowPlan compiler."
+            ),
+        }
+
+    return await _create_compiled_workflow_payload(
+        deps,
+        name,
+        validated_nodes,
+        validated_connections,
+        compiled.input_schema,
+    )
+
+
+async def create_workflow_from_spec_payload(
+    deps: AgentDeps,
+    name: str,
+    spec: WorkflowSpec,
+    input_schema: list[WorkflowInputField] | None = None,
+) -> dict[str, Any]:
+    """Compile WorkflowSpec and create the resulting n8n workflow."""
+
+    try:
+        compiled = compile_workflow_spec(name, spec, input_schema)
+        validated_nodes, validated_connections, runtime_schema = _validated_runtime_workflow(
+            compiled.nodes,
+            compiled.connections,
+            compiled.input_schema,
+        )
+    except (WorkflowSpecCompileError, ModelRetry) as exc:
+        return {
+            "error": str(exc),
+            "fallback": (
+                "Use create_workflow only if the requested workflow is outside the "
+                "supported WorkflowSpec compiler."
+            ),
+        }
+
+    return await _create_compiled_workflow_payload(
+        deps,
+        name,
+        validated_nodes,
+        validated_connections,
+        runtime_schema,
+    )

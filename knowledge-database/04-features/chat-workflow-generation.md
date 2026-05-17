@@ -67,24 +67,48 @@ connection referanslarini node `name` formatina normalize eder; model `1`/`2`
 veya `node1`/`node2` gibi id/sira alias'lari uretirse bunlar n8n'e yazilmadan
 once ilgili node adlarina cevrilir.
 
-Gmail on-demand workflow'lar icin yeni pilot yol `WorkflowSpec` IR + compiler
-akisini kullanir. Agent bu dar kapsamdaki istekte raw `nodes/connections` JSON
-yazmak yerine `create_workflow_from_spec` tool'una compact spec verir. Backend
-Webhook trigger, Gmail send node'u, nested connections ve `to`/`subject`/
-`message` runtime input schema'sini deterministic olarak uretir; sonuc yine
-mevcut validator, metadata ve readiness akislariyla islenir.
+Desteklenen Gmail/Sheets/core workflow'lari icin tercih edilen yol artik
+`WorkflowPlan` action graph IR + compiler akisidir. Agent raw
+`nodes/connections` JSON yazmak yerine `create_workflow_from_plan` tool'una
+semantic action listesi verir. Ilk desteklenen action'lar:
 
-WorkflowSpec compiler'in ikinci desteklenen ailesi Google Sheets satirlarini
-okuyup filtreleyen ve eslesen satirlar icin Gmail gonderen workflow'lardir.
-Agent spec'i su sira ile vermelidir: `read_sheet_rows`/`google_sheets`,
-`filter_items`/`core`, `send_email`/`gmail`. Gerekli is bilgisi gercek
-`document_id` veya `spreadsheet_id`, `sheet_name` veya `sheet_id`, filtre
-kolonu/operatoru/degeri, Gmail `to_field` ve subject/message kaynagidir. Bunlar
-eksikse agent placeholder uydurmaz, `request_user_input` ile sorar. Trigger
-on-demand olabilir veya gunluk schedule icin `frequency=daily` ve `time=HH:MM`
-tasiyabilir. Subject/message sabit metin icinde `{{...}}` n8n expression'i
-tasiyorsa compiler degeri `=` ile baslatir; tamamen sabit metinlerde expression
-modu acilmaz.
+- `gmail.send`
+- `sheets.row.append`
+- `sheets.read_rows`
+- `core.filter`
+
+Plan parametreleri n8n alan isimleri degil, `to`, `subject`, `message`,
+`spreadsheet_id`, `sheet_name`, `columns`, `field`, `operator`, `value` gibi is
+seviyesindeki isimlerdir. Runtime input baglantilari `{ref: "input.to"}` gibi,
+akistaki mevcut item alanlari `{ref: "item.email"}` gibi ifade edilir. Compiler
+Webhook/Schedule trigger'i, n8n node type/typeVersion degerlerini, expression
+string'lerini, nested `connections` yapisini, Sheets append resourceMapper
+shape'ini ve workflow metadata `input_schema` degerini deterministic uretir.
+
+Gmail send -> Google Sheets append log akisi bu yolla desteklenir: agent once
+`gmail.send`, sonra `sheets.row.append` action'i verir ve append kolonlarini
+`input.to`, `input.subject`, `input.message` ref'lerinden yazar. Compiler bu
+semantic append action'i icin Google Sheets Append oncesine `Prepare Sheets Row`
+Set node'u ekler ve Sheets Append node'unu Set cikisini `autoMapInputData` ile
+yazacak sekilde kurar. Bunun nedeni n8n Google Sheets append node'unun bos
+sheet'te `defineBelow` mapping verilse bile `autoMapInputData` moduna dusmesi;
+Set node'u current item'i hedef kolonlara cevirdigi icin bos veya daha once
+yanlis header yazilmis sheet'lerde de `to`, `subject`, `message` gibi beklenen
+kolonlar yazilir. Mevcut Sheet ID/sheet name yoksa agent placeholder uydurmaz;
+`request_user_input` ile ilk eksik gercek is bilgisini sorar. Otomatik
+spreadsheet provisioning bu fazda yoktur.
+
+Eski `WorkflowSpec` compiler yolu Gmail on-demand ve Google Sheets read rows ->
+Filter -> Gmail send akislari icin geriye donuk uyumluluk olarak korunur, fakat
+yeni desteklenen akislarda agent once `create_workflow_from_plan` kullanmalidir.
+
+Compiler icin orta vadeli yon Action Registry / platform action pack yapisidir.
+Bu, mevcut bugfix icin acil degildir; ilk yeni platform veya action ailesi
+eklenirken uygulanmalidir. Yeni platform eklerken hedef workflow shape'i
+tanimlamak degil, `slack.message.send` gibi reusable semantic action'lar
+tanimlamak ve bunlari mevcut `WorkflowPlan` icinde diger action'larla compose
+etmektir. OAuth/connection eklemek compiler destegi anlamina gelmez; ilgili
+semantic action ve n8n node/subgraph mapping'i de eklenmelidir.
 
 ## Credential ve Run Capability
 
@@ -203,12 +227,13 @@ kullanmalidir. Bilinmeyen node type'lar asla tahmin edilmemeli; once
 sonuc dondurur ve agent yeterli adayi bulamazsa `limit` parametresini artirarak
 tekrar arayabilir; limit registry tarafinda 50 ile sinirlanir.
 
-On-demand Gmail send/reusable email workflow'larda ve Google Sheets satir
-filtreleme -> Gmail gonderim akisi isteyen workflow'larda agent once
-`create_workflow_from_spec` kullanmalidir. Bu compiler desteklemiyorsa raw
-`create_workflow` fallback'i korunur. Tek seferlik gonderimlerde gerekli runtime
-input tamamlandiktan sonra agent olusan on-demand workflow'u `execute_workflow`
-ile calistirabilir.
+On-demand Gmail send/reusable email workflow'larda, Gmail send -> Sheets append
+log akislari ve desteklenen Google Sheets satir akisi workflow'larda agent once
+`create_workflow_from_plan` kullanmalidir. Eski `create_workflow_from_spec`
+uyumluluk icin kalir; plan compiler desteklemiyorsa raw `create_workflow`
+fallback'i korunur. Tek seferlik gonderimlerde gerekli runtime input
+tamamlandiktan sonra agent olusan on-demand workflow'u `execute_workflow` ile
+calistirabilir.
 
 Agent artik kullanicidan n8n, webhook, workflow veya node terminolojisi
 beklememelidir. "Su mail adreslerine bu paragrafi gonder" gibi dogal dil
