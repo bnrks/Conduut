@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2, ChevronDown, Plug, Plus, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { ServiceLogo } from "@/components/dashboard/service-logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { useAuth } from "@/hooks/use-auth";
 import type { AvailableService, Connection } from "@/types/connection";
@@ -138,6 +140,7 @@ function getPayloadMessage(
 
 export default function ConnectionsPage() {
   const { user, loading: authLoading } = useAuth();
+  const confirm = useConfirm();
   const [connections, setConnections] = useState<Connection[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [connectingService, setConnectingService] = useState<string | null>(
@@ -271,7 +274,13 @@ export default function ConnectionsPage() {
 
   const disconnectConnection = async (connection: Connection) => {
     if (!user) return;
-    const confirmed = window.confirm(`Disconnect ${connection.serviceName}?`);
+    const confirmed = await confirm({
+      title: "Disconnect service?",
+      description: "Conduut will stop using this Google service connection.",
+      confirmLabel: "Disconnect",
+      cancelLabel: "Cancel",
+      tone: "danger",
+    });
     if (!confirmed) return;
 
     setBusyConnectionId(connection.id);
@@ -377,73 +386,84 @@ export default function ConnectionsPage() {
                       </Button>
                     </div>
 
-                    {isExpanded && (
-                      <div className="mt-4 space-y-2 border-t border-border pt-3">
-                        {servicePacks.map((pack) => {
-                          const granted =
-                            isConnected &&
-                            Boolean(
-                              connection?.permissionPacks?.includes(pack.id) ||
-                                pack.capabilities.every((capability) =>
-                                  connection?.capabilities?.includes(capability)
-                                )
-                            );
-                          const packBusy =
-                            connectingService === `${service.slug}:${pack.id}` ||
-                            connectingService === service.slug;
-                          return (
-                            <div
-                              key={pack.id}
-                              className="flex min-h-[58px] items-center gap-3 rounded-lg border border-border bg-background px-3 py-2"
-                            >
-                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                                {granted ? (
-                                  <CheckCircle2 className="h-4 w-4 text-success" />
-                                ) : (
-                                  <ShieldCheck className="h-4 w-4" />
-                                )}
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <p className="text-[13px] font-medium text-foreground">
-                                  {pack.label}
-                                </p>
-                                <p className="truncate text-[12px] text-muted-foreground">
-                                  {pack.description}
-                                </p>
-                              </div>
-                              {granted ? (
-                                <Badge variant="success">Granted</Badge>
-                              ) : (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 shrink-0 px-2 text-[12px]"
-                                  onClick={() =>
-                                    void startGoogleConnect(service, pack.id)
-                                  }
-                                  disabled={packBusy}
+                    <AnimatePresence initial={false}>
+                      {isExpanded && (
+                        <motion.div
+                          key={`${service.slug}-permissions`}
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: "auto", opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.18, ease: "easeOut" }}
+                          className="overflow-hidden"
+                        >
+                          <div className="mt-4 space-y-2 border-t border-border pt-3">
+                            {servicePacks.map((pack) => {
+                              const granted =
+                                isConnected &&
+                                Boolean(
+                                  connection?.permissionPacks?.includes(pack.id) ||
+                                    pack.capabilities.every((capability) =>
+                                      connection?.capabilities?.includes(capability)
+                                    )
+                                );
+                              const packBusy =
+                                connectingService === `${service.slug}:${pack.id}` ||
+                                connectingService === service.slug;
+                              return (
+                                <div
+                                  key={pack.id}
+                                  className="flex min-h-[58px] items-center gap-3 rounded-lg border border-border bg-background px-3 py-2"
                                 >
-                                  {packBusy ? (
-                                    <>
-                                      <Spinner
-                                        size="sm"
-                                        className="text-current"
-                                      />
-                                      Granting
-                                    </>
+                                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                                    {granted ? (
+                                      <CheckCircle2 className="h-4 w-4 text-success" />
+                                    ) : (
+                                      <ShieldCheck className="h-4 w-4" />
+                                    )}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-[13px] font-medium text-foreground">
+                                      {pack.label}
+                                    </p>
+                                    <p className="truncate text-[12px] text-muted-foreground">
+                                      {pack.description}
+                                    </p>
+                                  </div>
+                                  {granted ? (
+                                    <Badge variant="success">Granted</Badge>
                                   ) : (
-                                    <>
-                                      <Plus className="h-3 w-3" />
-                                      Grant
-                                    </>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 shrink-0 px-2 text-[12px]"
+                                      onClick={() =>
+                                        void startGoogleConnect(service, pack.id)
+                                      }
+                                      disabled={packBusy}
+                                    >
+                                      {packBusy ? (
+                                        <>
+                                          <Spinner
+                                            size="sm"
+                                            className="text-current"
+                                          />
+                                          Granting
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Plus className="h-3 w-3" />
+                                          Grant
+                                        </>
+                                      )}
+                                    </Button>
                                   )}
-                                </Button>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
 
                     <div className="mt-3 flex items-center justify-end gap-2 border-t border-border pt-3">
                       {!isConnected && (

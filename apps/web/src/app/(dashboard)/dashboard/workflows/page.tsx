@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { WorkflowCard } from "@/components/dashboard/workflow-card";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useAuth } from "@/hooks/use-auth";
 import type { Workflow, WorkflowInputField, WorkflowStatus } from "@/types/workflow";
 
@@ -28,6 +29,7 @@ async function getErrorMessage(response: Response, fallback: string): Promise<st
 
 export default function WorkflowsPage() {
   const { user, loading: authLoading } = useAuth();
+  const confirm = useConfirm();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -95,7 +97,13 @@ export default function WorkflowsPage() {
 
   const handleDelete = async (workflow: Workflow) => {
     if (!user) return;
-    const confirmed = window.confirm(`Delete "${workflow.name}"?`);
+    const confirmed = await confirm({
+      title: "Delete workflow?",
+      description: `"${workflow.name}" will be permanently removed.`,
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+      tone: "danger",
+    });
     if (!confirmed) return;
 
     // Optimistic update
