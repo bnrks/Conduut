@@ -75,9 +75,15 @@ Local `pnpm dev` ile web host uzerinde calistiginda BFF route'lari agent'a
 `AGENT_API_BASE_URL=http://localhost:8100` ile ulasir; Docker compose icindeki
 web container ise `AGENT_API_BASE_URL=http://agent:8000` kullanir. Root
 `start-local-dev.bat`, Windows'ta port `3000` excluded olabildigi icin web'i
-default olarak `127.0.0.1:3007` uzerinde baslatir; port `CONDUUT_WEB_PORT` ile
-degistirilebilir. Env veya port degisirse Next dev server yeniden
-baslatilmalidir.
+default olarak `localhost:3007` uzerinde baslatir; port `CONDUUT_WEB_PORT` ile
+degistirilebilir. Google OAuth redirect URL'i de `localhost:3007` kullandigi
+icin local browser oturumlari `127.0.0.1` yerine `localhost` uzerinden
+acilmalidir; aksi halde Firebase/browser session origin'i degisir ve callback
+sonrasi tekrar login istenebilir. Script root `.env` icinden Google OAuth
+client bilgilerine ek olarak `CONDUUT_CONNECTION_ENCRYPTION_KEY` degerini de
+agent process'ine tasir; bu key yoksa Google connection n8n credential olarak
+kaydedilir ama direct Sheets/Gmail API aksiyonlari icin refresh token encrypted
+saklanamaz. Env veya port degisirse Next dev server yeniden baslatilmalidir.
 
 ## Chat UI
 

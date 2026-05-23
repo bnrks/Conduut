@@ -10,49 +10,31 @@ from urllib.parse import urlencode
 import httpx
 
 from src.config import settings
+from src.platforms import capabilities as platform_capabilities
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
-GOOGLE_PROFILE_SCOPES = [
-    "openid",
-    "email",
-    "profile",
-]
-GOOGLE_GMAIL_READ_CAPABILITY = "google.gmail.read"
-GOOGLE_GMAIL_SEND_CAPABILITY = "google.gmail.send"
-GOOGLE_SHEETS_READ_CAPABILITY = "google.sheets.read"
-GOOGLE_SHEETS_WRITE_CAPABILITY = "google.sheets.write"
+GOOGLE_PROFILE_SCOPES = list(platform_capabilities.GOOGLE_PROFILE_SCOPES)
+GOOGLE_GMAIL_READ_CAPABILITY = "gmail.message.read"
+GOOGLE_GMAIL_SEND_CAPABILITY = "gmail.message.send"
+GOOGLE_SHEETS_READ_CAPABILITY = "sheets.range.read"
+GOOGLE_SHEETS_WRITE_CAPABILITY = "sheets.row.append"
 
 GOOGLE_CAPABILITY_SCOPES = {
-    GOOGLE_GMAIL_READ_CAPABILITY: ["https://www.googleapis.com/auth/gmail.readonly"],
-    GOOGLE_GMAIL_SEND_CAPABILITY: ["https://www.googleapis.com/auth/gmail.send"],
-    GOOGLE_SHEETS_READ_CAPABILITY: [
-        "https://www.googleapis.com/auth/drive.file",
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive.metadata",
-    ],
-    GOOGLE_SHEETS_WRITE_CAPABILITY: [
-        "https://www.googleapis.com/auth/drive.file",
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive.metadata",
-    ],
+    capability_id: list(capability.scopes)
+    for capability_id, capability in platform_capabilities.CAPABILITIES.items()
 }
 
 GOOGLE_SERVICE_CAPABILITIES = {
-    "gmail": [GOOGLE_GMAIL_READ_CAPABILITY, GOOGLE_GMAIL_SEND_CAPABILITY],
-    "sheets": [GOOGLE_SHEETS_READ_CAPABILITY, GOOGLE_SHEETS_WRITE_CAPABILITY],
+    "gmail": platform_capabilities.capabilities_for_permission_pack("gmail.basic"),
+    "sheets": platform_capabilities.capabilities_for_permission_pack("sheets.app_files"),
 }
 
-GMAIL_CONNECTION_SCOPES = [
-    *GOOGLE_PROFILE_SCOPES,
-    *GOOGLE_CAPABILITY_SCOPES[GOOGLE_GMAIL_SEND_CAPABILITY],
-    *GOOGLE_CAPABILITY_SCOPES[GOOGLE_GMAIL_READ_CAPABILITY],
-]
-GOOGLE_SHEETS_CONNECTION_SCOPES = [
-    *GOOGLE_PROFILE_SCOPES,
-    *GOOGLE_CAPABILITY_SCOPES[GOOGLE_SHEETS_READ_CAPABILITY],
-]
+GMAIL_CONNECTION_SCOPES = platform_capabilities.scopes_for_permission_pack("gmail.basic")
+GOOGLE_SHEETS_CONNECTION_SCOPES = platform_capabilities.scopes_for_permission_pack(
+    "sheets.app_files"
+)
 
 GMAIL_SEND_SCOPES = GMAIL_CONNECTION_SCOPES
 GOOGLE_SHEETS_SCOPES = GOOGLE_SHEETS_CONNECTION_SCOPES
@@ -63,9 +45,9 @@ _GOOGLE_CONNECTION_SCOPES = {
 }
 
 _GOOGLE_SHEETS_N8N_SCOPES = [
-    "https://www.googleapis.com/auth/drive.file",
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive.metadata",
+    platform_capabilities.SCOPE_DRIVE_FILE,
+    platform_capabilities.SCOPE_SHEETS,
+    platform_capabilities.SCOPE_DRIVE_METADATA,
 ]
 
 
@@ -116,8 +98,17 @@ def safe_return_to(value: str | None) -> str:
     return value
 
 
-def connection_scopes(service: str) -> list[str]:
-    scopes = _GOOGLE_CONNECTION_SCOPES.get(service)
+def connection_scopes(
+    service: str,
+    *,
+    permission_pack: str | None = None,
+    requested_capabilities: list[str] | None = None,
+) -> list[str]:
+    scopes, _capabilities, _pack = platform_capabilities.resolve_permission_request(
+        service,
+        permission_pack=permission_pack,
+        requested_capabilities=requested_capabilities,
+    )
     if not scopes:
         raise GoogleOAuthConfigError(f"Unsupported Google service: {service}.")
     return scopes
@@ -131,12 +122,7 @@ def service_capabilities(service: str) -> list[str]:
 
 
 def scopes_for_capabilities(capabilities: list[str]) -> list[str]:
-    scopes = list(GOOGLE_PROFILE_SCOPES)
-    for capability in capabilities:
-        for scope in GOOGLE_CAPABILITY_SCOPES.get(capability, []):
-            if scope not in scopes:
-                scopes.append(scope)
-    return scopes
+    return platform_capabilities.scopes_for_capabilities(capabilities)
 
 
 def scopes_from_token_response(
@@ -151,25 +137,31 @@ def scopes_from_token_response(
 
 
 def capabilities_for_scopes(scopes: list[str]) -> list[str]:
-    scope_set = set(scopes)
-    capabilities: list[str] = []
-    for capability, required_scopes in GOOGLE_CAPABILITY_SCOPES.items():
-        if all(scope in scope_set for scope in required_scopes):
-            capabilities.append(capability)
-    if "https://www.googleapis.com/auth/spreadsheets" in scope_set:
-        for capability in (GOOGLE_SHEETS_READ_CAPABILITY, GOOGLE_SHEETS_WRITE_CAPABILITY):
-            if capability not in capabilities:
-                capabilities.append(capability)
-    return capabilities
+    return platform_capabilities.capabilities_for_scopes(scopes)
 
 
-def authorization_url(*, state: str, code_verifier: str, service: str = "gmail") -> str:
+def authorization_url(
+    *,
+    state: str,
+    code_verifier: str,
+    service: str = "gmail",
+    scopes: list[str] | None = None,
+    permission_pack: str | None = None,
+    requested_capabilities: list[str] | None = None,
+) -> str:
     ensure_google_oauth_configured()
     params = {
         "client_id": settings.google_oauth_client_id,
         "redirect_uri": redirect_uri(),
         "response_type": "code",
-        "scope": " ".join(connection_scopes(service)),
+        "scope": " ".join(
+            scopes
+            or connection_scopes(
+                service,
+                permission_pack=permission_pack,
+                requested_capabilities=requested_capabilities,
+            )
+        ),
         "access_type": "offline",
         "prompt": "consent",
         "include_granted_scopes": "true",

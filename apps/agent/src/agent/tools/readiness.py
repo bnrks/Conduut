@@ -28,6 +28,7 @@ from src.agent.tools.constants import (
 )
 from src.agent.tools.workflow_helpers import _workflow_trigger_nodes
 from src.oauth import google
+from src.platforms.capabilities import connection_has_capability
 from src.registry import registry
 
 log = structlog.get_logger()
@@ -176,7 +177,7 @@ async def _attach_managed_connection_if_available(
         return False
     if connection.credential_type != credential_type or not connection.n8n_credential_id:
         return False
-    if config["capability"] not in _connection_capabilities(connection):
+    if not connection_has_capability(_connection_capabilities(connection), config["capability"]):
         return False
 
     node_name = str(node.get("name") or "")

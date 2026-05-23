@@ -16,7 +16,7 @@ const AVAILABLE_SERVICES: AvailableService[] = [
     name: "Google Gmail",
     slug: "google-gmail",
     icon: "gmail",
-    description: "Read and send Gmail messages from workflows",
+    description: "Manage Gmail messages and automate email work",
     category: "Email",
     connectionId: "google_gmail",
     authorizePath: "/api/oauth/google/authorize?service=gmail",
@@ -25,41 +25,85 @@ const AVAILABLE_SERVICES: AvailableService[] = [
     name: "Google Sheets",
     slug: "google-sheets",
     icon: "google-sheets",
-    description: "Read spreadsheet rows from workflows",
+    description: "Create, read, and edit spreadsheets",
     category: "Data",
     connectionId: "google_sheets",
     authorizePath: "/api/oauth/google/authorize?service=sheets",
   },
 ];
 
-const GOOGLE_CAPABILITIES = [
+const GOOGLE_PERMISSION_PACKS = [
   {
-    id: "google.gmail.read",
-    label: "Can read Gmail",
-    description: "Read messages, threads, and labels in Gmail workflows",
+    id: "gmail.send",
+    label: "Gmail Send",
+    description: "Send email from the connected Gmail account",
     serviceSlug: "google-gmail",
     connectionId: "google_gmail",
+    capabilities: ["gmail.message.send"],
   },
   {
-    id: "google.gmail.send",
-    label: "Can send Gmail",
-    description: "Send or reply to messages from Gmail workflows",
+    id: "gmail.read",
+    label: "Gmail Read",
+    description: "Read messages, threads, and labels",
     serviceSlug: "google-gmail",
     connectionId: "google_gmail",
+    capabilities: ["gmail.message.read"],
   },
   {
-    id: "google.sheets.read",
-    label: "Can read Sheets",
-    description: "Read spreadsheet rows in Sheets workflows",
-    serviceSlug: "google-sheets",
-    connectionId: "google_sheets",
+    id: "gmail.organize",
+    label: "Gmail Organize",
+    description: "Mark read/unread, archive, label, and move mail to trash",
+    serviceSlug: "google-gmail",
+    connectionId: "google_gmail",
+    capabilities: [
+      "gmail.message.read",
+      "gmail.message.modify",
+      "gmail.message.trash",
+    ],
   },
   {
-    id: "google.sheets.write",
-    label: "Can edit Sheets",
-    description: "Create or update spreadsheet content in Sheets workflows",
+    id: "gmail.full_control",
+    label: "Gmail Full Control",
+    description: "Full mailbox control, including permanent deletion",
+    serviceSlug: "google-gmail",
+    connectionId: "google_gmail",
+    capabilities: [
+      "gmail.message.send",
+      "gmail.message.read",
+      "gmail.message.modify",
+      "gmail.message.trash",
+      "gmail.message.delete_permanently",
+    ],
+  },
+  {
+    id: "sheets.app_files",
+    label: "Sheets App Files",
+    description: "Create and edit spreadsheets Conduut manages",
     serviceSlug: "google-sheets",
     connectionId: "google_sheets",
+    capabilities: [
+      "sheets.spreadsheet.create",
+      "sheets.sheet.manage",
+      "sheets.range.read",
+      "sheets.range.update",
+      "sheets.range.clear",
+      "sheets.row.append",
+    ],
+  },
+  {
+    id: "sheets.full_access",
+    label: "Sheets Full Access",
+    description: "Read and edit spreadsheets available to the account",
+    serviceSlug: "google-sheets",
+    connectionId: "google_sheets",
+    capabilities: [
+      "sheets.spreadsheet.create",
+      "sheets.sheet.manage",
+      "sheets.range.read",
+      "sheets.range.update",
+      "sheets.range.clear",
+      "sheets.row.append",
+    ],
   },
 ];
 
@@ -115,13 +159,13 @@ export default function ConnectionsPage() {
       ),
     []
   );
-  const capabilitiesByServiceSlug = useMemo(
+  const packsByServiceSlug = useMemo(
     () =>
       new Map(
         AVAILABLE_SERVICES.map((service) => [
           service.slug,
-          GOOGLE_CAPABILITIES.filter(
-            (capability) => capability.serviceSlug === service.slug
+          GOOGLE_PERMISSION_PACKS.filter(
+            (pack) => pack.serviceSlug === service.slug
           ),
         ])
       ),
@@ -184,13 +228,17 @@ export default function ConnectionsPage() {
     }
   }, [loadConnections, serviceByConnectionId]);
 
-  const startGoogleConnect = async (service: AvailableService) => {
+  const startGoogleConnect = async (
+    service: AvailableService,
+    permissionPack?: string
+  ) => {
     if (!user) {
       toast.error(`Please sign in before connecting ${service.name}.`);
       return;
     }
 
-    setConnectingService(service.slug);
+    const busyKey = permissionPack ? `${service.slug}:${permissionPack}` : service.slug;
+    setConnectingService(busyKey);
     try {
       const token = await user.getIdToken();
       const response = await fetch(service.authorizePath, {
@@ -199,7 +247,10 @@ export default function ConnectionsPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ return_to: "/dashboard/connections" }),
+        body: JSON.stringify({
+          return_to: "/dashboard/connections",
+          permission_pack: permissionPack,
+        }),
       });
       const payload = (await response.json().catch(() => null)) as {
         authorizationUrl?: string;
@@ -283,9 +334,8 @@ export default function ConnectionsPage() {
               const connection = connectedById.get(service.connectionId);
               const isConnected = connection?.status === "connected";
               const isExpanded = expandedServices.has(service.slug);
-              const isBusy = connectingService === service.slug;
-              const serviceCapabilities =
-                capabilitiesByServiceSlug.get(service.slug) ?? [];
+              const isBusy = connectingService?.startsWith(service.slug);
+              const servicePacks = packsByServiceSlug.get(service.slug) ?? [];
 
               return (
                 <Card key={service.slug}>
@@ -305,6 +355,9 @@ export default function ConnectionsPage() {
                         </div>
                         <p className="mt-0.5 truncate text-[12px] text-muted-foreground">
                           {connection?.accountEmail ?? service.description}
+                          {connection?.directApiEnabled === false
+                            ? " - reconnect for direct actions"
+                            : ""}
                         </p>
                       </div>
                       <Button
@@ -326,15 +379,21 @@ export default function ConnectionsPage() {
 
                     {isExpanded && (
                       <div className="mt-4 space-y-2 border-t border-border pt-3">
-                        {serviceCapabilities.map((capability) => {
+                        {servicePacks.map((pack) => {
                           const granted =
                             isConnected &&
                             Boolean(
-                              connection?.capabilities?.includes(capability.id)
+                              connection?.permissionPacks?.includes(pack.id) ||
+                                pack.capabilities.every((capability) =>
+                                  connection?.capabilities?.includes(capability)
+                                )
                             );
+                          const packBusy =
+                            connectingService === `${service.slug}:${pack.id}` ||
+                            connectingService === service.slug;
                           return (
                             <div
-                              key={capability.id}
+                              key={pack.id}
                               className="flex min-h-[58px] items-center gap-3 rounded-lg border border-border bg-background px-3 py-2"
                             >
                               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
@@ -346,10 +405,10 @@ export default function ConnectionsPage() {
                               </div>
                               <div className="min-w-0 flex-1">
                                 <p className="text-[13px] font-medium text-foreground">
-                                  {capability.label}
+                                  {pack.label}
                                 </p>
                                 <p className="truncate text-[12px] text-muted-foreground">
-                                  {capability.description}
+                                  {pack.description}
                                 </p>
                               </div>
                               {granted ? (
@@ -359,10 +418,12 @@ export default function ConnectionsPage() {
                                   size="sm"
                                   variant="outline"
                                   className="h-7 shrink-0 px-2 text-[12px]"
-                                  onClick={() => void startGoogleConnect(service)}
-                                  disabled={isBusy}
+                                  onClick={() =>
+                                    void startGoogleConnect(service, pack.id)
+                                  }
+                                  disabled={packBusy}
                                 >
-                                  {isBusy ? (
+                                  {packBusy ? (
                                     <>
                                       <Spinner
                                         size="sm"

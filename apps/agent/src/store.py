@@ -1,5 +1,6 @@
 """Firestore tabanlı store. Tüm sync Firestore çağrıları asyncio.to_thread ile sarılır."""
 
+# TODO : BURASI REFACTOR EDİLECEK ÇOK UZUN DOSYA.
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -59,6 +60,7 @@ class WorkflowMetadata:
     input_schema: list[dict]
     created_at: str
     updated_at: str
+    resources: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -71,6 +73,8 @@ class OAuthState:
     return_to: str
     expires_at: str
     used: bool
+    requested_capabilities: list[str] = field(default_factory=list)
+    permission_pack: str | None = None
 
 
 @dataclass
@@ -88,6 +92,9 @@ class AppConnection:
     created_at: str
     updated_at: str
     capabilities: list[str] = field(default_factory=list)
+    permission_packs: list[str] = field(default_factory=list)
+    direct_api_enabled: bool = False
+    encrypted_refresh_token: str = ""
 
 
 @dataclass
@@ -311,11 +318,16 @@ async def save_workflow_metadata(
     workflow_id: str,
     *,
     input_schema: list[dict],
+    resources: dict | None = None,
 ) -> WorkflowMetadata:
     existing = await get_workflow_metadata(user_id, workflow_id)
     now = _now_iso()
+    stored_resources = (
+        resources if resources is not None else (existing.resources if existing else {})
+    )
     data = {
         "input_schema": input_schema,
+        "resources": stored_resources,
         "created_at": existing.created_at if existing else now,
         "updated_at": now,
     }
@@ -333,6 +345,7 @@ async def get_workflow_metadata(user_id: str, workflow_id: str) -> WorkflowMetad
         input_schema=list(data.get("input_schema") or []),
         created_at=data.get("created_at", ""),
         updated_at=data.get("updated_at", ""),
+        resources=dict(data.get("resources") or {}),
     )
 
 
@@ -362,6 +375,8 @@ async def save_oauth_state(
     code_verifier: str,
     return_to: str,
     expires_at: str,
+    requested_capabilities: list[str] | None = None,
+    permission_pack: str | None = None,
 ) -> OAuthState:
     data = {
         "user_id": user_id,
@@ -371,6 +386,8 @@ async def save_oauth_state(
         "return_to": return_to,
         "expires_at": expires_at,
         "used": False,
+        "requested_capabilities": requested_capabilities or [],
+        "permission_pack": permission_pack,
     }
     await _run(lambda: _oauth_state_ref(state_id).set(data))
     return OAuthState(id=state_id, **data)
@@ -390,6 +407,8 @@ async def get_oauth_state(state_id: str) -> OAuthState | None:
         return_to=data.get("return_to", "/dashboard/connections"),
         expires_at=data.get("expires_at", ""),
         used=bool(data.get("used", False)),
+        requested_capabilities=list(data.get("requested_capabilities") or []),
+        permission_pack=data.get("permission_pack"),
     )
 
 
@@ -416,6 +435,9 @@ async def get_connection(user_id: str, connection_id: str) -> AppConnection | No
         created_at=data.get("created_at", ""),
         updated_at=data.get("updated_at", ""),
         capabilities=list(data.get("capabilities") or []),
+        permission_packs=list(data.get("permission_packs") or []),
+        direct_api_enabled=bool(data.get("direct_api_enabled", False)),
+        encrypted_refresh_token=str(data.get("encrypted_refresh_token") or ""),
     )
 
 
@@ -439,6 +461,9 @@ async def list_connections(user_id: str) -> list[AppConnection]:
                 created_at=data.get("created_at", ""),
                 updated_at=data.get("updated_at", ""),
                 capabilities=list(data.get("capabilities") or []),
+                permission_packs=list(data.get("permission_packs") or []),
+                direct_api_enabled=bool(data.get("direct_api_enabled", False)),
+                encrypted_refresh_token=str(data.get("encrypted_refresh_token") or ""),
             )
         )
     return connections
@@ -457,6 +482,9 @@ async def save_connection(
     n8n_credential_name: str,
     scopes: list[str],
     capabilities: list[str] | None = None,
+    permission_packs: list[str] | None = None,
+    direct_api_enabled: bool = False,
+    encrypted_refresh_token: str = "",
 ) -> AppConnection:
     existing = await get_connection(user_id, connection_id)
     now = _now_iso()
@@ -471,6 +499,9 @@ async def save_connection(
         "status": "connected",
         "scopes": scopes,
         "capabilities": capabilities or [],
+        "permission_packs": permission_packs or [],
+        "direct_api_enabled": direct_api_enabled,
+        "encrypted_refresh_token": encrypted_refresh_token,
         "created_at": existing.created_at if existing else now,
         "updated_at": now,
     }
@@ -484,6 +515,30 @@ async def delete_connection(user_id: str, connection_id: str) -> AppConnection |
         return None
     await _run(lambda: _connection_ref(user_id, connection_id).delete())
     return existing
+
+
+async def save_platform_action_audit(
+    user_id: str,
+    *,
+    conversation_id: str | None,
+    service: str,
+    action: str,
+    capability: str,
+    status: str,
+    target_resource: str | None = None,
+    error: str | None = None,
+) -> None:
+    data = {
+        "conversation_id": conversation_id,
+        "service": service,
+        "action": action,
+        "capability": capability,
+        "status": status,
+        "target_resource": target_resource,
+        "error": error,
+        "created_at": _now_iso(),
+    }
+    await _run(lambda: _user_ref(user_id).collection("platform_action_audit").add(data))
 
 
 # ---------------------------------------------------------------------------

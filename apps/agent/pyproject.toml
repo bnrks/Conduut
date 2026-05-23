@@ -16,6 +16,7 @@ dependencies = [
     "structlog>=24.0.0",
     "python-dotenv>=1.0.0",
     "firebase-admin>=6.0.0",
+    "cryptography>=45.0.0",
 ]
 # n8n-registry local package — installed separately in Dockerfile / dev setup
 # pip install -e packages/n8n-registry

@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""
     oauth_state_ttl_seconds: int = 600
+    connection_encryption_key: str = ""
 
     model_config = {
         "env_prefix": "CONDUUT_",

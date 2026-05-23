@@ -1,5 +1,6 @@
 """WorkflowSpec compiler for deterministic n8n workflow generation."""
 
+# todo: bu dosya çok büyük refactor edilecek.
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
@@ -29,6 +30,7 @@ from src.agent.tools.runtime_inputs import (
     _runtime_expression,
 )
 from src.agent.tools.validation import _validated_runtime_workflow, _validated_workflow
+from src.platforms.actions import PlatformActionError, provision_spreadsheet_for_workflow
 from src.registry import registry
 
 _GMAIL_NODE_TYPE = "n8n-nodes-base.gmail"
@@ -821,6 +823,7 @@ async def _create_compiled_workflow_payload(
     validated_nodes: list[WorkflowNode],
     validated_connections: dict[str, Any],
     runtime_schema: list[WorkflowInputField],
+    resources: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     node_dicts = dump_workflow_nodes(validated_nodes)
     try:
@@ -832,11 +835,10 @@ async def _create_compiled_workflow_payload(
     except Exception as exc:
         return {"error": _safe_error(exc)}
 
-    await store.save_workflow_metadata(
-        deps.user_id,
-        workflow.id,
-        input_schema=_input_schema_payload(runtime_schema),
-    )
+    metadata_kwargs: dict[str, Any] = {"input_schema": _input_schema_payload(runtime_schema)}
+    if resources:
+        metadata_kwargs["resources"] = resources
+    await store.save_workflow_metadata(deps.user_id, workflow.id, **metadata_kwargs)
 
     await deps.emit_attachment(
         WorkflowPreviewAttachment(
@@ -870,6 +872,42 @@ async def _create_compiled_workflow_payload(
     return {"id": workflow.id, "name": workflow.name, "active": workflow.active}
 
 
+async def _provision_plan_resources(
+    deps: AgentDeps,
+    plan: WorkflowPlan,
+) -> tuple[WorkflowPlan, dict[str, Any]]:
+    updated = plan.model_copy(deep=True)
+    resources: dict[str, Any] = {}
+    for action in updated.actions:
+        if action.action != "sheets.row.append":
+            continue
+        params = action.params
+        has_spreadsheet = _input_value(params, "document_id", "spreadsheet_id") is not None
+        if has_spreadsheet:
+            continue
+        title = str(
+            params.get("spreadsheet_title")
+            or params.get("spreadsheet_name")
+            or params.get("document_title")
+            or ""
+        ).strip()
+        if not title:
+            continue
+        sheet_name = str(
+            params.get("sheet_name") or params.get("sheet") or params.get("sheet_title") or "Sheet1"
+        ).strip()
+        provisioned = await provision_spreadsheet_for_workflow(
+            deps,
+            title=title,
+            sheet_name=sheet_name,
+            action_id=action.id,
+        )
+        params["spreadsheet_id"] = provisioned["spreadsheet_id"]
+        params.setdefault("sheet_name", sheet_name)
+        resources[f"{action.id}.spreadsheet"] = provisioned
+    return updated, resources
+
+
 async def create_workflow_from_plan_payload(
     deps: AgentDeps,
     name: str,
@@ -878,12 +916,13 @@ async def create_workflow_from_plan_payload(
     """Compile WorkflowPlan and create the resulting n8n workflow."""
 
     try:
+        plan, provisioned_resources = await _provision_plan_resources(deps, plan)
         compiled = compile_workflow_plan(name, plan)
         validated_nodes, validated_connections = _validated_workflow(
             compiled.nodes,
             compiled.connections,
         )
-    except (WorkflowSpecCompileError, ModelRetry) as exc:
+    except (WorkflowSpecCompileError, ModelRetry, PlatformActionError) as exc:
         return {
             "error": str(exc),
             "fallback": (
@@ -898,6 +937,7 @@ async def create_workflow_from_plan_payload(
         validated_nodes,
         validated_connections,
         compiled.input_schema,
+        provisioned_resources,
     )
 
 

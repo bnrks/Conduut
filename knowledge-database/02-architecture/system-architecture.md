@@ -10,7 +10,7 @@ Conduut mimarisi iki katmanda dusunulmeli: mevcut MVP ve hedef platform.
 Browser
   -> Next.js web app / API routes
   -> FastAPI agent service
-  -> shared n8n instance
+  -> shared n8n instance and direct platform APIs
   -> Firestore for app state
 ```
 
@@ -59,7 +59,8 @@ olmak iyi, fakat mevcut MVP'nin gercek sinirlarini bozmamak daha onemlidir.
 
 ## Ana Veri Akislari
 
-- Chat: [[web-app]] -> [[agent-service]] -> LiteLLM -> n8n tools -> shared n8n.
+- Chat: [[web-app]] -> [[agent-service]] -> Pydantic AI tools -> direct
+  platform APIs veya shared n8n.
 - Conversation persistence: [[agent-service]] -> Firestore.
 - Workflow list/toggle/delete: [[web-app]] API route -> agent workflow route ->
   `n8n_client.py` -> n8n REST API.
@@ -68,8 +69,15 @@ olmak iyi, fakat mevcut MVP'nin gercek sinirlarini bozmamak daha onemlidir.
   attach.
 - Managed Google OAuth connection: chat/dashboard OAuth prompt -> [[web-app]]
   Google authorize BFF -> [[agent-service]] connection route -> Google OAuth ->
-  n8n credential API -> Firestore connection metadata. MVP'de Gmail ve Google
-  Sheets ayri connection id'leriyle tutulur.
+  n8n credential API -> encrypted Firestore connection metadata. MVP'de Gmail
+  ve Google Sheets ayri connection id'leriyle tutulur. `permission_pack` veya
+  `requested_capabilities` registry'den Google scope listesine cozulur.
+- Direct platform action: [[agent-service]] `run_platform_action` ->
+  encrypted Google refresh token -> Gmail/Sheets API -> platform action audit
+  log. n8n bu akista execution backend degildir.
+- Workflow platform provisioning: [[agent-service]] `create_workflow_from_plan`
+  -> direct Sheets API ile eksik spreadsheet'i bir kez olusturur -> workflow
+  metadata `resources` -> shared n8n workflow create/update.
 - Workflow run: dashboard run form veya agent tool -> Conduut run endpoint ->
   runtime input validation -> webhook-triggered workflow call -> n8n execution
   API -> agent/internal verification -> normal assistant text response veya
@@ -80,5 +88,7 @@ olmak iyi, fakat mevcut MVP'nin gercek sinirlarini bozmamak daha onemlidir.
 
 - Shared n8n MVP karari icin bkz. [[adr-0001-shared-n8n-mvp]].
 - Firestore MVP karari icin bkz. [[adr-0002-firestore-mvp]].
+- Platform capability/direct action karari icin bkz.
+  [[adr-0006-platform-capability-layer]].
 - API-key credential injection'in ilk fazi chat uzerinden uygulanmistir. OAuth
   proxy ve per-user isolation dokumanlarda gecse de henuz uygulanmamistir.

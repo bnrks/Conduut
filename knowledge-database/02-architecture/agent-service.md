@@ -78,6 +78,9 @@ Ilgili env ayarlari:
 - `CONDUUT_LOG_MAX_BYTES`
 - `CONDUUT_LOG_BACKUP_COUNT`
 - `CONDUUT_LOG_PAYLOAD_PREVIEW_CHARS`
+- `CONDUUT_CONNECTION_ENCRYPTION_KEY` direct Google API icin refresh token'lari
+  encrypted saklamayi acan secret'tir; Docker Compose bu env'i agent
+  container'ina passthrough eder.
 
 Loglar hata triage icin tasarlanmistir. FastAPI middleware her istege
 `X-Request-ID` uretir veya gelen degeri korur; web BFF route'lari bu header'i
@@ -150,6 +153,9 @@ moduller:
 - `spec_compiler.py`: yeni `WorkflowPlan` action graph IR'larini ve eski
   `WorkflowSpec` pilot IR'larini deterministic n8n node/connection/input schema
   payload'una ceviren compiler.
+- `src/platforms/*`: platform capability registry, permission pack mapping,
+  encrypted Google token kullanimi, direct Gmail/Sheets client'lari ve platform
+  action audit kaydi.
 
 Kayitli tool'lar:
 
@@ -159,7 +165,51 @@ Kayitli tool'lar:
   `delete_workflow`.
 - Runtime: `activate_workflow`, `deactivate_workflow`, `execute_workflow`,
   `list_executions`, `analyze_workflow_readiness`, `inspect_execution`.
+- Platform direct action: `run_platform_action`.
 - Clarification: `request_user_input`.
+
+## Platform Capability Layer
+
+Conduut agent artik yalnizca n8n workflow builder degil, bagli platformlari
+direct API ile yoneten ve gerekirse ayni niyeti n8n workflow'una compile eden
+bir platform agent'i olarak davranir. Bu karar [[adr-0006-platform-capability-layer]]
+icinde kayitlidir.
+
+`src/platforms/capabilities.py` canonical capability ve permission pack
+registry'sidir. Google V1 icin Gmail capability'leri
+`gmail.message.send/read/modify/trash/delete_permanently`, Sheets
+capability'leri `sheets.spreadsheet.create`, `sheets.sheet.manage`,
+`sheets.range.read/update/clear` ve `sheets.row.append` seklindedir. Eski
+`google.gmail.send/read` ve `google.sheets.read/write` etiketleri geriye donuk
+alias olarak cozulur.
+
+Permission pack'ler kullaniciya daha anlasilir izin setleri sunar:
+`gmail.basic`, `gmail.send`, `gmail.read`, `gmail.organize`,
+`gmail.full_control`, `sheets.app_files` ve `sheets.full_access`. OAuth
+authorize body/query'si `permission_pack` veya `requested_capabilities`
+alabilir; scope listesi registry'den turetilir.
+
+`src/platforms/google_clients.py` direct Gmail/Sheets HTTP client'larini tasir.
+Refresh token `CONDUUT_CONNECTION_ENCRYPTION_KEY` varsa
+`src/platforms/crypto.py` ile sifrelenerek Firestore connection metadata'sina
+yazilir. Env yoksa `direct_api_enabled=false` kalir ve n8n credential bazli
+workflow davranisi devam eder. Raw refresh/access token loglanmamalidir.
+
+`run_platform_action` tool'u anlik Gmail/Sheets islemlerini direct API ile
+calistirir. Eksik capability varsa side effect yapmadan `oauth_prompt`
+attachment'i dondurur. Desteklenen V1 islemleri Gmail send/search/get/mark
+read-unread/archive/trash/label ve Sheets spreadsheet create, sheet
+create/delete, range read/update/clear, row append aksiyonlaridir. Her direct
+aksiyon `users/{uid}/platform_action_audit/{id}` altina secret veya payload
+yazmadan audit metadata'si kaydeder.
+Direct API icin `CONDUUT_CONNECTION_ENCRYPTION_KEY` key'i connection OAuth
+callback aninda mevcut olmalidir. Key sonradan eklenirse eski
+`google_gmail`/`google_sheets` connection dokumanlari n8n credential olarak
+calismaya devam eder, fakat `encrypted_refresh_token` ve `direct_api_enabled`
+alanlari olmadigi icin Sheets spreadsheet provisioning gibi direct action'lar
+icin hesap yeniden baglanmalidir. `reconnect_required` direct action hatalari
+artik generic error olarak yutulmaz; ilgili Google service icin `oauth_prompt`
+attachment'i emit edilir.
 
 `create_workflow` ve `update_workflow` opsiyonel `input_schema` alabilir.
 Schema MVP'de Firestore `users/{uid}/workflow_metadata/{workflowId}` altinda
@@ -181,8 +231,12 @@ Set node'u + Google Sheets Append node'u olarak compile edilir. Sheets Append
 node'u Set cikisini `autoMapInputData` ile yazar. Bu ekstra Set node'u n8n
 Google Sheets append'in bos sheet'te kendi kendine `autoMapInputData`
 fallback'ine gecip onceki Gmail output alanlarini (`id`, `threadId`,
-`labelIds`) yazmasini engeller. Sheet belirtilmemisse otomatik spreadsheet
-provisioning yapilmaz, agent kullanicidan gercek Sheet bilgisini ister.
+`labelIds`) yazmasini engeller. Sheet belirtilmemisse ama plan action'i
+`spreadsheet_title`, `spreadsheet_name` veya `document_title` tasiyorsa agent
+direct Sheets API ile spreadsheet'i bir kez provision eder, olusan
+`spreadsheet_id` degerini plan parametrelerine enjekte eder ve workflow
+metadata `resources` alaninda saklar. Title bilgisi de yoksa agent kullanicidan
+gercek Sheet bilgisini ister.
 
 Action factory'ler su an `spec_compiler.py` icindedir. Mevcut Gmail/Sheets
 kapsami icin bu kabul edilebilir; ancak Slack, Calendar veya benzeri ilk yeni
@@ -232,36 +286,41 @@ Workflow readiness davranisi:
   `credential_request` attachment emit eder.
 - Activate/run islemleri eksik credential varsa n8n'e side effect yapmadan
   durur ve kullanicidan credential ister.
-- Gmail read/send operasyonlari icin kullanicinin `google_gmail` connection'i
-  ve gereken capability'si varsa agent n8n workflow node'una `gmailOAuth2`
-  credential'i otomatik attach eder. Gmail read operasyonlari
-  `google.gmail.read`, send/reply/create operasyonlari `google.gmail.send`
-  ister. n8n Gmail v2 message send icin model bazen `operation=create`
-  uretebilir; agent bunu n8n'e yazmadan once canonical `operation=send`
-  degerine normalize eder. Gmail send parameter alias'lari da canonical
-  `sendTo`, `subject`, `message`, `emailType` alanlarina cevrilir; placeholder
-  alici email'leri validation hatasi sayilir.
+- Gmail read/send/modify operasyonlari icin kullanicinin `google_gmail`
+  connection'i ve gereken canonical capability'si varsa agent n8n workflow
+  node'una `gmailOAuth2` credential'i otomatik attach eder. Gmail read
+  operasyonlari `gmail.message.read`, send/reply/create operasyonlari
+  `gmail.message.send`, label/mark/archive/trash operasyonlari
+  `gmail.message.modify` veya `gmail.message.trash` ister. Eski
+  `google.gmail.read/send` etiketleri alias olarak kabul edilir. n8n Gmail v2
+  message send icin model bazen `operation=create` uretebilir; agent bunu n8n'e
+  yazmadan once canonical `operation=send` degerine normalize eder. Gmail send
+  parameter alias'lari da canonical `sendTo`, `subject`, `message`,
+  `emailType` alanlarina cevrilir; placeholder alici email'leri validation
+  hatasi sayilir.
   Reconnect sonrasi eski n8n credential id'leri workflow node'larinda stale
   kalabilecegi icin readiness analizi managed Gmail/Sheets connection varsa
   node'da credential alani dolu olsa bile guncel connection credential id'sini
   workflow'a yeniden attach eder.
-- Managed Google connection metadata'si `scopes` yaninda capability listesi de
-  tasir: `google.gmail.read`, `google.gmail.send`, `google.sheets.read`,
-  `google.sheets.write`. Eski dokumanlarda capability yoksa agent scope
-  listesinden capability turetir.
+- Managed Google connection metadata'si `scopes` yaninda `capabilities`,
+  `permission_packs`, `direct_api_enabled`, `encrypted_refresh_token` ve
+  `n8n_credential_id` alanlarini tasir. Eski dokumanlarda capability yoksa
+  agent scope listesinden canonical capability turetir.
 - Google Sheets node'lari icin kullanicinin `google_sheets` connection'i ve
   gereken Sheets capability'si varsa agent `googleSheetsOAuth2Api`
-  credential'ini otomatik attach eder. Read operasyonlari `google.sheets.read`,
-  write operasyonlari `google.sheets.write` ister. Sheets connection veya
-  capability yoksa chat'e Google Sheets `oauth_prompt` attachment'i gelir.
+  credential'ini otomatik attach eder. Read operasyonlari `sheets.range.read`,
+  write/append operasyonlari `sheets.range.update`, `sheets.row.append` veya
+  `sheets.spreadsheet.create` ister. Eski `google.sheets.read/write`
+  etiketleri alias olarak kabul edilir. Sheets connection veya capability yoksa
+  chat'e Google Sheets `oauth_prompt` attachment'i gelir.
 - Workflow create/update/activate/run/readiness kontrollerinde eksik credential
   veya managed OAuth connection bulunursa agent runtime `awaiting_user_input`
   durumuna gecer. Bu, workflow olustuktan sonra ayni turda activate/run gibi
   ek side effect tool'larinin denenmesini engeller; agent kullaniciya once
   gosterilen connection/credential aksiyonunu tamamlamasini soylemelidir.
 - Gmail connection yoksa chat'e Gmail `oauth_prompt` attachment emit edilir.
-  Gmail delete/mark-read/mark-unread gibi modify operasyonlari V1 read/send
-  credential ile otomatik attach edilmez.
+  Gmail permanent delete default akista kullanilmaz; trash ve organize
+  aksiyonlari permission pack/risk metadata'siyle ayrilir.
 - API key/token isteyen diger node'larda eski `credential_request` form akisi
   korunur.
 - `POST /api/workflows/{workflow_id}/run` dashboard ve agent icin ortak
@@ -292,12 +351,17 @@ Connection route'lari:
 - `POST /api/connections/google/gmail/authorize` ve
   `/api/connections/google/sheets/authorize`: Firebase auth ister, OAuth state
   ve PKCE verifier uretir, Firestore `oauth_states/{state}` yazar ve servis
-  bazli Google authorization URL dondurur.
+  bazli Google authorization URL dondurur. Body/query `permission_pack` veya
+  `requested_capabilities` tasiyabilir; istenen scope listesi platform
+  registry'den cozulur.
 - `POST /api/connections/google/callback`: auth header beklemez; state icindeki
   Google service degerine gore token exchange ve userinfo okur. Gmail icin
   n8n'de `gmailOAuth2`, Sheets icin `googleSheetsOAuth2Api` credential
   olusturur; Google token response `scope` alanindan granted scope ve
-  capability listesini cikarip Firestore connection metadata yazar. Eski
+  canonical capability/permission pack listesini cikarip Firestore connection
+  metadata yazar. `CONDUUT_CONNECTION_ENCRYPTION_KEY` varsa refresh token'i
+  encrypted saklar ve direct API'yi etkinlestirir; yoksa direct API kapali
+  kalir ama n8n credential id'si korunur. Eski
   `/connections/google/gmail/callback` endpoint'i Gmail icin compatibility
   alias'i olarak kalir.
 - n8n public API schema'si Gmail/Sheets Google OAuth credential'lari icin token
@@ -358,6 +422,7 @@ cevirir. Aksi halde n8n workflow'u API'den kabul etse bile editor
 - `users/{uid}/connections/google_gmail`
 - `users/{uid}/connections/google_sheets`
 - `users/{uid}/workflow_metadata/{workflowId}`
+- `users/{uid}/platform_action_audit/{auditId}`
 
 Firestore sync SDK cagrilari `asyncio.to_thread` ile sarilir.
 
@@ -375,7 +440,8 @@ tarafindan ignore edilir.
 credential create/delete/attach ve execution islemlerinde n8n hata body'lerini
 koruyan typed hata sinifi kullanir. Bu MVP davranisi
 [[adr-0001-shared-n8n-mvp]] icinde kayitlidir. Google Gmail connection karari
-[[adr-0003-google-oauth-broker-mvp]] icinde kayitlidir.
+[[adr-0003-google-oauth-broker-mvp]] icinde, platform capability katmani ise
+[[adr-0006-platform-capability-layer]] icinde kayitlidir.
 
 Ilgili notlar: [[n8n-registry]], [[chat-workflow-generation]],
 [[known-issues]].

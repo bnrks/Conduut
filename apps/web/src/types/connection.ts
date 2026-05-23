@@ -12,6 +12,9 @@ export interface Connection {
   updatedAt?: string;
   scopes?: string[];
   capabilities?: string[];
+  permissionPacks?: string[];
+  directApiEnabled?: boolean;
+  missingRecommendedCapabilities?: string[];
 }
 
 export interface AvailableService {

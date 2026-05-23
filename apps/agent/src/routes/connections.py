@@ -10,6 +10,8 @@ from pydantic import BaseModel
 from src import n8n_client, store
 from src.auth import get_user_id
 from src.oauth import google
+from src.platforms import capabilities as platform_capabilities
+from src.platforms.crypto import can_encrypt_connection_secrets, encrypt_connection_secret
 
 router = APIRouter()
 log = structlog.get_logger()
@@ -43,6 +45,8 @@ GOOGLE_CONNECTIONS: dict[str, dict[str, Any]] = {
 
 class AuthorizeIn(BaseModel):
     return_to: str | None = None
+    requested_capabilities: list[str] | None = None
+    permission_pack: str | None = None
 
 
 class GoogleCallbackIn(BaseModel):
@@ -73,6 +77,17 @@ def _connection_payload(connection: store.AppConnection) -> dict[str, Any]:
         "scopes": connection.scopes,
         "capabilities": connection.capabilities
         or google.capabilities_for_scopes(connection.scopes),
+        "permissionPacks": connection.permission_packs
+        or platform_capabilities.permission_packs_for_scopes(connection.scopes),
+        "directApiEnabled": connection.direct_api_enabled,
+        "missingRecommendedCapabilities": [
+            capability
+            for capability in google.service_capabilities(connection.service)
+            if not platform_capabilities.connection_has_capability(
+                connection.capabilities or google.capabilities_for_scopes(connection.scopes),
+                capability,
+            )
+        ],
     }
 
 
@@ -115,9 +130,23 @@ async def _authorize_google_service(request: Request, body: AuthorizeIn, service
         provider="google",
         service=config["service"],
         return_to=body.return_to,
+        permission_pack=body.permission_pack,
+        requested_capabilities=body.requested_capabilities,
     )
     try:
         google.ensure_google_oauth_configured()
+        scopes, requested_capabilities, permission_pack = (
+            platform_capabilities.resolve_permission_request(
+                config["service"],
+                permission_pack=body.permission_pack,
+                requested_capabilities=body.requested_capabilities,
+            )
+        )
+        if not scopes:
+            raise HTTPException(
+                status_code=400,
+                detail={"message": "Unsupported Google permission request."},
+            )
         state = google.generate_state()
         code_verifier = google.generate_code_verifier()
         await store.save_oauth_state(
@@ -128,6 +157,8 @@ async def _authorize_google_service(request: Request, body: AuthorizeIn, service
             code_verifier=code_verifier,
             return_to=google.safe_return_to(body.return_to),
             expires_at=google.expires_at(),
+            requested_capabilities=requested_capabilities,
+            permission_pack=permission_pack,
         )
         log.info(
             "oauth_authorize_created",
@@ -140,6 +171,7 @@ async def _authorize_google_service(request: Request, body: AuthorizeIn, service
                 state=state,
                 code_verifier=code_verifier,
                 service=config["service"],
+                scopes=scopes,
             )
         }
     except google.GoogleOAuthConfigError as exc:
@@ -288,8 +320,20 @@ async def _google_callback(body: GoogleCallbackIn, *, expected_service: str | No
         default_scopes=config["scopes"],
     )
     capabilities = google.capabilities_for_scopes(granted_scopes)
-    credential_data = config["credential_data"](token_response)
     existing = await store.get_connection(state.user_id, connection_id)
+    permission_packs = platform_capabilities.permission_packs_for_scopes(granted_scopes)
+    if state.permission_pack and state.permission_pack not in permission_packs:
+        permission_packs.append(state.permission_pack)
+    if existing:
+        for pack in existing.permission_packs:
+            if pack not in permission_packs:
+                permission_packs.append(pack)
+    credential_data = config["credential_data"](token_response)
+    encrypted_refresh_token = ""
+    direct_api_enabled = False
+    if can_encrypt_connection_secrets():
+        encrypted_refresh_token = encrypt_connection_secret(refresh_token)
+        direct_api_enabled = True
 
     try:
         credential = await n8n_client.create_credential(
@@ -309,6 +353,9 @@ async def _google_callback(body: GoogleCallbackIn, *, expected_service: str | No
             n8n_credential_name=credential.name,
             scopes=granted_scopes,
             capabilities=capabilities,
+            permission_packs=permission_packs,
+            direct_api_enabled=direct_api_enabled,
+            encrypted_refresh_token=encrypted_refresh_token,
         )
         log.info(
             "oauth_connection_saved",

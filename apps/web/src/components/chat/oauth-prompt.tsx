@@ -16,6 +16,9 @@ export interface OAuthPromptData {
   authorizePath?: string;
   returnTo?: string;
   iconUrl?: string;
+  requiredCapabilities?: string[];
+  permissionPack?: string;
+  riskLevel?: string;
 }
 
 export interface OAuthPromptProps {
@@ -74,6 +77,8 @@ export function OAuthPrompt({
           },
           body: JSON.stringify({
             return_to: data.returnTo ?? window.location.pathname,
+            requested_capabilities: data.requiredCapabilities,
+            permission_pack: data.permissionPack,
           }),
         }
       );
@@ -116,7 +121,9 @@ export function OAuthPrompt({
             ? "Connected successfully"
             : status === "error"
               ? "Connection could not be started"
-              : data.description}
+              : data.riskLevel
+                ? `${data.description} (${data.riskLevel} access)`
+                : data.description}
         </p>
       </div>
       <div className="shrink-0">

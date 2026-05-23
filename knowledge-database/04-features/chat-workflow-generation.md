@@ -94,9 +94,12 @@ yazacak sekilde kurar. Bunun nedeni n8n Google Sheets append node'unun bos
 sheet'te `defineBelow` mapping verilse bile `autoMapInputData` moduna dusmesi;
 Set node'u current item'i hedef kolonlara cevirdigi icin bos veya daha once
 yanlis header yazilmis sheet'lerde de `to`, `subject`, `message` gibi beklenen
-kolonlar yazilir. Mevcut Sheet ID/sheet name yoksa agent placeholder uydurmaz;
-`request_user_input` ile ilk eksik gercek is bilgisini sorar. Otomatik
-spreadsheet provisioning bu fazda yoktur.
+kolonlar yazilir. Mevcut Sheet ID yoksa ama action parametrelerinde
+`spreadsheet_title`, `spreadsheet_name` veya `document_title` varsa agent
+workflow compile oncesi direct Sheets API ile spreadsheet'i bir kez olusturur,
+olusan `spreadsheet_id` degerini workflow'a yazar ve metadata `resources`
+alaninda saklar. Title/isim bilgisi de yoksa placeholder uydurmaz;
+`request_user_input` ile ilk eksik gercek is bilgisini sorar.
 
 Eski `WorkflowSpec` compiler yolu Gmail on-demand ve Google Sheets read rows ->
 Filter -> Gmail send akislari icin geriye donuk uyumluluk olarak korunur, fakat
@@ -109,6 +112,31 @@ tanimlamak degil, `slack.message.send` gibi reusable semantic action'lar
 tanimlamak ve bunlari mevcut `WorkflowPlan` icinde diger action'larla compose
 etmektir. OAuth/connection eklemek compiler destegi anlamina gelmez; ilgili
 semantic action ve n8n node/subgraph mapping'i de eklenmelidir.
+
+## Direct Platform Actions
+
+Agent artik anlik platform yonetim isteklerinde n8n workflow yazmak yerine
+`run_platform_action` tool'unu kullanir. Bu akis
+[[adr-0006-platform-capability-layer]] ile tanimlanan capability registry'ye
+baglidir.
+
+Direct action ornekleri Gmail icin mail gonderme, arama/listeleme, mesaj
+detayi alma, read/unread isaretleme, archive/trash ve label islemleridir.
+Sheets icin spreadsheet olusturma, sheet/tab olusturma/silme, range
+read/update/clear ve row append desteklenir.
+
+Kullanicinin eksik capability'si varsa agent direct action veya workflow side
+effect yapmadan `oauth_prompt` attachment'i dondurur. Attachment artik
+`requiredCapabilities`, `permissionPack` ve `riskLevel` tasiyabilir; web BFF bu
+pack/capability istegini Google authorize route'una iletir. Direct action icin
+refresh token yalnizca `CONDUUT_CONNECTION_ENCRYPTION_KEY` ayarlandiginda
+encrypted Firestore metadata'sindan okunabilir; yoksa agent n8n credential
+tabanli workflow path'ini kullanir veya yeniden baglanti ister.
+Bu key OAuth callback sirasinda yoksa sonradan `.env` dosyasina eklemek mevcut
+connection'i direct API uyumlu hale getirmez; kullanici Gmail/Sheets hesabini
+yeniden baglamalidir. Agent direct action `reconnect_required` hatasinda artik
+generic clarification yerine ilgili Google service icin `oauth_prompt`
+attachment'i gonderir.
 
 ## Credential ve Run Capability
 
@@ -125,11 +153,13 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
 - Credential isteyen node'larda eksik credential varsa chat'e
   `credential_request` attachment gelir.
 - Gmail message/thread/label `get` ve `getAll` operasyonlari icin
-  `google.gmail.read`, send/reply/create operasyonlari icin
-  `google.gmail.send` capability'si gerekir. Kullanici `google_gmail`
-  connection'i bu capability'yi tasiyorsa readiness analizi n8n workflow
-  node'una `gmailOAuth2` credential'i otomatik attach eder ve missing credential
-  dondurmez. n8n Gmail v2 message send node'u modelden
+  `gmail.message.read`, send/reply/create operasyonlari icin
+  `gmail.message.send`, organize/mark/trash operasyonlari icin
+  `gmail.message.modify` veya `gmail.message.trash` capability'si gerekir.
+  Kullanici `google_gmail` connection'i bu capability'yi tasiyorsa readiness
+  analizi n8n workflow node'una `gmailOAuth2` credential'i otomatik attach eder
+  ve missing credential dondurmez. Eski `google.gmail.read/send` etiketleri
+  alias olarak cozulur. n8n Gmail v2 message send node'u modelden
   `operation=create` olarak gelebilir; agent bunu n8n'e yazmadan once
   `operation=send` degerine normalize eder.
 - Gmail send node'unda model `toEmail`, `bodyContent` gibi eski/uydurma alias
@@ -141,15 +171,17 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
   `subject` ve `message` alanlari webhook output shape'ine gore expression'a
   cevrildikten sonra validate edilir. n8n expression recipient degerleri
   placeholder email kontrolunden gecirilmez.
-- Gmail read/send connection veya gerekli capability yoksa chat'e Gmail
+- Gmail/Sheets connection veya gerekli canonical capability yoksa chat'e
   `oauth_prompt` attachment gelir. Google Sheets node'u credential istediginde
-  read operasyonlari icin `google.sheets.read`, write operasyonlari icin
-  `google.sheets.write` capability'si aranir; connection veya capability yoksa
-  chat'e Sheets `oauth_prompt` attachment'i gelir. Web component'i artik simule
-  etmez; attachment `authorizePath` degerine gore
+  read operasyonlari icin `sheets.range.read`, write/append/create
+  operasyonlari icin `sheets.range.update`, `sheets.row.append` veya
+  `sheets.spreadsheet.create` capability'si aranir; eski
+  `google.sheets.read/write` etiketleri alias olarak cozulur. Web component'i
+  artik simule etmez; attachment `authorizePath` degerine gore
   `/api/oauth/google/authorize?service=gmail` veya
   `/api/oauth/google/authorize?service=sheets` BFF route'undan gercek Google
-  authorization URL alir. Bu path, Next 16 dev ortaminda eski
+  authorization URL alir ve varsa `permissionPack`/`requiredCapabilities`
+  bilgilerini body'de tasir. Bu path, Next 16 dev ortaminda eski
   `/api/connections/google/.../authorize` nested route'larinin 404'e dusmesi
   nedeniyle kullanilir.
 - Eksik credential/OAuth prompt emit edildikten sonra agent ayni turda workflow
@@ -158,9 +190,9 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
   ise model durur ve kullanicidan gosterilen connection/credential aksiyonunu
   tamamlamasini ister. Bu, workflow olusturulduktan sonra Sheets/Gmail
   baglantisi beklenirken generic max-rounds hatasina dusmeyi engeller.
-- Gmail delete/mark-read/mark-unread gibi modify operasyonlari V1 read/send
-  OAuth scope ile otomatik attach edilmez; bu durum eski credential request
-  davranisina duser.
+- Gmail permanent delete default akista kullanilmaz; trash ve organize
+  aksiyonlari permission pack/risk metadata'siyle ayrilir ve eksik izin varsa
+  OAuth prompt'a duser.
 - Webhook gibi credential'i opsiyonel olan node'larda registry schema'da
   credential type listelenmesi tek basina yeterli sayilmaz. Agent actual node
   `parameters.authentication` ve schema default degerini kontrol eder; default

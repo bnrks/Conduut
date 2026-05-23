@@ -84,6 +84,44 @@ class WorkflowPlan(BaseModel):
     actions: list[WorkflowActionSpec] = Field(min_length=1)
 
 
+class PlatformActionPlan(BaseModel):
+    """Direct platform action request executed through connected app APIs."""
+
+    action: Literal[
+        "gmail.message.send",
+        "gmail.message.search",
+        "gmail.message.get",
+        "gmail.message.mark_read",
+        "gmail.message.mark_unread",
+        "gmail.message.archive",
+        "gmail.message.trash",
+        "gmail.message.label",
+        "sheets.spreadsheet.create",
+        "sheets.sheet.create",
+        "sheets.sheet.delete",
+        "sheets.range.read",
+        "sheets.range.update",
+        "sheets.range.clear",
+        "sheets.row.append",
+    ]
+    params: dict[str, Any] = Field(default_factory=dict)
+    confirmed: bool = False
+
+
+class PlatformActionResult(BaseModel):
+    """User-safe summary returned after a direct platform action."""
+
+    success: bool
+    action: str
+    capability: str
+    status: str
+    targetResource: str | None = None
+    data: dict[str, Any] | None = None
+    error: str | None = None
+    permissionPack: str | None = None
+    riskLevel: str | None = None
+
+
 class CredentialField(BaseModel):
     name: str
     label: str
@@ -114,6 +152,9 @@ class OAuthPromptData(BaseModel):
     authorizePath: str = "/api/oauth/google/authorize?service=gmail"
     returnTo: str = "/dashboard/connections"
     iconUrl: str | None = None
+    requiredCapabilities: list[str] = Field(default_factory=list)
+    permissionPack: str | None = None
+    riskLevel: str | None = None
 
 
 class OAuthPromptAttachment(BaseModel):

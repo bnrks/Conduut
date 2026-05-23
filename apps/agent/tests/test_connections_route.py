@@ -106,12 +106,14 @@ def test_capabilities_are_derived_from_granted_scopes():
         ]
     )
 
-    assert capabilities == [
-        "google.gmail.read",
-        "google.gmail.send",
-        "google.sheets.read",
-        "google.sheets.write",
-    ]
+    assert set(capabilities) >= {
+        "gmail.message.read",
+        "gmail.message.send",
+        "sheets.spreadsheet.create",
+        "sheets.range.read",
+        "sheets.range.update",
+        "sheets.row.append",
+    }
 
 
 @pytest.mark.asyncio
@@ -127,7 +129,7 @@ async def test_authorize_google_gmail_saves_state_and_returns_url(monkeypatch):
     monkeypatch.setattr(
         connections_route.google,
         "authorization_url",
-        lambda *, state, code_verifier, service: (
+        lambda *, state, code_verifier, service, **_kwargs: (
             f"https://google.test?state={state}&verifier={code_verifier}&service={service}"
         ),
     )
@@ -160,6 +162,8 @@ async def test_authorize_google_gmail_saves_state_and_returns_url(monkeypatch):
     assert saved["service"] == "gmail"
     assert saved["code_verifier"] == "verifier_1"
     assert saved["return_to"] == "/dashboard/connections"
+    assert saved["permission_pack"] == "gmail.basic"
+    assert saved["requested_capabilities"] == ["gmail.message.send", "gmail.message.read"]
 
 
 @pytest.mark.asyncio
@@ -175,7 +179,7 @@ async def test_authorize_google_sheets_saves_state_and_returns_url(monkeypatch):
     monkeypatch.setattr(
         connections_route.google,
         "authorization_url",
-        lambda *, state, code_verifier, service: (
+        lambda *, state, code_verifier, service, **_kwargs: (
             f"https://google.test?state={state}&verifier={code_verifier}&service={service}"
         ),
     )
@@ -208,6 +212,8 @@ async def test_authorize_google_sheets_saves_state_and_returns_url(monkeypatch):
     assert saved["service"] == "sheets"
     assert saved["code_verifier"] == "verifier_1"
     assert saved["return_to"] == "/dashboard/connections"
+    assert saved["permission_pack"] == "sheets.app_files"
+    assert "sheets.row.append" in saved["requested_capabilities"]
 
 
 @pytest.mark.asyncio
@@ -316,14 +322,16 @@ async def test_google_callback_creates_n8n_credential_and_connection(monkeypatch
     assert saved_connection["connection_id"] == "google_gmail"
     assert saved_connection["scopes"] == token_response["scope"].split()
     assert saved_connection["capabilities"] == [
-        "google.gmail.read",
-        "google.gmail.send",
+        "gmail.message.send",
+        "gmail.message.read",
     ]
+    assert "gmail.basic" in saved_connection["permission_packs"]
+    assert saved_connection["direct_api_enabled"] is False
     assert response["connection"]["id"] == "google_gmail"
     assert response["connection"]["accountEmail"] == "user@example.com"
     assert response["connection"]["capabilities"] == [
-        "google.gmail.read",
-        "google.gmail.send",
+        "gmail.message.send",
+        "gmail.message.read",
     ]
     assert response["returnTo"] == "/dashboard/connections"
 
@@ -403,17 +411,25 @@ async def test_google_callback_creates_sheets_n8n_credential_and_connection(monk
     assert saved_connection["user_id"] == "user_1"
     assert saved_connection["connection_id"] == "google_sheets"
     assert saved_connection["scopes"] == token_response["scope"].split()
-    assert saved_connection["capabilities"] == [
-        "google.sheets.read",
-        "google.sheets.write",
-    ]
+    assert set(saved_connection["capabilities"]) >= {
+        "sheets.spreadsheet.create",
+        "sheets.range.read",
+        "sheets.range.update",
+        "sheets.row.append",
+    }
+    assert set(saved_connection["permission_packs"]) >= {
+        "sheets.app_files",
+        "sheets.full_access",
+    }
     assert response["connection"]["id"] == "google_sheets"
     assert response["connection"]["serviceName"] == "Google Sheets"
     assert response["connection"]["accountEmail"] == "user@example.com"
-    assert response["connection"]["capabilities"] == [
-        "google.sheets.read",
-        "google.sheets.write",
-    ]
+    assert set(response["connection"]["capabilities"]) >= {
+        "sheets.spreadsheet.create",
+        "sheets.range.read",
+        "sheets.range.update",
+        "sheets.row.append",
+    }
     assert response["returnTo"] == "/dashboard/connections"
 
 

@@ -39,6 +39,16 @@ export async function POST(request: NextRequest) {
   const service = getService(request, body);
   const agentBody = { ...body };
   delete agentBody.service;
+  const permissionPack = request.nextUrl.searchParams.get("permission_pack");
+  if (permissionPack && typeof agentBody.permission_pack !== "string") {
+    agentBody.permission_pack = permissionPack;
+  }
+  const requestedCapability = request.nextUrl.searchParams.getAll(
+    "requested_capabilities"
+  );
+  if (requestedCapability.length && !Array.isArray(agentBody.requested_capabilities)) {
+    agentBody.requested_capabilities = requestedCapability;
+  }
 
   try {
     const response = await fetch(

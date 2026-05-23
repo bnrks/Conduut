@@ -9,6 +9,7 @@ from pydantic_ai import Agent, RunContext
 from src import n8n_client, store
 from src.agent.schemas import (
     AgentDeps,
+    PlatformActionPlan,
     UserInputChoice,
     UserInputRequestAttachment,
     UserInputRequestData,
@@ -43,6 +44,7 @@ from src.agent.tools.spec_compiler import (
 )
 from src.agent.tools.validation import _validated_runtime_workflow
 from src.agent.tools.workflow_runner import run_workflow_with_input
+from src.platforms.actions import run_platform_action_payload
 from src.registry import registry
 
 log = structlog.get_logger()
@@ -166,6 +168,22 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         if not results:
             return {"templates": [], "hint": "No matching templates found. Build from scratch."}
         return {"templates": results}
+
+    @agent.tool
+    async def run_platform_action(
+        ctx: RunContext[AgentDeps],
+        plan: PlatformActionPlan,
+    ) -> dict[str, Any]:
+        """Run a direct action against a connected platform such as Gmail or Sheets."""
+
+        if ctx.deps.awaiting_user_input:
+            return _waiting_for_user_input_result()
+        await ctx.deps.emit_tool_call("run_platform_action")
+        started_at = perf_counter()
+        result = await run_platform_action_payload(ctx.deps, plan)
+        payload = result.model_dump(exclude_none=True)
+        _log_tool_finished("run_platform_action", started_at, payload)
+        return payload
 
     @agent.tool
     async def request_user_input(

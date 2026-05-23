@@ -30,6 +30,7 @@ if exist "%ROOT%.env" (
   for /f "usebackq eol=# tokens=1,* delims==" %%A in ("%ROOT%.env") do (
     if /I "%%A"=="CONDUUT_GOOGLE_OAUTH_CLIENT_ID" set "CONDUUT_GOOGLE_OAUTH_CLIENT_ID=%%B"
     if /I "%%A"=="CONDUUT_GOOGLE_OAUTH_CLIENT_SECRET" set "CONDUUT_GOOGLE_OAUTH_CLIENT_SECRET=%%B"
+    if /I "%%A"=="CONDUUT_CONNECTION_ENCRYPTION_KEY" set "CONDUUT_CONNECTION_ENCRYPTION_KEY=%%B"
     if /I "%%A"=="CONDUUT_OAUTH_STATE_TTL_SECONDS" set "CONDUUT_OAUTH_STATE_TTL_SECONDS=%%B"
   )
 )
@@ -38,7 +39,7 @@ start "Conduut Agent" /D "%ROOT%apps\agent" cmd /k python -m uvicorn src.main:ap
 
 echo Starting web dev server on http://localhost:%CONDUUT_WEB_PORT% ...
 set "AGENT_API_BASE_URL=http://localhost:8100"
-start "Conduut Web" /D "%ROOT%apps\web" cmd /k npm run dev -- --hostname 127.0.0.1 --port %CONDUUT_WEB_PORT%
+start "Conduut Web" /D "%ROOT%apps\web" cmd /k npm run dev -- --hostname localhost --port %CONDUUT_WEB_PORT%
 
 echo.
 echo Started:
