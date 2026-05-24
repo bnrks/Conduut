@@ -8,11 +8,13 @@ import rehypeHighlight from "rehype-highlight";
 import { Copy, Check } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { Logo } from "@/components/ui/logo";
+import { ArtifactPreview } from "@/components/artifacts/artifact-preview";
 import { WorkflowPreview, type WorkflowPreviewData } from "./workflow-preview";
 import { OAuthPrompt, type OAuthPromptData } from "./oauth-prompt";
 import { CredentialRequest, type CredentialRequestData } from "./credential-request";
 import { cn } from "@/lib/utils";
 import type { Message as MessageType } from "@/types/chat";
+import type { ArtifactPreviewData } from "@/types/artifact";
 
 export interface MessageProps {
   message: MessageType;
@@ -209,6 +211,15 @@ export function Message({ message, hideInputRequests = false }: MessageProps) {
               <WorkflowPreview
                 key={i}
                 data={attachment.data as unknown as WorkflowPreviewData}
+                className="w-full"
+              />
+            );
+          }
+          if (attachment.type === "artifact_preview") {
+            return (
+              <ArtifactPreview
+                key={i}
+                data={attachment.data as unknown as ArtifactPreviewData}
                 className="w-full"
               />
             );

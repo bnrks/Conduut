@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { Plus, Search, Workflow as WorkflowIcon } from "lucide-react";
 import { toast } from "sonner";
+import { ArtifactPreview } from "@/components/artifacts/artifact-preview";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
@@ -12,9 +13,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { WorkflowCard } from "@/components/dashboard/workflow-card";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useAuth } from "@/hooks/use-auth";
+import type { ArtifactPreviewData } from "@/types/artifact";
 import type { Workflow, WorkflowInputField, WorkflowStatus } from "@/types/workflow";
 
 type StatusFilter = "all" | WorkflowStatus;
+
+interface WorkflowRunResult {
+  workflowName: string;
+  status?: string;
+  summary?: string;
+  artifacts?: ArtifactPreviewData[];
+}
 
 async function getErrorMessage(response: Response, fallback: string): Promise<string> {
   const payload = await response.json().catch(() => null) as {
@@ -37,6 +46,7 @@ export default function WorkflowsPage() {
   const [runWorkflow, setRunWorkflow] = useState<Workflow | null>(null);
   const [runValues, setRunValues] = useState<Record<string, string>>({});
   const [runningWorkflowId, setRunningWorkflowId] = useState<string | null>(null);
+  const [runResult, setRunResult] = useState<WorkflowRunResult | null>(null);
 
   const fetchWorkflows = useCallback(async () => {
     if (authLoading) return;
@@ -147,8 +157,17 @@ export default function WorkflowsPage() {
       const result = (await response.json().catch(() => null)) as {
         status?: string;
         summary?: string;
+        artifacts?: ArtifactPreviewData[];
       } | null;
       toast.success(result?.summary || `Workflow ${result?.status || "triggered"}.`);
+      if (result?.artifacts?.length) {
+        setRunResult({
+          workflowName: workflow.name,
+          status: result.status,
+          summary: result.summary,
+          artifacts: result.artifacts,
+        });
+      }
       setRunWorkflow(null);
       setRunValues({});
       void fetchWorkflows();
@@ -343,6 +362,43 @@ export default function WorkflowsPage() {
               </Button>
             </div>
           </form>
+        </div>
+      )}
+
+      {runResult && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="workflow-run-result-title"
+          onClick={() => setRunResult(null)}
+        >
+          <div
+            className="w-full max-w-2xl rounded-lg border border-border bg-card p-5 shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2
+                  id="workflow-run-result-title"
+                  className="truncate text-[16px] font-medium text-foreground"
+                >
+                  {runResult.workflowName}
+                </h2>
+                <p className="mt-1 text-[13px] text-muted-foreground">
+                  {runResult.summary || `Workflow ${runResult.status || "triggered"}.`}
+                </p>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => setRunResult(null)}>
+                Close
+              </Button>
+            </div>
+            <div className="flex max-h-[70vh] flex-col gap-3 overflow-y-auto pr-1">
+              {(runResult.artifacts ?? []).map((artifact, index) => (
+                <ArtifactPreview key={index} data={artifact} />
+              ))}
+            </div>
+          </div>
         </div>
       )}
     </div>

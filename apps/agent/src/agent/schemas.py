@@ -35,6 +35,27 @@ class WorkflowPreviewAttachment(BaseModel):
     data: WorkflowPreviewData
 
 
+class ArtifactPreviewTable(BaseModel):
+    columns: list[str] = Field(default_factory=list)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    truncated: bool = False
+    totalRows: int | None = None
+
+
+class ArtifactPreviewData(BaseModel):
+    service: Literal["google_sheets"]
+    title: str
+    description: str | None = None
+    url: str | None = None
+    source: dict[str, Any] = Field(default_factory=dict)
+    table: ArtifactPreviewTable | None = None
+
+
+class ArtifactPreviewAttachment(BaseModel):
+    type: Literal["artifact_preview"] = "artifact_preview"
+    data: ArtifactPreviewData
+
+
 class WorkflowInputField(BaseModel):
     name: str
     label: str
@@ -120,6 +141,7 @@ class PlatformActionResult(BaseModel):
     error: str | None = None
     permissionPack: str | None = None
     riskLevel: str | None = None
+    artifacts: list[ArtifactPreviewData] = Field(default_factory=list)
 
 
 class CredentialField(BaseModel):
@@ -189,10 +211,12 @@ class WorkflowRunResultData(BaseModel):
     error: str | None = None
     response: dict[str, Any] | None = None
     outputs: list[dict[str, Any]] = Field(default_factory=list)
+    artifacts: list[ArtifactPreviewData] = Field(default_factory=list)
 
 
 AgentAttachment = (
     WorkflowPreviewAttachment
+    | ArtifactPreviewAttachment
     | CredentialRequestAttachment
     | OAuthPromptAttachment
     | UserInputRequestAttachment
@@ -210,6 +234,7 @@ class AgentDeps:
     conversation_id: str
     event_queue: asyncio.Queue[AgentEvent]
     attachments: list[dict[str, Any]] = field(default_factory=list)
+    platform_resources: dict[str, dict[str, Any]] = field(default_factory=dict)
     awaiting_user_input: bool = False
 
     async def emit_tool_call(self, tool: str) -> None:

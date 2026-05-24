@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from src import store
+from src.agent.artifacts import build_sheets_action_artifacts
 from src.agent.schemas import (
     AgentDeps,
+    ArtifactPreviewAttachment,
     OAuthPromptAttachment,
     OAuthPromptData,
     PlatformActionPlan,
@@ -42,6 +45,11 @@ _ACTION_CAPABILITIES = {
     "sheets.range.clear": "sheets.range.clear",
     "sheets.row.append": "sheets.row.append",
 }
+
+_A1_RANGE_RE = re.compile(
+    r"^(\$?[A-Z]+\$?\d+(:\$?[A-Z]+\$?\d+)?|\$?[A-Z]+:\$?[A-Z]+|\d+:\d+)$",
+    re.IGNORECASE,
+)
 
 
 def required_capability_for_action(action: str) -> str:
@@ -102,13 +110,130 @@ def _values_from_params(params: dict[str, Any]) -> list[Any]:
     raise PlatformActionError("Missing required values for Sheets append/update.")
 
 
+def _quote_sheet_title(title: str) -> str:
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", title):
+        return title
+    escaped = title.replace("'", "''")
+    return f"'{escaped}'"
+
+
+def _unquote_sheet_title(title: str) -> str:
+    text = title.strip()
+    if len(text) >= 2 and text[0] == "'" and text[-1] == "'":
+        return text[1:-1].replace("''", "'")
+    return text
+
+
+def _sheet_title_from_range(range_label: str) -> str | None:
+    text = range_label.strip()
+    if not text:
+        return None
+    if "!" in text:
+        return _unquote_sheet_title(text.split("!", 1)[0])
+    if _A1_RANGE_RE.fullmatch(text):
+        return None
+    return _unquote_sheet_title(text)
+
+
+def _sheet_title_for_params(params: dict[str, Any], range_label: str) -> str | None:
+    explicit = params.get("sheet_name") or params.get("sheet_title") or params.get("sheet")
+    if explicit:
+        return str(explicit)
+    return _sheet_title_from_range(range_label)
+
+
+def _range_from_params(params: dict[str, Any], *, default_sheet: str = "Sheet1") -> str:
+    explicit_range = params.get("range")
+    if explicit_range:
+        range_label = str(explicit_range)
+        sheet_title = params.get("sheet_name") or params.get("sheet_title") or params.get("sheet")
+        if sheet_title and "!" not in range_label:
+            return f"{_quote_sheet_title(str(sheet_title))}!{range_label}"
+        return range_label
+    sheet_title = str(
+        params.get("sheet_name")
+        or params.get("sheet_title")
+        or params.get("sheet")
+        or default_sheet
+    )
+    return f"{_quote_sheet_title(sheet_title)}!A1"
+
+
+def _sheets_resource(deps: AgentDeps) -> dict[str, Any]:
+    return deps.platform_resources.setdefault("google_sheets", {})
+
+
+def _spreadsheet_id_from_params(params: dict[str, Any]) -> str:
+    return str(
+        params.get("spreadsheet_id")
+        or params.get("document_id")
+        or params.get("spreadsheetId")
+        or ""
+    )
+
+
+def _apply_sheets_resource_defaults(
+    deps: AgentDeps,
+    *,
+    action: str,
+    params: dict[str, Any],
+) -> None:
+    if not action.startswith("sheets.") or action == "sheets.spreadsheet.create":
+        return
+    resource = _sheets_resource(deps)
+    if not _spreadsheet_id_from_params(params) and resource.get("spreadsheet_id"):
+        params["spreadsheet_id"] = resource["spreadsheet_id"]
+    if not params.get("spreadsheet_url") and resource.get("spreadsheet_url"):
+        params["spreadsheet_url"] = resource["spreadsheet_url"]
+    if (
+        action in {"sheets.range.update", "sheets.row.append"}
+        and not (params.get("sheet_name") or params.get("sheet_title") or params.get("sheet"))
+        and resource.get("sheet_name")
+    ):
+        params["sheet_name"] = resource["sheet_name"]
+
+
+def _remember_sheets_resource(
+    deps: AgentDeps,
+    *,
+    params: dict[str, Any],
+    data: dict[str, Any],
+) -> None:
+    spreadsheet_id = str(data.get("spreadsheetId") or _spreadsheet_id_from_params(params))
+    if not spreadsheet_id:
+        return
+    resource = _sheets_resource(deps)
+    resource["spreadsheet_id"] = spreadsheet_id
+    spreadsheet_url = data.get("spreadsheetUrl") or params.get("spreadsheet_url")
+    if spreadsheet_url:
+        resource["spreadsheet_url"] = str(spreadsheet_url)
+    sheet_name = params.get("sheet_name") or params.get("sheet_title") or params.get("sheet")
+    if not sheet_name:
+        range_label = params.get("range")
+        if range_label:
+            sheet_name = _sheet_title_from_range(str(range_label))
+    if sheet_name:
+        resource["sheet_name"] = str(sheet_name)
+
+
+def _require_spreadsheet_id(action: str, params: dict[str, Any]) -> str:
+    spreadsheet_id = _spreadsheet_id_from_params(params)
+    if not spreadsheet_id:
+        raise PlatformActionError(
+            f"Missing required spreadsheet_id for {action}.",
+            status="missing_input",
+        )
+    return spreadsheet_id
+
+
 async def run_platform_action_payload(
     deps: AgentDeps,
     plan: PlatformActionPlan,
 ) -> PlatformActionResult:
     action = plan.action
-    params = plan.params
+    params = dict(plan.params)
     capability = required_capability_for_action(action)
+    _apply_sheets_resource_defaults(deps, action=action, params=params)
     try:
         if action == "gmail.message.send":
             data = await GmailClient(deps.user_id).send(
@@ -168,29 +293,34 @@ async def run_platform_action_payload(
             )
             target = str(data.get("spreadsheetId") or "")
         elif action == "sheets.sheet.create":
-            target = str(params.get("spreadsheet_id") or "")
-            data = await SheetsClient(deps.user_id).add_sheet(
+            target = _require_spreadsheet_id(action, params)
+            data = await SheetsClient(deps.user_id).ensure_sheet(
                 spreadsheet_id=target,
                 title=str(params.get("title") or params.get("sheet_name") or "Sheet"),
             )
         elif action == "sheets.sheet.delete":
-            target = str(params.get("spreadsheet_id") or "")
+            target = _require_spreadsheet_id(action, params)
             data = await SheetsClient(deps.user_id).delete_sheet(
                 spreadsheet_id=target,
                 sheet_id=int(params.get("sheet_id")),
                 confirmed=plan.confirmed,
             )
         elif action == "sheets.range.read":
-            target = str(params.get("spreadsheet_id") or "")
+            target = _require_spreadsheet_id(action, params)
             data = await SheetsClient(deps.user_id).read_range(
                 spreadsheet_id=target,
                 range=str(params.get("range") or params.get("sheet_name") or "Sheet1"),
             )
         elif action == "sheets.range.update":
-            target = str(params.get("spreadsheet_id") or "")
-            data = await SheetsClient(deps.user_id).update_range(
+            target = _require_spreadsheet_id(action, params)
+            client = SheetsClient(deps.user_id)
+            range_label = _range_from_params(params)
+            sheet_title = _sheet_title_for_params(params, range_label)
+            if sheet_title:
+                await client.ensure_sheet(spreadsheet_id=target, title=sheet_title)
+            data = await client.update_range(
                 spreadsheet_id=target,
-                range=str(params.get("range") or params.get("sheet_name") or "Sheet1"),
+                range=range_label,
                 values=[
                     list(row)
                     for row in (
@@ -201,17 +331,22 @@ async def run_platform_action_payload(
                 ],
             )
         elif action == "sheets.range.clear":
-            target = str(params.get("spreadsheet_id") or "")
+            target = _require_spreadsheet_id(action, params)
             data = await SheetsClient(deps.user_id).clear_range(
                 spreadsheet_id=target,
                 range=str(params.get("range") or params.get("sheet_name") or "Sheet1"),
                 confirmed=plan.confirmed,
             )
         elif action == "sheets.row.append":
-            target = str(params.get("spreadsheet_id") or "")
-            data = await SheetsClient(deps.user_id).append_row(
+            target = _require_spreadsheet_id(action, params)
+            client = SheetsClient(deps.user_id)
+            range_label = _range_from_params(params)
+            sheet_title = _sheet_title_for_params(params, range_label)
+            if sheet_title:
+                await client.ensure_sheet(spreadsheet_id=target, title=sheet_title)
+            data = await client.append_row(
                 spreadsheet_id=target,
-                range=str(params.get("range") or params.get("sheet_name") or "Sheet1"),
+                range=range_label,
                 values=_values_from_params(params),
             )
         else:
@@ -271,6 +406,12 @@ async def run_platform_action_payload(
             riskLevel=capability_risk(capability),
         )
 
+    artifacts = build_sheets_action_artifacts(action=action, params=params, data=data)
+    if action.startswith("sheets."):
+        _remember_sheets_resource(deps, params=params, data=data)
+    for artifact in artifacts:
+        await deps.emit_attachment(ArtifactPreviewAttachment(data=artifact))
+
     await _audit(
         deps,
         action=action,
@@ -286,6 +427,7 @@ async def run_platform_action_payload(
         targetResource=target,
         data=data,
         riskLevel=capability_risk(capability),
+        artifacts=artifacts,
     )
 
 

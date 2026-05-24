@@ -81,7 +81,8 @@ olmak iyi, fakat mevcut MVP'nin gercek sinirlarini bozmamak daha onemlidir.
 - Workflow run: dashboard run form veya agent tool -> Conduut run endpoint ->
   runtime input validation -> webhook-triggered workflow call -> n8n execution
   API -> agent/internal verification -> normal assistant text response veya
-  dashboard toast.
+  dashboard toast. Google Sheets ciktisi varsa backend ayni response/attachment
+  icinde `artifact_preview` snapshot'i uretir.
 - Node knowledge: [[agent-service]] -> [[n8n-registry]].
 
 ## Mimari Dikkat Noktalari

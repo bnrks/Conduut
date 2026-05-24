@@ -155,6 +155,47 @@ def test_history_from_store_messages_adds_user_input_context_for_continuation():
     assert "recipients" in history[1].parts[0].content
 
 
+def test_platform_resources_from_messages_uses_latest_sheets_artifact():
+    resources = runner._platform_resources_from_messages(
+        [
+            {
+                "role": "assistant",
+                "attachments": [
+                    {
+                        "type": "artifact_preview",
+                        "data": {
+                            "service": "google_sheets",
+                            "url": "https://docs.google.com/spreadsheets/d/sheet_old/edit",
+                            "source": {"spreadsheetId": "sheet_old", "range": "Old"},
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "assistant",
+                "attachments": [
+                    {
+                        "type": "artifact_preview",
+                        "data": {
+                            "service": "google_sheets",
+                            "url": "https://docs.google.com/spreadsheets/d/sheet_123/edit",
+                            "source": {"spreadsheetId": "sheet_123", "range": "Leads"},
+                        },
+                    }
+                ],
+            },
+        ]
+    )
+
+    assert resources == {
+        "google_sheets": {
+            "spreadsheet_id": "sheet_123",
+            "spreadsheet_url": "https://docs.google.com/spreadsheets/d/sheet_123/edit",
+            "sheet_name": "Leads",
+        }
+    }
+
+
 def test_history_from_store_messages_marks_prior_user_answer_to_clarification():
     _prompt, history = runner._history_from_store_messages(
         [

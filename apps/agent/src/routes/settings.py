@@ -13,6 +13,23 @@ from src.agent.provider_factory import (
 from src.auth import get_user_id
 
 _HARDCODED_MODELS: dict[str, list[dict]] = {
+    "openai": [
+        {"id": "gpt-5.5", "name": "GPT-5.5"},
+        {"id": "gpt-5.4", "name": "GPT-5.4"},
+        {"id": "gpt-5.3-codex", "name": "GPT-5.3 Codex"},
+        {"id": "gpt-5.2", "name": "GPT-5.2"},
+        {"id": "gpt-5.2-chat-latest", "name": "GPT-5.2 Chat Latest"},
+        {"id": "gpt-5.1", "name": "GPT-5.1"},
+        {"id": "gpt-5", "name": "GPT-5"},
+        {"id": "gpt-5-mini", "name": "GPT-5 Mini"},
+        {"id": "gpt-5-nano", "name": "GPT-5 Nano"},
+        {"id": "gpt-4.1", "name": "GPT-4.1"},
+        {"id": "gpt-4.1-mini", "name": "GPT-4.1 Mini"},
+        {"id": "gpt-4o", "name": "GPT-4o"},
+        {"id": "gpt-4o-mini", "name": "GPT-4o Mini"},
+        {"id": "o3", "name": "o3"},
+        {"id": "o4-mini", "name": "o4-mini"},
+    ],
     "anthropic": [
         {"id": "claude-opus-4-6", "name": "Claude Opus 4.6"},
         {"id": "claude-sonnet-4-6", "name": "Claude Sonnet 4.6"},

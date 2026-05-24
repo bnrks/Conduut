@@ -9,6 +9,7 @@ from pydantic_ai import Agent, RunContext
 from src import n8n_client, store
 from src.agent.schemas import (
     AgentDeps,
+    ArtifactPreviewAttachment,
     PlatformActionPlan,
     UserInputChoice,
     UserInputRequestAttachment,
@@ -557,6 +558,8 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                 user_id=ctx.deps.user_id,
                 input_payload=input,
             )
+            for artifact in result.artifacts:
+                await ctx.deps.emit_attachment(ArtifactPreviewAttachment(data=artifact))
             payload = result.model_dump(exclude_none=True)
             _log_tool_finished("execute_workflow", started_at, payload)
             return payload

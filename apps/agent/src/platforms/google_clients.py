@@ -131,16 +131,32 @@ async def _google_request(
     try:
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
+        error_message = _google_error_message(exc.response)
         log.warning(
             "google_platform_request_failed",
             method=method,
             url=url,
             status_code=exc.response.status_code,
+            error=error_message,
         )
-        raise PlatformActionError(f"Google API returned {exc.response.status_code}.") from exc
+        raise PlatformActionError(error_message) from exc
     if response.content:
         return response.json()
     return {}
+
+
+def _google_error_message(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        return f"Google API returned {response.status_code}."
+
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(error, dict):
+        message = str(error.get("message") or "").strip()
+        if message:
+            return f"Google API returned {response.status_code}: {message}"
+    return f"Google API returned {response.status_code}."
 
 
 def _encoded_message(to: str, subject: str, message: str) -> str:
@@ -268,6 +284,34 @@ class SheetsClient:
         title: str,
     ) -> dict[str, Any]:
         token = await self._token("sheets.sheet.manage")
+        return await _google_request(
+            "POST",
+            f"https://sheets.googleapis.com/v4/spreadsheets/{quote(spreadsheet_id)}:batchUpdate",
+            access_token=token,
+            json={"requests": [{"addSheet": {"properties": {"title": title}}}]},
+        )
+
+    async def ensure_sheet(
+        self,
+        *,
+        spreadsheet_id: str,
+        title: str,
+    ) -> dict[str, Any]:
+        token = await self._token("sheets.sheet.manage")
+        metadata = await _google_request(
+            "GET",
+            f"https://sheets.googleapis.com/v4/spreadsheets/{quote(spreadsheet_id)}",
+            access_token=token,
+            params={"fields": "sheets.properties(sheetId,title,index)"},
+        )
+        for sheet in metadata.get("sheets") or []:
+            properties = sheet.get("properties") if isinstance(sheet, dict) else None
+            if isinstance(properties, dict) and properties.get("title") == title:
+                return {
+                    "spreadsheetId": spreadsheet_id,
+                    "alreadyExists": True,
+                    "sheet": {"properties": properties},
+                }
         return await _google_request(
             "POST",
             f"https://sheets.googleapis.com/v4/spreadsheets/{quote(spreadsheet_id)}:batchUpdate",

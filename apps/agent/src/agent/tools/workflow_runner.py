@@ -7,6 +7,7 @@ from uuid import uuid4
 import structlog
 
 from src import n8n_client, store
+from src.agent.artifacts import build_sheets_workflow_artifacts
 from src.agent.schemas import WorkflowRunResultData
 from src.agent.tools.common import _response_preview
 from src.agent.tools.constants import _MANUAL_TRIGGER_TYPE, _WEBHOOK_TRIGGER_TYPE
@@ -93,6 +94,12 @@ async def run_workflow_with_input(
 
     detail = await n8n_client.get_execution_detail(executions[0].id)
     result = _summarize_execution(detail, response=response, workflow=workflow)
+    result.artifacts = build_sheets_workflow_artifacts(
+        workflow_id=workflow_id,
+        execution_id=result.executionId,
+        outputs=result.outputs,
+        metadata=metadata,
+    )
     log.info(
         "workflow_run_finished",
         workflow_id=workflow_id,

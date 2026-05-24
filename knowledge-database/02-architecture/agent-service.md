@@ -130,6 +130,12 @@ effort'u modelin destek listesine karsi validate eder ve Pydantic AI
 `model_settings.openai_reasoning_effort` olarak agent run'a iletir. Conversation
 metadata'si provider/model ile birlikte secilen reasoning effort'u da saklar;
 devam eden chat ayni ayara kilitlenir.
+OpenAI model picker UI'si remote `/v1/models` cagrisi yerine Conduut'un bilinen
+OpenAI model katalogunu dondurur. Bu, lokal gelistirmede OpenAI model listesi
+endpoint'inin ag, quota veya provider API izin problemi yuzunden 502 donup
+settings ekranini kirmasini engeller; provider key dogrulamasi ayri
+`verify_provider_connection` akisinda kalir. Groq ve OpenRouter model listeleri
+hala provider API'sinden dinamik cekilir.
 Provider hata siniflandirmasi auth/model-not-found/rate-limit durumlarina ek
 olarak `insufficient_quota`, quota ve billing mesajlarini ayri yakalar; chat
 SSE error event'i kullaniciya provider quota/billing problemini net soyler.
@@ -156,6 +162,8 @@ moduller:
 - `src/platforms/*`: platform capability registry, permission pack mapping,
   encrypted Google token kullanimi, direct Gmail/Sheets client'lari ve platform
   action audit kaydi.
+- `src/agent/artifacts.py`: Google Sheets direct action ve workflow run
+  ciktilarindan kullaniciya guvenli `artifact_preview` snapshot'lari uretir.
 
 Kayitli tool'lar:
 
@@ -167,6 +175,34 @@ Kayitli tool'lar:
   `list_executions`, `analyze_workflow_readiness`, `inspect_execution`.
 - Platform direct action: `run_platform_action`.
 - Clarification: `request_user_input`.
+
+## Artifacts
+
+V1 artifact modeli [[artifacts]] notunda tanimlidir. Agent Google Sheets
+direct action'lari veya Sheets iceren workflow run sonuclari icin
+`artifact_preview` attachment'i emit eder. Attachment ayri Firestore
+collection'a yazilmaz; assistant mesajinin attachment snapshot'i olarak
+conversation history icinde kalir.
+
+`WorkflowRunResultData` ve workflow run route response'u `artifacts` listesi
+tasir. Direct Sheets action sonucunda `PlatformActionResult.artifacts` ayni
+preview payload'unu dondurur. Preview tablolar en fazla 10 satir ve 12 kolon
+tasir; secret/token benzeri alanlar tabloya alinmaz. Kullanici tam veri icin
+Google Sheets linkine gider.
+`ArtifactPreviewTable.rows`, Firestore'un dogrudan nested array kabul etmemesi
+nedeniyle `list[dict[column, cellPreview]]` seklinde saklanir; frontend legacy
+array row formatini da okuyabilir ama backend yeni snapshot'larda map row
+formatini uretmelidir.
+
+Runner, conversation history'deki Google Sheets `artifact_preview`
+attachment'larini `AgentDeps.platform_resources` baglamina cevirir. En son
+artifact'teki `spreadsheetId`, link ve sheet/range bilgisi sonraki
+`run_platform_action` cagrilarinda varsayilan resource olarak kullanilir.
+Direct Sheets action'lari ayni agent turunda basarili create/read/write
+sonuclarindan da bu resource baglamini gunceller. Boylece kullanici "tekrar
+dene" dediginde agent'in onceki spreadsheet'i kullanmasi desteklenir; backend
+bos `spreadsheet_id` ile Google API'ye `spreadsheets//...` cagrisi yapmak
+yerine `missing_input` hatasi dondurur.
 
 ## Platform Capability Layer
 
@@ -202,6 +238,17 @@ read-unread/archive/trash/label ve Sheets spreadsheet create, sheet
 create/delete, range read/update/clear, row append aksiyonlaridir. Her direct
 aksiyon `users/{uid}/platform_action_audit/{id}` altina secret veya payload
 yazmadan audit metadata'si kaydeder.
+Sheets direct action'larda `sheets.sheet.create` idempotent davranir: hedef tab
+zaten varsa hata yerine basarili sonuc dondurur. `sheets.range.update` ve
+`sheets.row.append`, `sheet_name` veya range icinden hedef tab adini
+cozebiliyorsa yazmadan once tab'in varligini garanti eder; yoksa olusturur.
+Google API hata mesajlari artik status koduyla birlikte sanitize edilmis kisa
+mesaj olarak `PlatformActionError` ve log'a tasinir.
+Sheets read/update/append/clear ve sheet manage action'lari eksik
+`spreadsheet_id` tasiyorsa once `AgentDeps.platform_resources.google_sheets`
+baglamindan tamamlanir. `range` yalniz `A1:D4` gibi tab icermeyen bir degerse
+ve `sheet_name` biliniyorsa backend bunu `<sheet_name>!A1:D4` formatina
+cevirir. Hala spreadsheet id bulunamiyorsa Google API'ye istek atilmaz.
 Direct API icin `CONDUUT_CONNECTION_ENCRYPTION_KEY` key'i connection OAuth
 callback aninda mevcut olmalidir. Key sonradan eklenirse eski
 `google_gmail`/`google_sheets` connection dokumanlari n8n credential olarak
@@ -423,6 +470,9 @@ cevirir. Aksi halde n8n workflow'u API'den kabul etse bile editor
 - `users/{uid}/connections/google_sheets`
 - `users/{uid}/workflow_metadata/{workflowId}`
 - `users/{uid}/platform_action_audit/{auditId}`
+
+Artifacts V1 ayri collection kullanmaz; `artifact_preview` payload'lari
+conversation message attachment'i olarak saklanir.
 
 Firestore sync SDK cagrilari `asyncio.to_thread` ile sarilir.
 

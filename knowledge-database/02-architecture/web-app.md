@@ -103,8 +103,8 @@ SSE event'leri `src/lib/chat/sse.ts` ile parse edilir:
 - `tool_call`: chat input altindaki typing indicator metnini gunceller; UI
   ham tool adini gostermek yerine `src/lib/chat/tool-activity.ts` mapping'iyle
   sade islem durumlari gosterir.
-- `attachment`: workflow preview, oauth prompt, credential request veya
-  user input request gibi ekleri ekler.
+- `attachment`: workflow preview, oauth prompt, credential request,
+  artifact preview veya user input request gibi ekleri ekler.
 - `done`: provider/model bilgisini mesaj uzerine yazar.
 - `error`: toast ile hata gosterir.
 
@@ -114,9 +114,14 @@ gosterir. `OAuthPrompt` artik simule connect yapmaz; agent'tan gelen
 cagirir ve authorization URL'ine yonlendirir. Varsayilan Gmail authorize path'i
 `/api/oauth/google/authorize?service=gmail`'dir. Buton dili Google Workspace
 capability modeline uygun olarak "Grant access" aksiyonunu kullanir. Workflow
-run sonuclari icin ayri sonuc/kanit karti render edilmez; agent execution
+run sonuclari icin teknik sonuc/kanit karti render edilmez; agent execution
 sonucunu kendi icinde dogrular ve kullaniciya normal assistant mesaji olarak
-cevap verir.
+cevap verir. Google Sheets iceren direct action veya workflow run sonuclarinda
+`ArtifactPreview` component'i kucuk tablo snapshot'i ve Google Sheets linki
+gosterir; tam spreadsheet Conduut icinde kopyalanmaz. Artifact tablo satirlari
+Firestore uyumlu yeni formatta kolon adindan hucre preview'ine giden obje
+olarak gelir; component geriye donuk olarak eski array row formatini da
+render edebilir.
 
 `ClarificationPanel` component'i agent'in aktif `user_input_request`
 attachment'ini render eder. Aktif son soru varken ana `ChatInput` composer'i

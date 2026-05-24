@@ -248,6 +248,7 @@ async def test_google_callback_rejects_invalid_used_or_expired_state(
 async def test_google_callback_creates_n8n_credential_and_connection(monkeypatch):
     monkeypatch.setattr(settings, "google_oauth_client_id", "client_id")
     monkeypatch.setattr(settings, "google_oauth_client_secret", "client_secret")
+    monkeypatch.setattr(settings, "connection_encryption_key", "")
 
     async def fake_get_oauth_state(_state_id: str):
         return _oauth_state()

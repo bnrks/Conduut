@@ -67,6 +67,32 @@ def _history_from_store_messages(messages: list[dict]) -> tuple[str, list[ModelM
     return user_prompt, history
 
 
+def _platform_resources_from_messages(messages: list[dict]) -> dict[str, dict[str, str]]:
+    resources: dict[str, dict[str, str]] = {}
+    for message in messages:
+        attachments = message.get("attachments")
+        if not isinstance(attachments, list):
+            continue
+        for attachment in attachments:
+            if not isinstance(attachment, dict) or attachment.get("type") != "artifact_preview":
+                continue
+            data = attachment.get("data")
+            if not isinstance(data, dict) or data.get("service") != "google_sheets":
+                continue
+            source = data.get("source") if isinstance(data.get("source"), dict) else {}
+            spreadsheet_id = source.get("spreadsheetId")
+            if not spreadsheet_id:
+                continue
+            resource = resources.setdefault("google_sheets", {})
+            resource["spreadsheet_id"] = str(spreadsheet_id)
+            if data.get("url"):
+                resource["spreadsheet_url"] = str(data["url"])
+            range_label = source.get("range")
+            if range_label:
+                resource["sheet_name"] = str(range_label).split("!", 1)[0].strip("'")
+    return resources
+
+
 def _user_input_request_context(message: dict | None) -> str | None:
     if not message or message.get("role") not in ("assistant", "agent"):
         return None
@@ -133,6 +159,14 @@ def _content_with_attachment_context(message: dict) -> str:
                     f"executionId={execution_id} "
                     f"status={status}"
                 )
+        elif attachment_type == "artifact_preview":
+            title = data.get("title")
+            service = data.get("service")
+            source = data.get("source")
+            if title:
+                context_items.append(
+                    f"artifact_preview service={service} title={title} source={source}"
+                )
         elif attachment_type == "user_input_request":
             question = data.get("question")
             missing_fields = data.get("missingFields")
@@ -181,7 +215,12 @@ async def run(
     )
     log.info("agent_run_started", message_count=len(messages))
     event_queue: asyncio.Queue[AgentEvent] = asyncio.Queue()
-    deps = AgentDeps(user_id=user_id, conversation_id=conv_id, event_queue=event_queue)
+    deps = AgentDeps(
+        user_id=user_id,
+        conversation_id=conv_id,
+        event_queue=event_queue,
+        platform_resources=_platform_resources_from_messages(messages),
+    )
     user_prompt, message_history = _history_from_store_messages(messages)
 
     try:

@@ -45,7 +45,9 @@ reasoning effort degistirmez.
   mevcut `tool_call` event'lerinden turetilen son 3 guvenli progress adimini
   listeler.
 - `attachment`: `workflow_preview`, `oauth_prompt`, `credential_request` ve
-  `user_input_request` gibi ekleri mesaja ekler.
+  `user_input_request` gibi ekleri mesaja ekler. Google Sheets sonuc
+  onizlemeleri icin `artifact_preview` attachment'i de ayni SSE sozlesmesini
+  kullanir.
 - `done`: conversation, provider ve model bilgisini tamamlar.
 - `error`: toast ile hata gosterir.
 
@@ -124,6 +126,27 @@ Direct action ornekleri Gmail icin mail gonderme, arama/listeleme, mesaj
 detayi alma, read/unread isaretleme, archive/trash ve label islemleridir.
 Sheets icin spreadsheet olusturma, sheet/tab olusturma/silme, range
 read/update/clear ve row append desteklenir.
+
+Google Sheets create/read/update/append direct action'lari basarili olursa
+agent `artifact_preview` attachment'i emit eder. Bu kart kucuk tablo preview'i
+ve Google Sheets linki tasir; tam platform verisini Conduut icinde kopyalamaz.
+Yeni bir spreadsheet olusturup ayni istekte veri yazma gibi tek seferlik
+Sheets akislarinda agent once `sheets.spreadsheet.create` ile `title` ve
+`sheet_name` vermeli, sonra donen `spreadsheetId` ile `sheets.range.update`
+cagirip `range='<sheet_name>!A1'` ve header dahil `values` gondermelidir.
+Backend tarafinda `range.update` ve `row.append` hedef tab yoksa once
+olusturur; `sheets.sheet.create` ayni tab zaten varsa hata yerine idempotent
+basari dondurur.
+Takip mesajlarinda runner onceki Google Sheets `artifact_preview`
+attachment'larini internal platform resource baglamina cevirir. Bu yuzden
+"tekrar dene", "veriyi yaz", "son olusturdugun sheet'e kaydet" gibi mesajlarda
+agent yeni spreadsheet acmak yerine son artifact'teki `spreadsheetId` ile devam
+edebilir. Backend de `spreadsheet_id` eksik Sheets read/update/append
+action'larini bu baglamdan tamamlar; baglam yoksa Google API'ye bos id ile
+gitmeden `missing_input` dondurur.
+Artifact tablo satirlari Firestore uyumlulugu icin nested array olarak degil,
+kolon adlariyla keylenmis satir objeleri olarak saklanir. Chat UI bu formatla
+render eder ve eski array row formatina toleranslidir.
 
 Kullanicinin eksik capability'si varsa agent direct action veya workflow side
 effect yapmadan `oauth_prompt` attachment'i dondurur. Attachment artik
@@ -207,8 +230,10 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
   Conduut'tan calistirir ve n8n execution detayini agent icinde kanit olarak
   kontrol eder. Tool artik opsiyonel `input` payload alir; eksik required
   runtime input varsa workflow'u calistirmadan `request_user_input` ile sorar.
-  Chat'e artik ayri `workflow_run_result` attachment/kart gonderilmez; agent
-  dogrulamayi kendi yapar ve kullaniciya yalnizca sade metin cevabi verir.
+  Chat'e teknik `workflow_run_result` attachment/kart gonderilmez; agent
+  dogrulamayi kendi yapar ve kullaniciya sade metin cevabi verir. Sheets
+  ciktisi varsa teknik kanit yerine kullanici odakli `artifact_preview` karti
+  gosterilir.
 - n8n production webhook registration icin Webhook node'larinda `webhookId`
   bulunmali. Agent validator/normalizer eksikse otomatik UUID uretir.
 - Connections yapisi n8n editor uyumlulugu icin nested output array formatina

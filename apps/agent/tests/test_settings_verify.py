@@ -60,3 +60,25 @@ def test_model_option_includes_reasoning_efforts_for_supported_openai_model():
         "supports_reasoning": True,
         "reasoning_efforts": ["minimal", "low", "medium", "high"],
     }
+
+
+@pytest.mark.asyncio
+async def test_openai_models_use_static_catalog_without_remote_fetch(monkeypatch):
+    monkeypatch.setattr(settings_route, "get_user_id", lambda _request: "user_1")
+
+    async def fake_get_provider(_user_id: str, provider: str):
+        return store.ProviderConnection(provider=provider, api_key="key")
+
+    monkeypatch.setattr(settings_route.store, "get_provider", fake_get_provider)
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("OpenAI model picker should not call the remote models API")
+
+    monkeypatch.setattr(settings_route.httpx, "AsyncClient", fail_if_called)
+
+    result = await settings_route.get_provider_models("openai", request=object())
+
+    model_ids = {item["id"] for item in result["models"]}
+    assert "gpt-5.2" in model_ids
+    assert "gpt-4o-mini" in model_ids
+    assert all("supports_reasoning" in item for item in result["models"])

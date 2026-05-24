@@ -41,8 +41,10 @@ def _connection(**overrides):
         "updated_at": "now",
         "capabilities": [
             "sheets.spreadsheet.create",
+            "sheets.sheet.manage",
             "sheets.range.read",
             "sheets.range.update",
+            "sheets.range.clear",
             "sheets.row.append",
         ],
         "permission_packs": ["sheets.app_files"],
@@ -173,6 +175,258 @@ async def test_sheets_create_direct_action_uses_encrypted_refresh_token(monkeypa
     assert captured["method"] == "POST"
     assert captured["kwargs"]["access_token"] == "access_token"
     assert captured["audit"]["target_resource"] == "sheet_123"
+
+
+@pytest.mark.asyncio
+async def test_sheets_write_uses_spreadsheet_created_earlier_in_same_agent_turn(monkeypatch):
+    async def fake_create_spreadsheet(_self, *, title: str, sheet_title: str | None = None):
+        assert title == "Conduut Artifacts V1 Test"
+        assert sheet_title == "Leads"
+        return {
+            "spreadsheetId": "sheet_123",
+            "spreadsheetUrl": "https://sheet.test",
+            "properties": {"title": title},
+        }
+
+    ensured: dict = {}
+
+    async def fake_ensure_sheet(_self, *, spreadsheet_id: str, title: str):
+        ensured["spreadsheet_id"] = spreadsheet_id
+        ensured["title"] = title
+        return {"spreadsheetId": spreadsheet_id, "alreadyExists": True}
+
+    async def fake_update_range(_self, *, spreadsheet_id: str, range: str, values: list):
+        assert spreadsheet_id == "sheet_123"
+        assert range == "Leads!A1"
+        return {
+            "spreadsheetId": spreadsheet_id,
+            "updatedRange": "Leads!A1:D4",
+            "updatedRows": 4,
+        }
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "src.platforms.actions.SheetsClient.create_spreadsheet",
+        fake_create_spreadsheet,
+    )
+    monkeypatch.setattr("src.platforms.actions.SheetsClient.ensure_sheet", fake_ensure_sheet)
+    monkeypatch.setattr("src.platforms.actions.SheetsClient.update_range", fake_update_range)
+    monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
+    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+
+    create_result = await run_platform_action_payload(
+        deps,
+        PlatformActionPlan(
+            action="sheets.spreadsheet.create",
+            params={"title": "Conduut Artifacts V1 Test", "sheet_name": "Leads"},
+        ),
+    )
+    update_result = await run_platform_action_payload(
+        deps,
+        PlatformActionPlan(
+            action="sheets.range.update",
+            params={
+                "values": [
+                    ["Ad Soyad", "Email", "Kaynak", "Durum"],
+                    ["Ayse Yilmaz", "ayse@example.com", "Gmail", "Yeni"],
+                ],
+            },
+        ),
+    )
+
+    assert create_result.success is True
+    assert update_result.success is True
+    assert ensured == {"spreadsheet_id": "sheet_123", "title": "Leads"}
+    assert deps.platform_resources["google_sheets"]["spreadsheet_id"] == "sheet_123"
+
+
+@pytest.mark.asyncio
+async def test_sheets_action_rejects_missing_spreadsheet_id_before_google_request(monkeypatch):
+    async def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("Google Sheets client should not be called without spreadsheet_id")
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("src.platforms.actions.SheetsClient.read_range", fail_if_called)
+    monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
+    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+
+    result = await run_platform_action_payload(
+        deps,
+        PlatformActionPlan(action="sheets.range.read", params={"range": "Leads!A1:D4"}),
+    )
+
+    assert result.success is False
+    assert result.status == "missing_input"
+    assert "spreadsheet_id" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_sheets_append_direct_action_emits_artifact_preview(monkeypatch):
+    ensured: dict = {}
+
+    async def fake_ensure_sheet(_self, *, spreadsheet_id: str, title: str):
+        ensured["spreadsheet_id"] = spreadsheet_id
+        ensured["title"] = title
+        return {"spreadsheetId": spreadsheet_id, "alreadyExists": True}
+
+    async def fake_append_row(_self, *, spreadsheet_id: str, range: str, values: list):
+        assert range == "Log!A1"
+        return {
+            "spreadsheetId": spreadsheet_id,
+            "updates": {"updatedRange": f"{range}!A2:B2", "updatedRows": 1},
+        }
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("src.platforms.actions.SheetsClient.ensure_sheet", fake_ensure_sheet)
+    monkeypatch.setattr("src.platforms.actions.SheetsClient.append_row", fake_append_row)
+    monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
+    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+
+    result = await run_platform_action_payload(
+        deps,
+        PlatformActionPlan(
+            action="sheets.row.append",
+            params={
+                "spreadsheet_id": "sheet_123",
+                "sheet_name": "Log",
+                "row": {"Email": "person@example.com", "Status": "Sent"},
+            },
+        ),
+    )
+
+    assert result.success is True
+    assert result.artifacts[0].title == "Google Sheets row added"
+    assert result.artifacts[0].url == "https://docs.google.com/spreadsheets/d/sheet_123/edit"
+    assert result.artifacts[0].table is not None
+    assert result.artifacts[0].table.columns == ["Email", "Status"]
+    assert result.artifacts[0].table.rows == [{"Email": "person@example.com", "Status": "Sent"}]
+    assert deps.attachments[0]["type"] == "artifact_preview"
+    assert ensured == {"spreadsheet_id": "sheet_123", "title": "Log"}
+
+
+@pytest.mark.asyncio
+async def test_sheets_sheet_create_direct_action_is_idempotent(monkeypatch):
+    async def fake_ensure_sheet(_self, *, spreadsheet_id: str, title: str):
+        assert spreadsheet_id == "sheet_123"
+        assert title == "Leads"
+        return {
+            "spreadsheetId": spreadsheet_id,
+            "alreadyExists": True,
+            "sheet": {"properties": {"sheetId": 7, "title": title}},
+        }
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("src.platforms.actions.SheetsClient.ensure_sheet", fake_ensure_sheet)
+    monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
+    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+
+    result = await run_platform_action_payload(
+        deps,
+        PlatformActionPlan(
+            action="sheets.sheet.create",
+            params={"spreadsheet_id": "sheet_123", "sheet_name": "Leads"},
+        ),
+    )
+
+    assert result.success is True
+    assert result.data is not None
+    assert result.data["alreadyExists"] is True
+    assert result.artifacts[0].title == "Google Sheets tab created"
+
+
+@pytest.mark.asyncio
+async def test_sheets_range_update_ensures_named_sheet_and_uses_header_artifact(monkeypatch):
+    ensured: dict = {}
+
+    async def fake_ensure_sheet(_self, *, spreadsheet_id: str, title: str):
+        ensured["spreadsheet_id"] = spreadsheet_id
+        ensured["title"] = title
+        return {"spreadsheetId": spreadsheet_id, "alreadyExists": True}
+
+    async def fake_update_range(_self, *, spreadsheet_id: str, range: str, values: list):
+        assert spreadsheet_id == "sheet_123"
+        assert range == "Leads!A1"
+        return {
+            "spreadsheetId": spreadsheet_id,
+            "updatedRange": "Leads!A1:D4",
+            "updatedRows": 4,
+        }
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("src.platforms.actions.SheetsClient.ensure_sheet", fake_ensure_sheet)
+    monkeypatch.setattr("src.platforms.actions.SheetsClient.update_range", fake_update_range)
+    monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
+    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+
+    result = await run_platform_action_payload(
+        deps,
+        PlatformActionPlan(
+            action="sheets.range.update",
+            params={
+                "spreadsheet_id": "sheet_123",
+                "sheet_name": "Leads",
+                "values": [
+                    ["Ad Soyad", "Email", "Kaynak", "Durum"],
+                    ["Ayse Yilmaz", "ayse@example.com", "Gmail", "Yeni"],
+                ],
+            },
+        ),
+    )
+
+    assert result.success is True
+    assert ensured == {"spreadsheet_id": "sheet_123", "title": "Leads"}
+    assert result.artifacts[0].table is not None
+    assert result.artifacts[0].table.columns == ["Ad Soyad", "Email", "Kaynak", "Durum"]
+    assert result.artifacts[0].table.rows == [
+        {
+            "Ad Soyad": "Ayse Yilmaz",
+            "Email": "ayse@example.com",
+            "Kaynak": "Gmail",
+            "Durum": "Yeni",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sheets_read_direct_action_returns_table_artifact(monkeypatch):
+    async def fake_read_range(_self, *, spreadsheet_id: str, range: str):
+        assert spreadsheet_id == "sheet_123"
+        assert range == "Log!A1:B3"
+        return {
+            "range": range,
+            "values": [["Email", "Status"], ["person@example.com", "Sent"]],
+        }
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("src.platforms.actions.SheetsClient.read_range", fake_read_range)
+    monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
+    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+
+    result = await run_platform_action_payload(
+        deps,
+        PlatformActionPlan(
+            action="sheets.range.read",
+            params={"spreadsheet_id": "sheet_123", "range": "Log!A1:B3"},
+        ),
+    )
+
+    assert result.success is True
+    assert result.artifacts[0].title == "Google Sheets range read"
+    assert result.artifacts[0].table is not None
+    assert result.artifacts[0].table.columns == ["Email", "Status"]
+    assert result.artifacts[0].table.rows == [{"Email": "person@example.com", "Status": "Sent"}]
 
 
 @pytest.mark.asyncio
