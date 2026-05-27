@@ -24,6 +24,7 @@ Router'lar `/api` prefix'i altinda include edilir:
 
 - `chat`
 - `conversations`
+- `artifacts`
 - `settings`
 - `favorites`
 - `workflows`
@@ -136,6 +137,12 @@ endpoint'inin ag, quota veya provider API izin problemi yuzunden 502 donup
 settings ekranini kirmasini engeller; provider key dogrulamasi ayri
 `verify_provider_connection` akisinda kalir. Groq ve OpenRouter model listeleri
 hala provider API'sinden dinamik cekilir.
+Chat model selector uyumlulugu icin provider liste endpoint'i yeni
+`users/{uid}/providers` collection'i bos olsa bile aktif
+`users/{uid}/settings/llm` kaydindaki provider'i fallback olarak listeye ekler.
+Model liste endpoint'i de provider collection kaydi yoksa aktif LLM ayari ayni
+provider'a ait oldugunda modelleri dondurebilir. Bu eski settings kaydina sahip
+kullanicilarda selector'in tamamen saklanmasini engeller.
 Provider hata siniflandirmasi auth/model-not-found/rate-limit durumlarina ek
 olarak `insufficient_quota`, quota ve billing mesajlarini ayri yakalar; chat
 SSE error event'i kullaniciya provider quota/billing problemini net soyler.
@@ -180,9 +187,10 @@ Kayitli tool'lar:
 
 V1 artifact modeli [[artifacts]] notunda tanimlidir. Agent Google Sheets
 direct action'lari veya Sheets iceren workflow run sonuclari icin
-`artifact_preview` attachment'i emit eder. Attachment ayri Firestore
-collection'a yazilmaz; assistant mesajinin attachment snapshot'i olarak
-conversation history icinde kalir.
+`artifact_preview` attachment'i emit eder. Assistant mesajinin attachment
+snapshot'i conversation history icinde kalir; ayrica preview payload'i
+`users/{uid}/artifacts/{artifactId}` collection'ina kalici dashboard snapshot'i
+olarak yazilir.
 
 `WorkflowRunResultData` ve workflow run route response'u `artifacts` listesi
 tasir. Direct Sheets action sonucunda `PlatformActionResult.artifacts` ayni
@@ -203,6 +211,12 @@ sonuclarindan da bu resource baglamini gunceller. Boylece kullanici "tekrar
 dene" dediginde agent'in onceki spreadsheet'i kullanmasi desteklenir; backend
 bos `spreadsheet_id` ile Google API'ye `spreadsheets//...` cagrisi yapmak
 yerine `missing_input` hatasi dondurur.
+
+`GET /api/artifacts`, kullanicinin son artifact snapshot'larini `createdAt`
+camelCase alani ve `origin` metadata'siyle dondurur. Agent runner chat
+artifact'larini `origin.kind=chat`, dashboard workflow run route'u ise run
+sonucundaki artifact'lari `origin.kind=workflow_run` ile kaydeder. Persist
+hatalari asil chat veya run response'unu kirmadan structured log'a yazilir.
 
 ## Platform Capability Layer
 
@@ -470,9 +484,10 @@ cevirir. Aksi halde n8n workflow'u API'den kabul etse bile editor
 - `users/{uid}/connections/google_sheets`
 - `users/{uid}/workflow_metadata/{workflowId}`
 - `users/{uid}/platform_action_audit/{auditId}`
+- `users/{uid}/artifacts/{artifactId}`
 
-Artifacts V1 ayri collection kullanmaz; `artifact_preview` payload'lari
-conversation message attachment'i olarak saklanir.
+Artifact preview payload'lari hem conversation message attachment'i olarak
+saklanir hem de dashboard listesi icin `artifacts` collection'ina yazilir.
 
 Conversation detail route'u frontend uyumlulugu icin message response'larinda
 snake_case alanlari korurken `createdAt`, `messageCount`, `updatedAt` ve

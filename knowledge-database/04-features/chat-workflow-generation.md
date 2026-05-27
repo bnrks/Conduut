@@ -34,6 +34,18 @@ conversation metadata'sindan kilitlenir. Reasoning effort secildiyse o da
 metadata'dan kilitlenir. Kullanici ayni conversation icinde model veya
 reasoning effort degistirmez.
 
+## Model Selector Uyumlulugu
+
+Yeni chat model selector'i provider/model listesini
+`/api/settings/llm/providers` ve
+`/api/settings/llm/providers/{provider}/models` uzerinden yukler. 2026-05-27
+itibariyla backend bu provider listesinde yeni `providers` collection'i bos
+olsa bile aktif `settings/llm` kaydindaki provider'i fallback olarak dondurur;
+model liste endpoint'i de provider collection kaydi yoksa aktif LLM ayari ayni
+provider'a aitse modelleri dondurebilir. Bu, eski ayar formatina sahip
+kullanicilarda GET 200 donmesine ragmen chat model selector'inin tamamen
+saklanmasini engeller.
+
 ## SSE Event'leri
 
 - `token`: assistant cevabinin text parcasini ekler.

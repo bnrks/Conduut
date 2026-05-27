@@ -189,6 +189,30 @@ def _event_to_sse(item: AgentEvent) -> str:
     return _sse(event, data)
 
 
+async def _persist_artifact_previews(
+    user_id: str,
+    attachments: list[dict],
+    *,
+    origin: dict,
+) -> None:
+    for attachment in attachments:
+        if not isinstance(attachment, dict) or attachment.get("type") != "artifact_preview":
+            continue
+        data = attachment.get("data")
+        if not isinstance(data, dict):
+            continue
+        try:
+            await store.save_artifact(user_id, data, origin=origin)
+        except Exception as exc:
+            log.error(
+                "artifact_persist_error",
+                error_type=type(exc).__name__,
+                error=str(exc),
+                origin=origin,
+                exc_info=True,
+            )
+
+
 async def _drain_events(queue: asyncio.Queue[AgentEvent]) -> AsyncIterator[str]:
     while not queue.empty():
         yield _event_to_sse(queue.get_nowait())
@@ -326,6 +350,7 @@ async def run(
         full_content += chunk
         yield _sse("token", {"text": chunk, "conversation_id": conv_id})
 
+    assistant_saved = False
     try:
         await store.add_message(
             user_id,
@@ -337,12 +362,20 @@ async def run(
             attachments=deps.attachments or None,
         )
         log.info("assistant_message_saved", content_length=len(full_content))
+        assistant_saved = True
     except Exception as exc:
         log.error(
             "store_add_message_error",
             error_type=type(exc).__name__,
             error=str(exc),
             exc_info=True,
+        )
+
+    if assistant_saved and deps.attachments:
+        await _persist_artifact_previews(
+            user_id,
+            deps.attachments,
+            origin={"kind": "chat", "conversationId": conv_id},
         )
 
     yield _sse(

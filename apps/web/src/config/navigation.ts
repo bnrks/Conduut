@@ -1,6 +1,7 @@
 import {
   MessageSquare,
   Workflow,
+  Files,
   Plug,
   BarChart3,
   Settings,
@@ -16,6 +17,7 @@ export interface NavItem {
 export const DASHBOARD_NAV: NavItem[] = [
   { label: "Chat", href: "/chat", icon: MessageSquare },
   { label: "Workflows", href: "/dashboard/workflows", icon: Workflow },
+  { label: "Artifacts", href: "/dashboard/artifacts", icon: Files },
   { label: "Connections", href: "/dashboard/connections", icon: Plug },
   { label: "Usage", href: "/dashboard/usage", icon: BarChart3 },
   { label: "Settings", href: "/dashboard/settings", icon: Settings },

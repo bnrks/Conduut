@@ -63,6 +63,52 @@ def test_model_option_includes_reasoning_efforts_for_supported_openai_model():
 
 
 @pytest.mark.asyncio
+async def test_get_providers_includes_active_llm_fallback(monkeypatch):
+    monkeypatch.setattr(settings_route, "get_user_id", lambda _request: "user_1")
+
+    async def fake_list_providers(_user_id: str):
+        return []
+
+    async def fake_get_llm_settings(_user_id: str):
+        return store.LLMSettings(
+            provider="openai",
+            model="gpt-5",
+            api_key="sk-test-secret",
+        )
+
+    monkeypatch.setattr(settings_route.store, "list_providers", fake_list_providers)
+    monkeypatch.setattr(settings_route.store, "get_llm_settings", fake_get_llm_settings)
+
+    result = await settings_route.get_providers(request=object())
+
+    assert result == {"providers": [{"provider": "openai", "masked_key": "sk-t****cret"}]}
+
+
+@pytest.mark.asyncio
+async def test_provider_models_use_active_llm_fallback(monkeypatch):
+    monkeypatch.setattr(settings_route, "get_user_id", lambda _request: "user_1")
+
+    async def fake_get_provider(_user_id: str, _provider: str):
+        return None
+
+    async def fake_get_llm_settings(_user_id: str):
+        return store.LLMSettings(
+            provider="openai",
+            model="gpt-5",
+            api_key="key",
+        )
+
+    monkeypatch.setattr(settings_route.store, "get_provider", fake_get_provider)
+    monkeypatch.setattr(settings_route.store, "get_llm_settings", fake_get_llm_settings)
+
+    result = await settings_route.get_provider_models("openai", request=object())
+
+    model_ids = {item["id"] for item in result["models"]}
+    assert "gpt-5" in model_ids
+    assert "gpt-4o-mini" in model_ids
+
+
+@pytest.mark.asyncio
 async def test_openai_models_use_static_catalog_without_remote_fetch(monkeypatch):
     monkeypatch.setattr(settings_route, "get_user_id", lambda _request: "user_1")
 

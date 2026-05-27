@@ -7,6 +7,9 @@ from src import store
 from src.agent import runner
 from src.agent.schemas import (
     AgentDeps,
+    ArtifactPreviewAttachment,
+    ArtifactPreviewData,
+    ArtifactPreviewTable,
     UserInputRequestAttachment,
     UserInputRequestData,
     WorkflowPreviewAttachment,
@@ -30,6 +33,25 @@ class FakeAgent:
                     name="Demo",
                     nodeCount=2,
                     status="inactive",
+                )
+            )
+        )
+        return FakeResult()
+
+
+class FakeArtifactAgent:
+    async def run(self, _prompt, *, deps, message_history, model_settings, usage_limits):
+        await deps.emit_attachment(
+            ArtifactPreviewAttachment(
+                data=ArtifactPreviewData(
+                    service="google_sheets",
+                    title="Google Sheets row added",
+                    url="https://sheet.test",
+                    source={"spreadsheetId": "sheet_1", "range": "Log!A1"},
+                    table=ArtifactPreviewTable(
+                        columns=["Email"],
+                        rows=[{"Email": "person@example.com"}],
+                    ),
                 )
             )
         )
@@ -253,6 +275,52 @@ async def test_runner_preserves_sse_contract(monkeypatch):
     assert event_names[-1] == "done"
     assert saved["args"][2] == "assistant"
     assert saved["kwargs"]["attachments"][0]["type"] == "workflow_preview"
+
+
+@pytest.mark.asyncio
+async def test_runner_persists_artifact_preview_attachments(monkeypatch):
+    saved_artifacts: list[dict] = []
+
+    async def fake_add_message(*_args, **_kwargs):
+        return None
+
+    async def fake_save_artifact(user_id: str, artifact: dict, *, origin: dict):
+        saved_artifacts.append({"user_id": user_id, "artifact": artifact, "origin": origin})
+
+    monkeypatch.setattr(runner, "build_model", lambda *_args: object())
+    monkeypatch.setattr(runner, "create_agent", lambda _model: FakeArtifactAgent())
+    monkeypatch.setattr(runner.store, "add_message", fake_add_message)
+    monkeypatch.setattr(runner.store, "save_artifact", fake_save_artifact)
+
+    events = [
+        _parse_sse(raw)
+        async for raw in runner.run(
+            "user_1",
+            "conv_1",
+            [{"role": "user", "content": "add a row"}],
+            store.LLMSettings(provider="openai", model="gpt-4o-mini", api_key="key"),
+        )
+        if raw.startswith("event:")
+    ]
+
+    assert events[-1][0] == "done"
+    assert saved_artifacts == [
+        {
+            "user_id": "user_1",
+            "artifact": {
+                "service": "google_sheets",
+                "title": "Google Sheets row added",
+                "url": "https://sheet.test",
+                "source": {"spreadsheetId": "sheet_1", "range": "Log!A1"},
+                "table": {
+                    "columns": ["Email"],
+                    "rows": [{"Email": "person@example.com"}],
+                    "truncated": False,
+                },
+            },
+            "origin": {"kind": "chat", "conversationId": "conv_1"},
+        }
+    ]
 
 
 @pytest.mark.asyncio

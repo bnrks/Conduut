@@ -3,6 +3,7 @@
 import asyncio
 from typing import Any, Literal
 
+import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -16,6 +17,7 @@ from src.agent.tools import (
 from src.auth import get_user_id
 
 router = APIRouter()
+log = structlog.get_logger()
 
 
 class WorkflowRunRequest(BaseModel):
@@ -98,6 +100,25 @@ async def run_workflow(workflow_id: str, request: Request, body: WorkflowRunRequ
             user_id=user_id,
             input_payload=(body.input if body else {}),
         )
+        for artifact in result.artifacts:
+            try:
+                await store.save_artifact(
+                    user_id,
+                    artifact.model_dump(exclude_none=True),
+                    origin={
+                        "kind": "workflow_run",
+                        "workflowId": workflow_id,
+                        "executionId": result.executionId,
+                    },
+                )
+            except Exception as exc:
+                log.error(
+                    "workflow_artifact_persist_error",
+                    workflow_id=workflow_id,
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                    exc_info=True,
+                )
         return {
             "success": result.status not in {"error", "failed"},
             "workflow_id": workflow_id,

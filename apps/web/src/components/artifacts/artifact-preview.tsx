@@ -1,4 +1,5 @@
-import { ExternalLink, Table2 } from "lucide-react";
+import type { ReactNode } from "react";
+import { ExternalLink, Mail, Table2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import type { ArtifactPreviewData, ArtifactPreviewRow } from "@/types/artifact";
@@ -6,6 +7,7 @@ import type { ArtifactPreviewData, ArtifactPreviewRow } from "@/types/artifact";
 export interface ArtifactPreviewProps {
   data: ArtifactPreviewData;
   className?: string;
+  metadata?: ReactNode;
 }
 
 function cellText(value: unknown): string {
@@ -26,11 +28,17 @@ function rowCell(row: ArtifactPreviewRow, column: string, columnIndex: number): 
   return row[column];
 }
 
-export function ArtifactPreview({ data, className }: ArtifactPreviewProps) {
+function serviceFallback(service: ArtifactPreviewData["service"]): string {
+  if (service === "gmail") return "Preview is available in Gmail.";
+  return "Preview is available in Google Sheets.";
+}
+
+export function ArtifactPreview({ data, className, metadata }: ArtifactPreviewProps) {
   const table = data.table;
   const columns = Array.isArray(table?.columns) ? table.columns : [];
   const rows = Array.isArray(table?.rows) ? table.rows : [];
   const hasRows = columns.length > 0 && rows.length > 0;
+  const Icon = data.service === "gmail" ? Mail : Table2;
 
   return (
     <div
@@ -42,11 +50,13 @@ export function ArtifactPreview({ data, className }: ArtifactPreviewProps) {
       <div className="flex items-start justify-between gap-3 border-b border-border px-3.5 py-3">
         <div className="flex min-w-0 items-start gap-2.5">
           <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted text-conduut-500">
-            <Table2 className="h-4 w-4" />
+            <Icon className="h-4 w-4" />
           </div>
           <div className="min-w-0">
+            {metadata}
             <p className="truncate text-[13px] font-medium">
-              {data.title || "Google Sheets preview"}
+              {data.title ||
+                (data.service === "gmail" ? "Gmail preview" : "Google Sheets preview")}
             </p>
             {data.description && (
               <p className="mt-0.5 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
@@ -103,7 +113,7 @@ export function ArtifactPreview({ data, className }: ArtifactPreviewProps) {
         </div>
       ) : (
         <div className="px-3.5 py-3 text-[12px] text-muted-foreground">
-          Preview is available in Google Sheets.
+          {serviceFallback(data.service)}
         </div>
       )}
 

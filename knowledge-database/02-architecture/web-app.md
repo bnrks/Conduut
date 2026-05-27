@@ -53,6 +53,7 @@ Baslica route handler'lar:
 - `api/chat/send`: FastAPI `/api/chat/send` endpoint'ine SSE stream proxy eder.
 - `api/conversations`: conversation listesi.
 - `api/conversations/[conversationId]`: conversation detail/delete.
+- `api/artifacts`: kalici artifact preview snapshot listesi.
 - `api/workflows`: workflow listesi.
 - `api/workflows/[workflowId]`: activate/deactivate/delete proxy.
 - `api/connections`: connection listeleme.
@@ -132,6 +133,20 @@ etmez, assistant text'i akitir ve `done` event'inde kartlari ayni mesajin
 altinda acar. Boylece artifact kartlari once gorunup sonradan ustlerine final
 cevap bubble'i eklenmis gibi ziplama yapmaz.
 
+## Dashboard Artifacts
+
+`/dashboard/artifacts` kullanicinin kalici artifact preview snapshot'larini
+listeler. Sayfa Firebase token ile `/api/artifacts?limit=50` BFF route'unu
+cagirir; servis filtresi secildiginde `service=google_sheets` veya
+`service=gmail` query parametresi gonderir. Chat ve workflow run tarafinda
+uretilen raw snapshot sozlesmesi ayni kalir, ancak dashboard Sheets icin bu
+snapshot'lari dogrudan chat karti gibi basmaz. Web sayfasi Google Sheets
+kayitlarini `spreadsheetId` veya URL'e gore tek resource kartinda gruplar;
+metadata-only `spreadsheet.create` tablosundan spreadsheet adi/sheet bilgisini
+alir, veri preview'i icin ise en yeni metadata disi tablo snapshot'ini kullanir.
+Bu sayede ayni Sheet icin "spreadsheet created" ve "range updated" aksiyonlari
+ayri kartlar olarak gorunmez.
+
 `ClarificationPanel` component'i agent'in aktif `user_input_request`
 attachment'ini render eder. Aktif son soru varken ana `ChatInput` composer'i
 gizlenir; alt cevap alaninda sadece clarification paneli gosterilir ve ayni
@@ -156,6 +171,9 @@ paneliyle cift gorunum olusmaz.
 
 - `chat-store.ts`: conversation sidebar state.
 - `ui-store.ts`: sidebar collapse gibi UI state.
-- `use-model-selector.ts`: provider, model ve favorite model secimi.
+- `use-model-selector.ts`: provider, model ve favorite model secimi. Backend
+  eski aktif `settings/llm` kaydini provider fallback'i olarak dondurdugu icin
+  yeni chat selector'i sadece yeni provider collection'i dolu olan
+  kullanicilarda degil, eski ayar formatina sahip kullanicilarda da gorunur.
 
 Ilgili notlar: [[chat-workflow-generation]], [[dashboard]], [[agent-service]].

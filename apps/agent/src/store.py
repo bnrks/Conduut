@@ -2,8 +2,11 @@
 
 # TODO : BURASI REFACTOR EDİLECEK ÇOK UZUN DOSYA.
 import asyncio
+import hashlib
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any
 from uuid import uuid4
 
 from src.firebase import db
@@ -121,6 +124,20 @@ class Conversation:
     messages: list[Message] | None = None
 
 
+@dataclass
+class ArtifactRecord:
+    id: str
+    service: str
+    type: str
+    title: str
+    created_at: str
+    origin: dict[str, Any] = field(default_factory=dict)
+    description: str | None = None
+    url: str | None = None
+    source: dict[str, Any] = field(default_factory=dict)
+    table: dict[str, Any] | None = None
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -140,6 +157,10 @@ def _msg_ref(user_id: str, conv_id: str, msg_id: str):
 
 def _workflow_metadata_ref(user_id: str, workflow_id: str):
     return _user_ref(user_id).collection("workflow_metadata").document(workflow_id)
+
+
+def _artifact_ref(user_id: str, artifact_id: str):
+    return _user_ref(user_id).collection("artifacts").document(artifact_id)
 
 
 async def _run(fn):
@@ -539,6 +560,123 @@ async def save_platform_action_audit(
         "created_at": _now_iso(),
     }
     await _run(lambda: _user_ref(user_id).collection("platform_action_audit").add(data))
+
+
+# ---------------------------------------------------------------------------
+# Artifacts
+# ---------------------------------------------------------------------------
+
+
+def _normalize_artifact_origin(origin: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {"kind": str(origin.get("kind") or "chat")}
+    for source_key, target_key in (
+        ("conversation_id", "conversationId"),
+        ("conversationId", "conversationId"),
+        ("workflow_id", "workflowId"),
+        ("workflowId", "workflowId"),
+        ("execution_id", "executionId"),
+        ("executionId", "executionId"),
+    ):
+        value = origin.get(source_key)
+        if value:
+            normalized[target_key] = str(value)
+    return normalized
+
+
+def _artifact_preview_type(artifact: dict[str, Any]) -> str:
+    service = str(artifact.get("service") or "")
+    if service == "gmail":
+        return "message_preview"
+    return "table_preview"
+
+
+def _artifact_document_id(artifact: dict[str, Any], origin: dict[str, Any]) -> str:
+    source = artifact.get("source") if isinstance(artifact.get("source"), dict) else {}
+    identity = [
+        artifact.get("service"),
+        artifact.get("title"),
+        artifact.get("url"),
+        source.get("spreadsheetId"),
+        source.get("range"),
+        origin.get("kind"),
+        origin.get("conversationId"),
+        origin.get("workflowId"),
+        origin.get("executionId"),
+    ]
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"), default=str)
+    return "art_" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:32]
+
+
+def _artifact_from_doc(doc) -> ArtifactRecord:
+    data = doc.to_dict() or {}
+    source = data.get("source") if isinstance(data.get("source"), dict) else {}
+    origin = data.get("origin") if isinstance(data.get("origin"), dict) else {}
+    table = data.get("table") if isinstance(data.get("table"), dict) else None
+    return ArtifactRecord(
+        id=doc.id,
+        service=str(data.get("service") or ""),
+        type=str(data.get("type") or "table_preview"),
+        title=str(data.get("title") or "Artifact"),
+        description=data.get("description"),
+        url=data.get("url"),
+        source=source,
+        table=table,
+        origin=origin,
+        created_at=str(data.get("created_at") or ""),
+    )
+
+
+async def save_artifact(
+    user_id: str,
+    artifact: dict[str, Any],
+    *,
+    origin: dict[str, Any],
+) -> ArtifactRecord:
+    origin_data = _normalize_artifact_origin(origin)
+    artifact_id = _artifact_document_id(artifact, origin_data)
+    source = artifact.get("source") if isinstance(artifact.get("source"), dict) else {}
+    table = artifact.get("table") if isinstance(artifact.get("table"), dict) else None
+    now = _now_iso()
+    data: dict[str, Any] = {
+        "service": str(artifact.get("service") or ""),
+        "type": _artifact_preview_type(artifact),
+        "title": str(artifact.get("title") or "Artifact"),
+        "source": source,
+        "origin": origin_data,
+        "created_at": now,
+    }
+    if artifact.get("description"):
+        data["description"] = str(artifact["description"])
+    if artifact.get("url"):
+        data["url"] = str(artifact["url"])
+    if table is not None:
+        data["table"] = table
+
+    await _run(lambda: _artifact_ref(user_id, artifact_id).set(data))
+    return ArtifactRecord(id=artifact_id, **data)
+
+
+async def list_artifacts(
+    user_id: str,
+    *,
+    limit: int = 50,
+    service: str | None = None,
+) -> list[ArtifactRecord]:
+    normalized_limit = max(1, min(limit, 100))
+    fetch_limit = normalized_limit if service is None else min(max(normalized_limit * 4, 50), 200)
+    docs = await _run(
+        lambda: list(
+            _user_ref(user_id)
+            .collection("artifacts")
+            .order_by("created_at", direction="DESCENDING")
+            .limit(fetch_limit)
+            .stream()
+        )
+    )
+    artifacts = [_artifact_from_doc(doc) for doc in docs]
+    if service:
+        artifacts = [artifact for artifact in artifacts if artifact.service == service]
+    return artifacts[:normalized_limit]
 
 
 # ---------------------------------------------------------------------------

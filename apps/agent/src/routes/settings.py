@@ -123,7 +123,16 @@ async def delete_settings(request: Request):
 @router.get("/settings/llm/providers")
 async def get_providers(request: Request):
     user_id = get_user_id(request)
-    return _providers_response(await store.list_providers(user_id))
+    providers = await store.list_providers(user_id)
+    active_settings = await store.get_llm_settings(user_id)
+    if active_settings and all(item.provider != active_settings.provider for item in providers):
+        providers.append(
+            store.ProviderConnection(
+                provider=active_settings.provider,
+                api_key=active_settings.api_key,
+            )
+        )
+    return _providers_response(providers)
 
 
 @router.put("/settings/llm/providers")
@@ -139,6 +148,10 @@ async def get_provider_models(provider: str, request: Request):
     user_id = get_user_id(request)
     provider = _provider_or_422(provider)
     conn = await store.get_provider(user_id, provider)
+    if not conn:
+        active_settings = await store.get_llm_settings(user_id)
+        if active_settings and active_settings.provider == provider:
+            conn = store.ProviderConnection(provider=provider, api_key=active_settings.api_key)
     if not conn:
         raise HTTPException(status_code=404, detail="Provider not found")
 
