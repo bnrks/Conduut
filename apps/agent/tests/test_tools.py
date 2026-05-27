@@ -334,6 +334,8 @@ def test_compile_workflow_plan_creates_gmail_then_sheets_append_workflow(monkeyp
                         "spreadsheet_id": "sheet_123",
                         "sheet_name": "Logs",
                         "columns": {
+                            "run_time": "NOW()",
+                            "created_at": "=NOW()",
                             "To": {"ref": "input.to"},
                             "Subject": {"ref": "input.subject"},
                             "Message": {"ref": "input.message"},
@@ -356,6 +358,18 @@ def test_compile_workflow_plan_creates_gmail_then_sheets_append_workflow(monkeyp
         "mode": "manual",
         "assignments": {
             "assignments": [
+                {
+                    "id": "run_time",
+                    "name": "run_time",
+                    "type": "string",
+                    "value": "={{$now.toISO()}}",
+                },
+                {
+                    "id": "created_at",
+                    "name": "created_at",
+                    "type": "string",
+                    "value": "={{$now.toISO()}}",
+                },
                 {
                     "id": "To",
                     "name": "To",

@@ -249,6 +249,9 @@ def _plan_value_expression(value: Any, *, trigger_name: str) -> Any:
             return _json_field_expression(field)
         raise WorkflowPlanCompileError(f"Unsupported ref: {ref}")
     if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.upper() in {"NOW()", "=NOW()"}:
+            return "={{$now.toISO()}}"
         if value.startswith("="):
             return value
         if "{{" in value:

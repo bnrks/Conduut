@@ -27,6 +27,12 @@ Tarayici sekme ikonu root metadata'da `/images/icons/conduut-icon.svg` olarak
 tanımlidir; `src/app/icon.svg` ayni Conduut ikonunu Next app icon convention'i
 icin saglar.
 
+Global font `src/app/layout.tsx` icinde `next/font/google` ile Inter ve
+JetBrains Mono olarak yuklenir. Inter `400`, `500` ve `600` weight'lerini
+yukler; `600`, Tailwind `font-semibold` kullanan metinlerin Webpack/Turbopack
+ve browser sentetik font farklarindan etkilenmeden tutarli kalmasi icin
+eklenmistir.
+
 ## Route Gruplari
 
 - `(marketing)`: landing/marketing sayfasi.
