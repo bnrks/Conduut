@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from urllib.parse import quote
 
-from src.agent.schemas import ArtifactPreviewData, ArtifactPreviewTable
+from src.agent.schemas import ArtifactPreviewData, ArtifactPreviewMessage, ArtifactPreviewTable
 from src.store import WorkflowMetadata
 
 MAX_ARTIFACT_ROWS = 10
@@ -234,6 +235,15 @@ def _source(
     range_label = _range_label(params, data)
     if range_label:
         source["range"] = range_label
+    message_id = data.get("id") or params.get("message_id") or params.get("messageId")
+    if message_id:
+        source["messageId"] = str(message_id)
+    thread_id = data.get("threadId") or params.get("thread_id") or params.get("threadId")
+    if thread_id:
+        source["threadId"] = str(thread_id)
+    query = params.get("query")
+    if query:
+        source["query"] = str(query)
     return source
 
 
@@ -324,6 +334,125 @@ def build_sheets_action_artifacts(
     ]
 
 
+def _gmail_url(*, message_id: str | None = None, query: str | None = None) -> str:
+    if message_id:
+        return f"https://mail.google.com/mail/u/0/#all/{quote(message_id)}"
+    if query:
+        return f"https://mail.google.com/mail/u/0/#search/{quote(query)}"
+    return "https://mail.google.com/mail/u/0/#inbox"
+
+
+def _split_recipients(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        values = value
+    else:
+        values = str(value).replace(";", ",").split(",")
+    return [str(item).strip() for item in values if str(item).strip()]
+
+
+def _gmail_headers(data: dict[str, Any]) -> dict[str, str]:
+    payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
+    headers = payload.get("headers") if isinstance(payload.get("headers"), list) else []
+    parsed: dict[str, str] = {}
+    for header in headers:
+        if not isinstance(header, dict):
+            continue
+        name = str(header.get("name") or "").strip().lower()
+        value = str(header.get("value") or "").strip()
+        if name and value and not _is_secret_key(name):
+            parsed[name] = _cell_preview(value)
+    return parsed
+
+
+def _gmail_message_from_action(
+    *,
+    action: str,
+    params: dict[str, Any],
+    data: dict[str, Any],
+) -> ArtifactPreviewMessage:
+    headers = _gmail_headers(data)
+    label_ids = data.get("labelIds") if isinstance(data.get("labelIds"), list) else []
+    messages = data.get("messages") if isinstance(data.get("messages"), list) else []
+    result_count = data.get("resultSizeEstimate")
+    if result_count is None and action == "gmail.message.search":
+        result_count = len(messages)
+
+    return ArtifactPreviewMessage(
+        messageId=str(data.get("id") or params.get("message_id") or "") or None,
+        threadId=str(data.get("threadId") or params.get("thread_id") or "") or None,
+        fromEmail=headers.get("from"),
+        to=_split_recipients(params.get("to") or headers.get("to")),
+        cc=_split_recipients(headers.get("cc")),
+        bcc=_split_recipients(headers.get("bcc")),
+        subject=_cell_preview(params.get("subject") or headers.get("subject"))
+        if (params.get("subject") or headers.get("subject"))
+        else None,
+        snippet=_cell_preview(data.get("snippet")) if data.get("snippet") else None,
+        bodyPreview=_cell_preview(params.get("message")) if params.get("message") else None,
+        labels=[_cell_preview(item) for item in label_ids[:8]],
+        query=_cell_preview(params.get("query")) if params.get("query") else None,
+        resultCount=int(result_count) if isinstance(result_count, int | float) else None,
+    )
+
+
+def build_gmail_action_artifacts(
+    *,
+    action: str,
+    params: dict[str, Any],
+    data: dict[str, Any] | None,
+) -> list[ArtifactPreviewData]:
+    data = data or {}
+    if not action.startswith("gmail."):
+        return []
+
+    message = _gmail_message_from_action(action=action, params=params, data=data)
+    message_id = message.messageId
+    query = message.query
+    title = "Gmail message updated"
+    description = "Conduut captured a preview of the Gmail result."
+
+    if action == "gmail.message.send":
+        title = "Gmail message sent"
+        recipient = ", ".join(message.to)
+        description = f"Sent to {recipient}." if recipient else "Message sent from Gmail."
+    elif action == "gmail.message.search":
+        title = "Gmail messages found"
+        count = message.resultCount
+        description = (
+            f"{count} message(s) matched this Gmail search."
+            if count is not None
+            else "Gmail search completed."
+        )
+    elif action == "gmail.message.get":
+        title = message.subject or "Gmail message"
+        description = "Preview of the Gmail message Conduut read."
+    elif action == "gmail.message.mark_read":
+        title = "Gmail message marked read"
+    elif action == "gmail.message.mark_unread":
+        title = "Gmail message marked unread"
+    elif action == "gmail.message.archive":
+        title = "Gmail message archived"
+    elif action == "gmail.message.trash":
+        title = "Gmail message moved to trash"
+    elif action == "gmail.message.label":
+        title = "Gmail labels updated"
+    else:
+        return []
+
+    return [
+        ArtifactPreviewData(
+            service="gmail",
+            title=title,
+            description=description,
+            url=_gmail_url(message_id=message_id, query=query),
+            source=_source(source_type="platform_action", action=action, params=params, data=data),
+            message=message,
+        )
+    ]
+
+
 def _first_spreadsheet_resource(metadata: WorkflowMetadata | None) -> dict[str, Any]:
     if metadata is None:
         return {}
@@ -385,6 +514,49 @@ def build_sheets_workflow_artifacts(
                     params=resource_params,
                 ),
                 table=table,
+            )
+        ]
+
+    return []
+
+
+def build_gmail_workflow_artifacts(
+    *,
+    workflow_id: str,
+    execution_id: str | None,
+    outputs: list[dict[str, Any]],
+) -> list[ArtifactPreviewData]:
+    for output in outputs:
+        node_name = str(output.get("nodeName") or "")
+        if "gmail" not in node_name.lower():
+            continue
+        rows = _rows_from_output_items(output.get("items"))
+        if not rows:
+            continue
+        first = rows[0]
+        message = _gmail_message_from_action(
+            action="gmail.message.send",
+            params={},
+            data=first,
+        )
+        title = "Gmail message captured"
+        description = "Preview of the Gmail result produced by this workflow run."
+        if message.messageId:
+            title = "Gmail message sent"
+        return [
+            ArtifactPreviewData(
+                service="gmail",
+                title=title,
+                description=description,
+                url=_gmail_url(message_id=message.messageId),
+                source=_source(
+                    source_type="workflow_run",
+                    workflow_id=workflow_id,
+                    execution_id=execution_id,
+                    node_name=node_name,
+                    data=first,
+                ),
+                message=message,
             )
         ]
 

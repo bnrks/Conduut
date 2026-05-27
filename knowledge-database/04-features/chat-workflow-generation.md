@@ -151,6 +151,15 @@ detayi alma, read/unread isaretleme, archive/trash ve label islemleridir.
 Sheets icin spreadsheet olusturma, sheet/tab olusturma/silme, range
 read/update/clear ve row append desteklenir.
 
+Gmail direct action'lari basarili olursa agent `artifact_preview` attachment'i
+emit eder. Bu kart `message_preview` seklindedir; alici, konu, gonderilen
+metin/snippet, message id, thread id, label, search query ve sonuc sayisi gibi
+guvenli ozet alanlarini tasir. Chat UI karti assistant mesajinin altinda
+gosterir; ayni snapshot dashboard `Artifacts` bolumunde Gmail filtresiyle
+kalici mail karti olarak listelenir. Gmail node'u iceren workflow run
+sonuclarinda da n8n execution output'undaki message id/thread id bilgisi
+message artifact'e cevrilir.
+
 Google Sheets create/read/update/append direct action'lari basarili olursa
 agent `artifact_preview` attachment'i emit eder. Bu kart kucuk tablo preview'i
 ve Google Sheets linki tasir; tam platform verisini Conduut icinde kopyalamaz.

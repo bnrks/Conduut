@@ -42,13 +42,29 @@ class ArtifactPreviewTable(BaseModel):
     totalRows: int | None = None
 
 
+class ArtifactPreviewMessage(BaseModel):
+    messageId: str | None = None
+    threadId: str | None = None
+    fromEmail: str | None = None
+    to: list[str] = Field(default_factory=list)
+    cc: list[str] = Field(default_factory=list)
+    bcc: list[str] = Field(default_factory=list)
+    subject: str | None = None
+    snippet: str | None = None
+    bodyPreview: str | None = None
+    labels: list[str] = Field(default_factory=list)
+    query: str | None = None
+    resultCount: int | None = None
+
+
 class ArtifactPreviewData(BaseModel):
-    service: Literal["google_sheets"]
+    service: Literal["google_sheets", "gmail"]
     title: str
     description: str | None = None
     url: str | None = None
     source: dict[str, Any] = Field(default_factory=dict)
     table: ArtifactPreviewTable | None = None
+    message: ArtifactPreviewMessage | None = None
 
 
 class ArtifactPreviewAttachment(BaseModel):

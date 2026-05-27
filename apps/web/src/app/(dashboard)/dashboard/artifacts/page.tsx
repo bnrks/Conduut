@@ -2,16 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ExternalLink, FileSearch, MessageSquare, Table2 } from "lucide-react";
+import { ExternalLink, FileSearch, Mail, MessageSquare, Table2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ServiceLogo } from "@/components/dashboard/service-logo";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { useAuth } from "@/hooks/use-auth";
 import type {
   ArtifactPreviewRow,
   ArtifactPreviewTable,
+  ArtifactPreviewMessage,
   ArtifactRecord,
   ArtifactService,
 } from "@/types/artifact";
@@ -39,6 +41,7 @@ const ACTION_TITLE_PATTERN =
 interface SheetArtifactItem {
   kind: "sheet";
   key: string;
+  artifactIds: string[];
   artifactCount: number;
   title?: string;
   spreadsheetId?: string;
@@ -230,6 +233,7 @@ function buildDashboardItems(artifacts: ArtifactRecord[]): DashboardArtifactItem
       ({
         kind: "sheet",
         key,
+        artifactIds: [],
         artifactCount: 0,
         latestAt: artifact.createdAt,
         latestTime,
@@ -238,6 +242,9 @@ function buildDashboardItems(artifacts: ArtifactRecord[]): DashboardArtifactItem
       } satisfies SheetArtifactItem);
 
     current.artifactCount += 1;
+    if (!current.artifactIds.includes(artifact.id)) {
+      current.artifactIds.push(artifact.id);
+    }
     if (latestTime >= current.latestTime) {
       current.latestAt = artifact.createdAt;
       current.latestTime = latestTime;
@@ -317,7 +324,81 @@ function PreviewTable({ table }: { table: ArtifactPreviewTable }) {
   );
 }
 
-function SheetsArtifactCard({ item }: { item: SheetArtifactItem }) {
+function messageValueList(value: string[] | undefined): string | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  return value.filter(Boolean).join(", ") || undefined;
+}
+
+function MessagePreview({ message }: { message: ArtifactPreviewMessage }) {
+  const rows = [
+    ["To", messageValueList(message.to)],
+    ["From", message.fromEmail],
+    ["Subject", message.subject],
+    ["Message ID", message.messageId],
+    ["Search", message.query],
+    [
+      "Matches",
+      typeof message.resultCount === "number" ? String(message.resultCount) : undefined,
+    ],
+    ["Labels", messageValueList(message.labels)],
+  ].filter((row): row is [string, string] => Boolean(row[1]));
+  const body = message.bodyPreview || message.snippet;
+
+  return (
+    <div className="border-t border-border px-4 py-4">
+      {rows.length > 0 && (
+        <dl className="grid gap-1.5 text-[12px]">
+          {rows.map(([label, value]) => (
+            <div key={label} className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="truncate font-medium text-foreground" title={value}>
+                {value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {body && (
+        <p className="mt-3 line-clamp-4 rounded-md bg-muted/40 px-3 py-2 text-[12px] leading-5 text-muted-foreground">
+          {body}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function DeleteArtifactButton({
+  label,
+  disabled,
+  onDelete,
+}: {
+  label: string;
+  disabled: boolean;
+  onDelete: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+      onClick={onDelete}
+      disabled={disabled}
+      aria-label={label}
+      title="Delete"
+    >
+      <Trash2 className="h-3.5 w-3.5" />
+    </button>
+  );
+}
+
+function SheetsArtifactCard({
+  item,
+  deleting,
+  onDelete,
+}: {
+  item: SheetArtifactItem;
+  deleting: boolean;
+  onDelete: (item: SheetArtifactItem) => void;
+}) {
   const title = item.title ?? (item.sheetName ? `${item.sheetName} sheet` : "Google Sheet");
   const detailParts = [
     item.sheetName ? `Sheet: ${item.sheetName}` : undefined,
@@ -347,17 +428,24 @@ function SheetsArtifactCard({ item }: { item: SheetArtifactItem }) {
             </p>
           </div>
         </div>
-        {item.url && (
-          <a
-            href={item.url}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:bg-muted"
-          >
-            Open
-            <ExternalLink className="h-3.5 w-3.5" />
-          </a>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {item.url && (
+            <a
+              href={item.url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:bg-muted"
+            >
+              Open
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          )}
+          <DeleteArtifactButton
+            label={`Delete ${title}`}
+            disabled={deleting}
+            onDelete={() => onDelete(item)}
+          />
+        </div>
       </div>
 
       {item.previewTable ? (
@@ -388,9 +476,19 @@ function SheetsArtifactCard({ item }: { item: SheetArtifactItem }) {
   );
 }
 
-function GenericArtifactCard({ item }: { item: GenericArtifactItem }) {
+function GenericArtifactCard({
+  item,
+  deleting,
+  onDelete,
+}: {
+  item: GenericArtifactItem;
+  deleting: boolean;
+  onDelete: (item: GenericArtifactItem) => void;
+}) {
   const artifact = item.artifact;
   const previewTable = tableHasPreviewData(artifact.table) ? artifact.table : undefined;
+  const messagePreview =
+    artifact.message && Object.keys(artifact.message).length > 0 ? artifact.message : undefined;
 
   return (
     <article className="overflow-hidden rounded-lg border border-border bg-card text-foreground">
@@ -415,23 +513,46 @@ function GenericArtifactCard({ item }: { item: GenericArtifactItem }) {
             )}
           </div>
         </div>
-        {artifact.url && (
-          <a
-            href={artifact.url}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:bg-muted"
-          >
-            Open
-            <ExternalLink className="h-3.5 w-3.5" />
-          </a>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {artifact.url && (
+            <a
+              href={artifact.url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:bg-muted"
+            >
+              Open
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          )}
+          <DeleteArtifactButton
+            label={`Delete ${artifact.title}`}
+            disabled={deleting}
+            onDelete={() => onDelete(item)}
+          />
+        </div>
       </div>
-      {previewTable ? (
+      {messagePreview ? (
+        <MessagePreview message={messagePreview} />
+      ) : previewTable ? (
         <PreviewTable table={previewTable} />
       ) : (
         <div className="border-t border-border px-4 py-5 text-[13px] text-muted-foreground">
           Preview is available in the source app.
+        </div>
+      )}
+      {artifact.service === "gmail" && (
+        <div className="flex min-w-0 flex-wrap items-center gap-2 border-t border-border bg-muted/25 px-4 py-2 text-[11px] text-muted-foreground">
+          <Mail className="h-3.5 w-3.5" />
+          <span>Gmail message preview</span>
+          {messagePreview?.messageId && (
+            <>
+              <span className="text-muted-foreground/50">/</span>
+              <span className="truncate" title={messagePreview.messageId}>
+                ID {messagePreview.messageId}
+              </span>
+            </>
+          )}
         </div>
       )}
     </article>
@@ -440,9 +561,11 @@ function GenericArtifactCard({ item }: { item: GenericArtifactItem }) {
 
 export default function ArtifactsPage() {
   const { user, loading: authLoading } = useAuth();
+  const confirm = useConfirm();
   const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [serviceFilter, setServiceFilter] = useState<ServiceFilter>("all");
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(() => new Set());
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams({ limit: "50" });
@@ -484,6 +607,50 @@ export default function ArtifactsPage() {
 
   const dashboardItems = useMemo(() => buildDashboardItems(artifacts), [artifacts]);
 
+  const deleteArtifacts = async (artifactIds: string[], title: string) => {
+    if (!user || artifactIds.length === 0) return;
+    const confirmed = await confirm({
+      title: artifactIds.length > 1 ? "Delete artifact previews?" : "Delete artifact?",
+      description:
+        artifactIds.length > 1
+          ? `"${title}" has ${artifactIds.length} saved previews. They will be removed from Conduut.`
+          : `"${title}" will be removed from Conduut.`,
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+
+    const previous = artifacts;
+    setDeletingIds((current) => new Set([...current, ...artifactIds]));
+    setArtifacts((current) => current.filter((artifact) => !artifactIds.includes(artifact.id)));
+    try {
+      const token = await user.getIdToken();
+      const responses = await Promise.all(
+        artifactIds.map((artifactId) =>
+          fetch(`/api/artifacts/${encodeURIComponent(artifactId)}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${token}` },
+          })
+        )
+      );
+      const failed = responses.find((response) => !response.ok);
+      if (failed) {
+        throw new Error(await getErrorMessage(failed, "Artifact could not be deleted."));
+      }
+      toast.success(artifactIds.length > 1 ? "Artifact previews deleted." : "Artifact deleted.");
+    } catch (error) {
+      setArtifacts(previous);
+      toast.error(error instanceof Error ? error.message : "Artifact could not be deleted.");
+    } finally {
+      setDeletingIds((current) => {
+        const next = new Set(current);
+        artifactIds.forEach((artifactId) => next.delete(artifactId));
+        return next;
+      });
+    }
+  };
+
   return (
     <div>
       <div className="mb-6 flex items-center justify-between gap-4">
@@ -521,9 +688,21 @@ export default function ArtifactsPage() {
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {dashboardItems.map((item) => (
             item.kind === "sheet" ? (
-              <SheetsArtifactCard key={item.key} item={item} />
+              <SheetsArtifactCard
+                key={item.key}
+                item={item}
+                deleting={item.artifactIds.some((artifactId) => deletingIds.has(artifactId))}
+                onDelete={(sheetItem) => void deleteArtifacts(sheetItem.artifactIds, sheetItem.title ?? "Google Sheet")}
+              />
             ) : (
-              <GenericArtifactCard key={item.key} item={item} />
+              <GenericArtifactCard
+                key={item.key}
+                item={item}
+                deleting={deletingIds.has(item.artifact.id)}
+                onDelete={(genericItem) =>
+                  void deleteArtifacts([genericItem.artifact.id], genericItem.artifact.title)
+                }
+              />
             )
           ))}
         </div>
@@ -536,7 +715,7 @@ export default function ArtifactsPage() {
             No artifacts yet
           </h2>
           <p className="mb-6 max-w-sm text-[14px] text-muted-foreground">
-            Run a Sheets action from chat or a workflow to keep a small result preview here.
+            Run a Sheets or Gmail action from chat to keep a small result preview here.
           </p>
           <Link href="/chat">
             <Button size="sm">

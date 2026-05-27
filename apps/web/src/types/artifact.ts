@@ -9,6 +9,21 @@ export interface ArtifactPreviewTable {
   totalRows?: number;
 }
 
+export interface ArtifactPreviewMessage {
+  messageId?: string;
+  threadId?: string;
+  fromEmail?: string;
+  to?: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject?: string;
+  snippet?: string;
+  bodyPreview?: string;
+  labels?: string[];
+  query?: string;
+  resultCount?: number;
+}
+
 export interface ArtifactPreviewData {
   service: ArtifactService;
   title: string;
@@ -16,6 +31,7 @@ export interface ArtifactPreviewData {
   url?: string;
   source?: Record<string, unknown>;
   table?: ArtifactPreviewTable;
+  message?: ArtifactPreviewMessage;
 }
 
 export interface ArtifactOrigin {

@@ -311,6 +311,121 @@ async def test_sheets_append_direct_action_emits_artifact_preview(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_gmail_send_direct_action_emits_message_artifact_preview(monkeypatch):
+    async def fake_send(_self, *, to: str, subject: str, message: str):
+        assert to == "person@example.com"
+        assert subject == "Hello"
+        assert message == "Mail body"
+        return {"id": "msg_123", "threadId": "thread_123", "labelIds": ["SENT"]}
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("src.platforms.actions.GmailClient.send", fake_send)
+    monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
+    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+
+    result = await run_platform_action_payload(
+        deps,
+        PlatformActionPlan(
+            action="gmail.message.send",
+            params={
+                "to": "person@example.com",
+                "subject": "Hello",
+                "message": "Mail body",
+            },
+        ),
+    )
+
+    assert result.success is True
+    assert result.artifacts[0].service == "gmail"
+    assert result.artifacts[0].title == "Gmail message sent"
+    assert result.artifacts[0].url == "https://mail.google.com/mail/u/0/#all/msg_123"
+    assert result.artifacts[0].message is not None
+    assert result.artifacts[0].message.messageId == "msg_123"
+    assert result.artifacts[0].message.to == ["person@example.com"]
+    assert result.artifacts[0].message.subject == "Hello"
+    assert result.artifacts[0].message.bodyPreview == "Mail body"
+    assert deps.attachments[0]["type"] == "artifact_preview"
+    assert deps.attachments[0]["data"]["service"] == "gmail"
+
+
+@pytest.mark.asyncio
+async def test_gmail_get_uses_latest_search_message_context(monkeypatch):
+    async def fake_search(_self, *, query: str = "", limit: int = 10):
+        assert query == "in:inbox"
+        return {
+            "messages": [{"id": "msg_latest", "threadId": "thread_latest"}],
+            "resultSizeEstimate": 201,
+        }
+
+    async def fake_get(_self, *, message_id: str, format: str = "metadata"):
+        assert message_id == "msg_latest"
+        assert format == "metadata"
+        return {
+            "id": message_id,
+            "threadId": "thread_latest",
+            "snippet": "Latest mail snippet",
+            "payload": {
+                "headers": [
+                    {"name": "From", "value": "sender@example.com"},
+                    {"name": "Subject", "value": "Latest subject"},
+                ]
+            },
+        }
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("src.platforms.actions.GmailClient.search", fake_search)
+    monkeypatch.setattr("src.platforms.actions.GmailClient.get", fake_get)
+    monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
+    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+
+    search_result = await run_platform_action_payload(
+        deps,
+        PlatformActionPlan(
+            action="gmail.message.search",
+            params={"query": "in:inbox", "limit": 1},
+        ),
+    )
+    get_result = await run_platform_action_payload(
+        deps,
+        PlatformActionPlan(action="gmail.message.get", params={}),
+    )
+
+    assert search_result.success is True
+    assert deps.platform_resources["gmail"]["message_id"] == "msg_latest"
+    assert get_result.success is True
+    assert get_result.targetResource == "msg_latest"
+    assert get_result.artifacts[0].message is not None
+    assert get_result.artifacts[0].message.subject == "Latest subject"
+    assert get_result.artifacts[0].message.snippet == "Latest mail snippet"
+
+
+@pytest.mark.asyncio
+async def test_gmail_get_without_message_context_returns_missing_input(monkeypatch):
+    async def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("Gmail get should not be called without a message_id.")
+
+    async def fake_audit(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("src.platforms.actions.GmailClient.get", fail_if_called)
+    monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
+    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+
+    result = await run_platform_action_payload(
+        deps,
+        PlatformActionPlan(action="gmail.message.get", params={}),
+    )
+
+    assert result.success is False
+    assert result.status == "missing_input"
+    assert "message_id" in (result.error or "")
+
+
+@pytest.mark.asyncio
 async def test_sheets_sheet_create_direct_action_is_idempotent(monkeypatch):
     async def fake_ensure_sheet(_self, *, spreadsheet_id: str, title: str):
         assert spreadsheet_id == "sheet_123"

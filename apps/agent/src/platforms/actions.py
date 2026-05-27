@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from src import store
-from src.agent.artifacts import build_sheets_action_artifacts
+from src.agent.artifacts import build_gmail_action_artifacts, build_sheets_action_artifacts
 from src.agent.schemas import (
     AgentDeps,
     ArtifactPreviewAttachment,
@@ -163,6 +163,10 @@ def _sheets_resource(deps: AgentDeps) -> dict[str, Any]:
     return deps.platform_resources.setdefault("google_sheets", {})
 
 
+def _gmail_resource(deps: AgentDeps) -> dict[str, Any]:
+    return deps.platform_resources.setdefault("gmail", {})
+
+
 def _spreadsheet_id_from_params(params: dict[str, Any]) -> str:
     return str(
         params.get("spreadsheet_id")
@@ -226,6 +230,56 @@ def _require_spreadsheet_id(action: str, params: dict[str, Any]) -> str:
     return spreadsheet_id
 
 
+def _message_id_from_params(params: dict[str, Any]) -> str:
+    return str(params.get("message_id") or params.get("messageId") or "")
+
+
+def _apply_gmail_resource_defaults(
+    deps: AgentDeps,
+    *,
+    action: str,
+    params: dict[str, Any],
+) -> None:
+    if not action.startswith("gmail.") or action == "gmail.message.search":
+        return
+    resource = _gmail_resource(deps)
+    if not _message_id_from_params(params) and resource.get("message_id"):
+        params["message_id"] = resource["message_id"]
+    if not params.get("thread_id") and resource.get("thread_id"):
+        params["thread_id"] = resource["thread_id"]
+
+
+def _remember_gmail_resource(
+    deps: AgentDeps,
+    *,
+    params: dict[str, Any],
+    data: dict[str, Any],
+) -> None:
+    message_id = str(data.get("id") or _message_id_from_params(params))
+    thread_id = str(data.get("threadId") or params.get("thread_id") or params.get("threadId") or "")
+    messages = data.get("messages") if isinstance(data.get("messages"), list) else []
+    if not message_id and messages:
+        first = messages[0] if isinstance(messages[0], dict) else {}
+        message_id = str(first.get("id") or "")
+        thread_id = str(first.get("threadId") or thread_id or "")
+    if not message_id:
+        return
+    resource = _gmail_resource(deps)
+    resource["message_id"] = message_id
+    if thread_id:
+        resource["thread_id"] = thread_id
+
+
+def _require_message_id(action: str, params: dict[str, Any]) -> str:
+    message_id = _message_id_from_params(params)
+    if not message_id:
+        raise PlatformActionError(
+            f"Missing required message_id for {action}.",
+            status="missing_input",
+        )
+    return message_id
+
+
 async def run_platform_action_payload(
     deps: AgentDeps,
     plan: PlatformActionPlan,
@@ -233,6 +287,7 @@ async def run_platform_action_payload(
     action = plan.action
     params = dict(plan.params)
     capability = required_capability_for_action(action)
+    _apply_gmail_resource_defaults(deps, action=action, params=params)
     _apply_sheets_resource_defaults(deps, action=action, params=params)
     try:
         if action == "gmail.message.send":
@@ -249,37 +304,37 @@ async def run_platform_action_payload(
             )
             target = None
         elif action == "gmail.message.get":
-            target = str(params.get("message_id") or "")
+            target = _require_message_id(action, params)
             data = await GmailClient(deps.user_id).get(
                 message_id=target,
                 format=str(params.get("format") or "metadata"),
             )
         elif action == "gmail.message.mark_read":
-            target = str(params.get("message_id") or "")
+            target = _require_message_id(action, params)
             data = await GmailClient(deps.user_id).modify(
                 message_id=target,
                 remove_labels=["UNREAD"],
             )
         elif action == "gmail.message.mark_unread":
-            target = str(params.get("message_id") or "")
+            target = _require_message_id(action, params)
             data = await GmailClient(deps.user_id).modify(
                 message_id=target,
                 add_labels=["UNREAD"],
             )
         elif action == "gmail.message.archive":
-            target = str(params.get("message_id") or "")
+            target = _require_message_id(action, params)
             data = await GmailClient(deps.user_id).modify(
                 message_id=target,
                 remove_labels=["INBOX"],
             )
         elif action == "gmail.message.trash":
-            target = str(params.get("message_id") or "")
+            target = _require_message_id(action, params)
             data = await GmailClient(deps.user_id).trash(
                 message_id=target,
                 confirmed=plan.confirmed,
             )
         elif action == "gmail.message.label":
-            target = str(params.get("message_id") or "")
+            target = _require_message_id(action, params)
             data = await GmailClient(deps.user_id).modify(
                 message_id=target,
                 add_labels=[str(item) for item in params.get("add_labels") or []],
@@ -406,7 +461,12 @@ async def run_platform_action_payload(
             riskLevel=capability_risk(capability),
         )
 
-    artifacts = build_sheets_action_artifacts(action=action, params=params, data=data)
+    artifacts = [
+        *build_gmail_action_artifacts(action=action, params=params, data=data),
+        *build_sheets_action_artifacts(action=action, params=params, data=data),
+    ]
+    if action.startswith("gmail."):
+        _remember_gmail_resource(deps, params=params, data=data)
     if action.startswith("sheets."):
         _remember_sheets_resource(deps, params=params, data=data)
     for artifact in artifacts:

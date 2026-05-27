@@ -54,6 +54,7 @@ Baslica route handler'lar:
 - `api/conversations`: conversation listesi.
 - `api/conversations/[conversationId]`: conversation detail/delete.
 - `api/artifacts`: kalici artifact preview snapshot listesi.
+- `api/artifacts/[artifactId]`: kalici artifact preview snapshot silme.
 - `api/workflows`: workflow listesi.
 - `api/workflows/[workflowId]`: activate/deactivate/delete proxy.
 - `api/connections`: connection listeleme.
@@ -72,7 +73,10 @@ Baslica route handler'lar:
 - `api/settings/llm/providers/[provider]/verify`: provider key dogrulama.
 - `api/settings/favorites`: favorite modeller.
 
-Local `pnpm dev` ile web host uzerinde calistiginda BFF route'lari agent'a
+Local `pnpm dev`, Next 16.2.1 icin `next dev --webpack` calistirir. Turbopack
+dev server Windows ortaminda ikinci seviye App Router sayfa ve API route'larini
+404'e dusurebildigi icin yerel gelistirmede Webpack tercih edilir.
+Web host uzerinde calistiginda BFF route'lari agent'a
 `AGENT_API_BASE_URL=http://localhost:8100` ile ulasir; Docker compose icindeki
 web container ise `AGENT_API_BASE_URL=http://agent:8000` kullanir. Root
 `start-local-dev.bat`, Windows'ta port `3000` excluded olabildigi icin web'i
@@ -122,7 +126,11 @@ cevap verir. Google Sheets iceren direct action veya workflow run sonuclarinda
 gosterir; tam spreadsheet Conduut icinde kopyalanmaz. Artifact tablo satirlari
 Firestore uyumlu yeni formatta kolon adindan hucre preview'ine giden obje
 olarak gelir; component geriye donuk olarak eski array row formatini da
-render edebilir. Gecmis conversation detail response'lari backend'den
+render edebilir. Gmail direct action veya Gmail node'lu workflow run
+sonuclarinda ayni `ArtifactPreview` component'i mail ikonlu `message_preview`
+karti gosterir; alici, gonderen, konu, arama sorgusu, sonuc sayisi ve
+govde/snippet ozeti varsa kart icinde basilir, Gmail linki `Open` aksiyonu
+olarak kalir. Gecmis conversation detail response'lari backend'den
 `created_at`/`assistant` seklinde gelse bile `src/lib/chat/messages.ts`
 normalizer'i bunlari `createdAt` ve `agent` UI rolune cevirir; bu hem
 `Invalid Date` gorunumunu hem de kalici message attachment'larinin UI'da
@@ -146,6 +154,12 @@ metadata-only `spreadsheet.create` tablosundan spreadsheet adi/sheet bilgisini
 alir, veri preview'i icin ise en yeni metadata disi tablo snapshot'ini kullanir.
 Bu sayede ayni Sheet icin "spreadsheet created" ve "range updated" aksiyonlari
 ayri kartlar olarak gorunmez.
+Gmail artifact kayitlari `message_preview` olarak kalir; dashboard generic
+kart yolu `message` payload'indan alici/gonderen/konu/search/snippet ozetini
+render eder ve Gmail `Open` linkini dis uygulamaya birakir. Dashboard kartlari
+silme aksiyonu da sunar; tekil kartlar tek artifact dokumanini, Sheets resource
+kartlari ise ayni gruptaki artifact dokumanlarini BFF `DELETE
+/api/artifacts/{artifactId}` uzerinden kaldirir.
 
 `ClarificationPanel` component'i agent'in aktif `user_input_request`
 attachment'ini render eder. Aktif son soru varken ana `ChatInput` composer'i

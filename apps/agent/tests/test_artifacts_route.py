@@ -1,4 +1,5 @@
 import pytest
+from fastapi import HTTPException
 
 from src import store
 from src.routes import artifacts as artifacts_route
@@ -42,3 +43,34 @@ async def test_list_artifacts_returns_camel_case_payload(monkeypatch):
         "workflowId": "wf_1",
         "executionId": "exec_1",
     }
+
+
+@pytest.mark.asyncio
+async def test_delete_artifact_uses_current_user(monkeypatch):
+    monkeypatch.setattr(artifacts_route, "get_user_id", lambda _request: "user_1")
+    calls = []
+
+    async def fake_delete_artifact(user_id: str, artifact_id: str):
+        calls.append((user_id, artifact_id))
+        return True
+
+    monkeypatch.setattr(artifacts_route.store, "delete_artifact", fake_delete_artifact)
+
+    assert await artifacts_route.delete_artifact("art_1", object()) is None
+    assert calls == [("user_1", "art_1")]
+
+
+@pytest.mark.asyncio
+async def test_delete_artifact_returns_404_for_missing_artifact(monkeypatch):
+    monkeypatch.setattr(artifacts_route, "get_user_id", lambda _request: "user_1")
+
+    async def fake_delete_artifact(_user_id: str, _artifact_id: str):
+        return False
+
+    monkeypatch.setattr(artifacts_route.store, "delete_artifact", fake_delete_artifact)
+
+    with pytest.raises(HTTPException) as exc:
+        await artifacts_route.delete_artifact("missing", object())
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail == {"message": "Artifact not found."}

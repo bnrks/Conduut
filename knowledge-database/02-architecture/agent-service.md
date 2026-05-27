@@ -169,7 +169,7 @@ moduller:
 - `src/platforms/*`: platform capability registry, permission pack mapping,
   encrypted Google token kullanimi, direct Gmail/Sheets client'lari ve platform
   action audit kaydi.
-- `src/agent/artifacts.py`: Google Sheets direct action ve workflow run
+- `src/agent/artifacts.py`: Google Sheets ve Gmail direct action / workflow run
   ciktilarindan kullaniciya guvenli `artifact_preview` snapshot'lari uretir.
 
 Kayitli tool'lar:
@@ -185,22 +185,25 @@ Kayitli tool'lar:
 
 ## Artifacts
 
-V1 artifact modeli [[artifacts]] notunda tanimlidir. Agent Google Sheets
-direct action'lari veya Sheets iceren workflow run sonuclari icin
+V1 artifact modeli [[artifacts]] notunda tanimlidir. Agent Google Sheets ve
+Gmail direct action'lari veya bu node'lari iceren workflow run sonuclari icin
 `artifact_preview` attachment'i emit eder. Assistant mesajinin attachment
 snapshot'i conversation history icinde kalir; ayrica preview payload'i
 `users/{uid}/artifacts/{artifactId}` collection'ina kalici dashboard snapshot'i
 olarak yazilir.
 
 `WorkflowRunResultData` ve workflow run route response'u `artifacts` listesi
-tasir. Direct Sheets action sonucunda `PlatformActionResult.artifacts` ayni
-preview payload'unu dondurur. Preview tablolar en fazla 10 satir ve 12 kolon
-tasir; secret/token benzeri alanlar tabloya alinmaz. Kullanici tam veri icin
-Google Sheets linkine gider.
+tasir. Direct Sheets/Gmail action sonucunda `PlatformActionResult.artifacts`
+ayni preview payload'unu dondurur. Preview tablolar en fazla 10 satir ve 12
+kolon tasir; Gmail message preview'leri message id, thread id, alici, konu,
+snippet/govde ozeti ve label/search metadatasini tasir. Secret/token benzeri
+alanlar tabloya veya message payload'ina alinmaz. Kullanici tam veri icin
+ilgili Google uygulamasi linkine gider.
 `ArtifactPreviewTable.rows`, Firestore'un dogrudan nested array kabul etmemesi
 nedeniyle `list[dict[column, cellPreview]]` seklinde saklanir; frontend legacy
 array row formatini da okuyabilir ama backend yeni snapshot'larda map row
-formatini uretmelidir.
+formatini uretmelidir. Gmail artifact'lari `message_preview` type'i ve
+`message` dict'iyle saklanir.
 
 Runner, conversation history'deki Google Sheets `artifact_preview`
 attachment'larini `AgentDeps.platform_resources` baglamina cevirir. En son
@@ -211,12 +214,19 @@ sonuclarindan da bu resource baglamini gunceller. Boylece kullanici "tekrar
 dene" dediginde agent'in onceki spreadsheet'i kullanmasi desteklenir; backend
 bos `spreadsheet_id` ile Google API'ye `spreadsheets//...` cagrisi yapmak
 yerine `missing_input` hatasi dondurur.
+Gmail direct action'lari da ayni runtime resource baglamini kullanir. Search
+sonucundaki ilk message id/thread id `AgentDeps.platform_resources.gmail`
+altina yazilir; takip eden get/mark/archive/trash/label action'i bos
+`message_id` tasirsa bu deger kullanilir. Context de yoksa backend Gmail API'ye
+`/messages/` gibi bos id'li istek atmaz, `missing_input` dondurur.
 
 `GET /api/artifacts`, kullanicinin son artifact snapshot'larini `createdAt`
-camelCase alani ve `origin` metadata'siyle dondurur. Agent runner chat
-artifact'larini `origin.kind=chat`, dashboard workflow run route'u ise run
-sonucundaki artifact'lari `origin.kind=workflow_run` ile kaydeder. Persist
-hatalari asil chat veya run response'unu kirmadan structured log'a yazilir.
+camelCase alani ve `origin` metadata'siyle dondurur. `DELETE
+/api/artifacts/{artifactId}` yalniz current user altindaki artifact dokumanini
+siler; dokuman yoksa 404 dondurur. Agent runner chat artifact'larini
+`origin.kind=chat`, dashboard workflow run route'u ise run sonucundaki
+artifact'lari `origin.kind=workflow_run` ile kaydeder. Persist hatalari asil
+chat veya run response'unu kirmadan structured log'a yazilir.
 
 ## Platform Capability Layer
 

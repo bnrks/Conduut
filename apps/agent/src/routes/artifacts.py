@@ -2,7 +2,7 @@
 
 from typing import Any, Literal
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from src import store
@@ -27,6 +27,7 @@ class ArtifactOut(BaseModel):
     url: str | None = None
     source: dict[str, Any] = Field(default_factory=dict)
     table: dict[str, Any] | None = None
+    message: dict[str, Any] | None = None
     origin: ArtifactOriginOut
     createdAt: str
 
@@ -45,6 +46,7 @@ def _artifact_payload(artifact: store.ArtifactRecord) -> ArtifactOut:
         url=artifact.url,
         source=artifact.source,
         table=artifact.table,
+        message=artifact.message,
         origin=ArtifactOriginOut(**artifact.origin),
         createdAt=artifact.created_at,
     )
@@ -61,3 +63,13 @@ async def list_artifacts(
     user_id = get_user_id(request)
     artifacts = await store.list_artifacts(user_id, limit=limit, service=service)
     return ArtifactListOut(artifacts=[_artifact_payload(artifact) for artifact in artifacts])
+
+
+@router.delete("/artifacts/{artifact_id}", status_code=204)
+async def delete_artifact(artifact_id: str, request: Request) -> None:
+    """Delete one persisted artifact preview snapshot for the current user."""
+
+    user_id = get_user_id(request)
+    deleted = await store.delete_artifact(user_id, artifact_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail={"message": "Artifact not found."})

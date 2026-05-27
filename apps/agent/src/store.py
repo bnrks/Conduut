@@ -136,6 +136,7 @@ class ArtifactRecord:
     url: str | None = None
     source: dict[str, Any] = field(default_factory=dict)
     table: dict[str, Any] | None = None
+    message: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -598,6 +599,10 @@ def _artifact_document_id(artifact: dict[str, Any], origin: dict[str, Any]) -> s
         artifact.get("url"),
         source.get("spreadsheetId"),
         source.get("range"),
+        source.get("messageId"),
+        source.get("threadId"),
+        source.get("query"),
+        source.get("action"),
         origin.get("kind"),
         origin.get("conversationId"),
         origin.get("workflowId"),
@@ -612,6 +617,7 @@ def _artifact_from_doc(doc) -> ArtifactRecord:
     source = data.get("source") if isinstance(data.get("source"), dict) else {}
     origin = data.get("origin") if isinstance(data.get("origin"), dict) else {}
     table = data.get("table") if isinstance(data.get("table"), dict) else None
+    message = data.get("message") if isinstance(data.get("message"), dict) else None
     return ArtifactRecord(
         id=doc.id,
         service=str(data.get("service") or ""),
@@ -621,6 +627,7 @@ def _artifact_from_doc(doc) -> ArtifactRecord:
         url=data.get("url"),
         source=source,
         table=table,
+        message=message,
         origin=origin,
         created_at=str(data.get("created_at") or ""),
     )
@@ -636,6 +643,7 @@ async def save_artifact(
     artifact_id = _artifact_document_id(artifact, origin_data)
     source = artifact.get("source") if isinstance(artifact.get("source"), dict) else {}
     table = artifact.get("table") if isinstance(artifact.get("table"), dict) else None
+    message = artifact.get("message") if isinstance(artifact.get("message"), dict) else None
     now = _now_iso()
     data: dict[str, Any] = {
         "service": str(artifact.get("service") or ""),
@@ -651,6 +659,8 @@ async def save_artifact(
         data["url"] = str(artifact["url"])
     if table is not None:
         data["table"] = table
+    if message is not None:
+        data["message"] = message
 
     await _run(lambda: _artifact_ref(user_id, artifact_id).set(data))
     return ArtifactRecord(id=artifact_id, **data)
@@ -677,6 +687,15 @@ async def list_artifacts(
     if service:
         artifacts = [artifact for artifact in artifacts if artifact.service == service]
     return artifacts[:normalized_limit]
+
+
+async def delete_artifact(user_id: str, artifact_id: str) -> bool:
+    ref = _artifact_ref(user_id, artifact_id)
+    doc = await _run(lambda: ref.get())
+    if not doc.exists:
+        return False
+    await _run(lambda: ref.delete())
+    return True
 
 
 # ---------------------------------------------------------------------------

@@ -1356,6 +1356,87 @@ async def test_run_workflow_with_input_returns_sheets_artifact(monkeypatch):
     assert result.artifacts[0].table.rows == [{"Email": "person@example.com", "Status": "Sent"}]
 
 
+@pytest.mark.asyncio
+async def test_run_workflow_with_input_returns_gmail_artifact(monkeypatch):
+    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str):
+        return store.WorkflowMetadata(
+            workflow_id=workflow_id,
+            input_schema=[],
+            resources={},
+            created_at="now",
+            updated_at="now",
+        )
+
+    async def fake_call_webhook(_path: str, _payload: dict):
+        return httpx.Response(200, json={"ok": True})
+
+    async def fake_list_executions(*_args, **_kwargs):
+        return [SimpleNamespace(id="exec_1")]
+
+    async def fake_get_execution_detail(_execution_id: str):
+        return {
+            "id": "exec_1",
+            "workflowId": "wf_1",
+            "status": "success",
+            "data": {
+                "resultData": {
+                    "runData": {
+                        "Gmail": [
+                            {
+                                "data": {
+                                    "main": [
+                                        [
+                                            {
+                                                "json": {
+                                                    "id": "msg_123",
+                                                    "threadId": "thread_123",
+                                                    "labelIds": ["SENT"],
+                                                }
+                                            }
+                                        ]
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                }
+            },
+        }
+
+    monkeypatch.setattr("src.agent.tools.store.get_workflow_metadata", fake_get_workflow_metadata)
+    monkeypatch.setattr("src.agent.tools.n8n_client.call_webhook", fake_call_webhook)
+    monkeypatch.setattr("src.agent.tools.n8n_client.list_executions", fake_list_executions)
+    monkeypatch.setattr(
+        "src.agent.tools.n8n_client.get_execution_detail",
+        fake_get_execution_detail,
+    )
+    monkeypatch.setattr("src.agent.tools.registry.get_node_schema", lambda _node_type: None)
+
+    result = await run_workflow_with_input(
+        {
+            "id": "wf_1",
+            "name": "Runtime workflow",
+            "active": True,
+            "nodes": [
+                {
+                    "name": "Webhook",
+                    "type": "n8n-nodes-base.webhook",
+                    "parameters": {"path": "runtime-test", "httpMethod": "POST"},
+                }
+            ],
+        },
+        user_id="user_1",
+        input_payload={},
+    )
+
+    assert result.status == "success"
+    assert result.artifacts[0].service == "gmail"
+    assert result.artifacts[0].title == "Gmail message sent"
+    assert result.artifacts[0].url == "https://mail.google.com/mail/u/0/#all/msg_123"
+    assert result.artifacts[0].message is not None
+    assert result.artifacts[0].message.messageId == "msg_123"
+
+
 def test_summarize_execution_includes_node_output_preview():
     result = _summarize_execution(
         {
