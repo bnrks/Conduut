@@ -1,4 +1,4 @@
-export type MessageRole = "user" | "agent";
+export type MessageRole = "user" | "agent" | "assistant";
 
 export interface Message {
   id: string;
@@ -6,6 +6,7 @@ export interface Message {
   role: MessageRole;
   content: string;
   createdAt: string;
+  created_at?: string;
   attachments?: MessageAttachment[];
   provider?: string;
   model?: string;

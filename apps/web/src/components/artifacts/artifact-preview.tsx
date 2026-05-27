@@ -28,7 +28,9 @@ function rowCell(row: ArtifactPreviewRow, column: string, columnIndex: number): 
 
 export function ArtifactPreview({ data, className }: ArtifactPreviewProps) {
   const table = data.table;
-  const hasRows = Boolean(table?.columns.length && table.rows.length);
+  const columns = Array.isArray(table?.columns) ? table.columns : [];
+  const rows = Array.isArray(table?.rows) ? table.rows : [];
+  const hasRows = columns.length > 0 && rows.length > 0;
 
   return (
     <div
@@ -43,7 +45,9 @@ export function ArtifactPreview({ data, className }: ArtifactPreviewProps) {
             <Table2 className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <p className="truncate text-[13px] font-medium">{data.title}</p>
+            <p className="truncate text-[13px] font-medium">
+              {data.title || "Google Sheets preview"}
+            </p>
             {data.description && (
               <p className="mt-0.5 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
                 {data.description}
@@ -64,12 +68,12 @@ export function ArtifactPreview({ data, className }: ArtifactPreviewProps) {
         )}
       </div>
 
-      {hasRows && table ? (
+      {hasRows ? (
         <div className="max-w-full overflow-x-auto">
           <table className="min-w-full table-fixed border-collapse text-left text-[12px]">
             <thead className="bg-muted/60 text-muted-foreground">
               <tr>
-                {table.columns.map((column, columnIndex) => (
+                {columns.map((column, columnIndex) => (
                   <th
                     key={`${column}-${columnIndex}`}
                     className="max-w-[180px] border-b border-border px-3 py-2 font-medium"
@@ -80,9 +84,9 @@ export function ArtifactPreview({ data, className }: ArtifactPreviewProps) {
               </tr>
             </thead>
             <tbody>
-              {table.rows.map((row, rowIndex) => (
+              {rows.map((row, rowIndex) => (
                 <tr key={rowIndex} className="border-b border-border/70 last:border-0">
-                  {table.columns.map((column, columnIndex) => (
+                  {columns.map((column, columnIndex) => (
                     <td key={`${rowIndex}-${column}`} className="max-w-[180px] px-3 py-2">
                       <span
                         className="block truncate"

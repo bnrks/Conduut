@@ -474,6 +474,12 @@ cevirir. Aksi halde n8n workflow'u API'den kabul etse bile editor
 Artifacts V1 ayri collection kullanmaz; `artifact_preview` payload'lari
 conversation message attachment'i olarak saklanir.
 
+Conversation detail route'u frontend uyumlulugu icin message response'larinda
+snake_case alanlari korurken `createdAt`, `messageCount`, `updatedAt` ve
+`reasoningEffort` camelCase alias'larini da dondurur. Firestore'da assistant
+mesajlari `assistant` roluyla saklanabilir; API chat UI icin bunu `agent`
+rolune normalize eder ve `artifact_preview` attachment'larini aynen korur.
+
 Firestore sync SDK cagrilari `asyncio.to_thread` ile sarilir.
 
 ## Test ve Tooling

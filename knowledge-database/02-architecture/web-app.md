@@ -121,7 +121,16 @@ cevap verir. Google Sheets iceren direct action veya workflow run sonuclarinda
 gosterir; tam spreadsheet Conduut icinde kopyalanmaz. Artifact tablo satirlari
 Firestore uyumlu yeni formatta kolon adindan hucre preview'ine giden obje
 olarak gelir; component geriye donuk olarak eski array row formatini da
-render edebilir.
+render edebilir. Gecmis conversation detail response'lari backend'den
+`created_at`/`assistant` seklinde gelse bile `src/lib/chat/messages.ts`
+normalizer'i bunlari `createdAt` ve `agent` UI rolune cevirir; bu hem
+`Invalid Date` gorunumunu hem de kalici message attachment'larinin UI'da
+atlanmasini engeller.
+Streaming sirasinda `attachment` event'leri tool calisirken final assistant
+metninden once gelebilir; web chat sayfalari bu attachment'lari hemen render
+etmez, assistant text'i akitir ve `done` event'inde kartlari ayni mesajin
+altinda acar. Boylece artifact kartlari once gorunup sonradan ustlerine final
+cevap bubble'i eklenmis gibi ziplama yapmaz.
 
 `ClarificationPanel` component'i agent'in aktif `user_input_request`
 attachment'ini render eder. Aktif son soru varken ana `ChatInput` composer'i

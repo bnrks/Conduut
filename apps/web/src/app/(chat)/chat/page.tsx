@@ -29,7 +29,7 @@ interface ActiveClarification {
 function activeClarification(messages: Message[], isAgentTyping: boolean) {
   if (isAgentTyping) return undefined;
   const lastMessage = messages[messages.length - 1];
-  if (!lastMessage || lastMessage.role !== "agent") return undefined;
+  if (!lastMessage || lastMessage.role === "user") return undefined;
   const attachment = lastMessage.attachments?.find(
     (item) => item.type === "user_input_request"
   );
@@ -87,6 +87,53 @@ export default function NewChatPage() {
     let createdConversationId = "";
     let doneProvider: string | undefined;
     let doneModel: string | undefined;
+    let revealAssistantAttachments = false;
+
+    const upsertAssistantMessage = () => {
+      const visibleAttachments = revealAssistantAttachments ? assistantAttachments : [];
+
+      setMessages((prev) => {
+        const normalized: Message[] = prev.map((msg) =>
+          msg.conversationId === ""
+            ? { ...msg, conversationId: createdConversationId || msg.conversationId }
+            : msg
+        );
+
+        const exists = normalized.some((msg) => msg.id === assistantMessageId);
+        if (exists) {
+          return normalized.map((msg) =>
+            msg.id === assistantMessageId
+              ? {
+                  ...msg,
+                  content: assistantContent,
+                  attachments: visibleAttachments,
+                  conversationId: createdConversationId || msg.conversationId,
+                  provider: doneProvider ?? msg.provider,
+                  model: doneModel ?? msg.model,
+                }
+              : msg
+          );
+        }
+
+        if (!assistantContent && visibleAttachments.length === 0) {
+          return normalized;
+        }
+
+        return [
+          ...normalized,
+          {
+            id: assistantMessageId,
+            conversationId: createdConversationId,
+            role: "agent",
+            content: assistantContent,
+            attachments: visibleAttachments,
+            createdAt: now,
+            provider: doneProvider,
+            model: doneModel,
+          },
+        ];
+      });
+    };
 
     setMessages((prev) => [...prev, userMessage]);
     setIsAgentTyping(true);
@@ -119,15 +166,10 @@ export default function NewChatPage() {
           if (event === "done") {
             doneProvider = typeof data.provider === "string" ? data.provider : undefined;
             doneModel = typeof data.model === "string" ? data.model : undefined;
+            revealAssistantAttachments = true;
             setAgentActivity("Finishing the response");
             setAgentActivities((prev) => appendRecentActivity(prev, "Finishing the response"));
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === assistantMessageId
-                  ? { ...msg, provider: doneProvider, model: doneModel }
-                  : msg
-              )
-            );
+            upsertAssistantMessage();
             return;
           }
 
@@ -150,43 +192,12 @@ export default function NewChatPage() {
                 data: (data.data || {}) as Record<string, unknown>,
               },
             ];
+            if (!revealAssistantAttachments) return;
           } else {
             return;
           }
 
-          // Pure updater: check actual state instead of closure variable
-          setMessages((prev) => {
-            const normalized: Message[] = prev.map((msg) =>
-              msg.conversationId === ""
-                ? { ...msg, conversationId: createdConversationId || msg.conversationId }
-                : msg
-            );
-
-            const exists = normalized.some((msg) => msg.id === assistantMessageId);
-            if (exists) {
-              return normalized.map((msg) =>
-                msg.id === assistantMessageId
-                  ? {
-                      ...msg,
-                      content: assistantContent,
-                      attachments: assistantAttachments,
-                      conversationId: createdConversationId || msg.conversationId,
-                    }
-                  : msg
-              );
-            }
-            return [
-              ...normalized,
-              {
-                id: assistantMessageId,
-                conversationId: createdConversationId,
-                role: "agent",
-                content: assistantContent,
-                attachments: assistantAttachments,
-                createdAt: now,
-              },
-            ];
-          });
+          upsertAssistantMessage();
         },
       });
 

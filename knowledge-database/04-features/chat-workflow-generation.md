@@ -48,6 +48,18 @@ reasoning effort degistirmez.
   `user_input_request` gibi ekleri mesaja ekler. Google Sheets sonuc
   onizlemeleri icin `artifact_preview` attachment'i de ayni SSE sozlesmesini
   kullanir.
+- Gecmis conversation yuklemelerinde web tarafinda `normalizeMessages`
+  kullanilir: backend snake_case zaman alanlari dondurse veya Firestore'daki
+  rol `assistant` olsa bile UI mesajlari `createdAt`, `conversationId`, `agent`
+  rol ve attachment listesiyle render edilir. Bu, stream sirasinda gorunen
+  `artifact_preview` kartlarinin sayfa yenileme/sohbet gecmisi acma sonrasi da
+  gorunur kalmasi icin gereklidir.
+- Tool'larin `attachment` event'leri final model cevabindan once gelebilir.
+  Web UI bu event'leri stream sirasinda buffer'lar; assistant metni token
+  olarak render edilir, artifact/credential/OAuth kartlari ise `done` event'i
+  ile ayni assistant mesajinin altinda gosterilir. Bu, Google Sheets artifact
+  kartlarinin final "islem tamamlandi" cevabindan once ekranda belirmesini
+  engeller.
 - `done`: conversation, provider ve model bilgisini tamamlar.
 - `error`: toast ile hata gosterir.
 

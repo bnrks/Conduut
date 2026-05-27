@@ -14,6 +14,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useModelSelector } from "@/hooks/use-model-selector";
 import { streamChat } from "@/lib/chat/sse";
 import { popConversationCache } from "@/lib/chat/conversation-cache";
+import { normalizeMessages } from "@/lib/chat/messages";
 import { toolActivityLabel } from "@/lib/chat/tool-activity";
 import type { Conversation, Message, MessageAttachment } from "@/types/chat";
 
@@ -33,7 +34,7 @@ interface ActiveClarification {
 function activeClarification(messages: Message[], isAgentTyping: boolean) {
   if (isAgentTyping) return undefined;
   const lastMessage = messages[messages.length - 1];
-  if (!lastMessage || lastMessage.role !== "agent") return undefined;
+  if (!lastMessage || lastMessage.role === "user") return undefined;
   const attachment = lastMessage.attachments?.find(
     (item) => item.type === "user_input_request"
   );
@@ -58,7 +59,9 @@ export default function ConversationPage() {
 
   const { user } = useAuth();
   const cachedData = useMemo(() => popConversationCache(conversationId), [conversationId]);
-  const [messages, setMessages] = useState<Message[]>(() => cachedData?.messages ?? []);
+  const [messages, setMessages] = useState<Message[]>(() =>
+    normalizeMessages(cachedData?.messages, conversationId)
+  );
   const hasCachedMessages = useRef((cachedData?.messages?.length ?? 0) > 0);
   const [lockedProvider, setLockedProvider] = useState<string | undefined>(cachedData?.provider);
   const [lockedModel, setLockedModel] = useState<string | undefined>(cachedData?.model);
@@ -92,7 +95,9 @@ export default function ConversationPage() {
       setLockedReasoningEffort(data.reasoning_effort ?? data.reasoningEffort);
       if (!hasCachedMessages.current) {
         // Use updater to avoid overwriting in-flight streaming messages
-        setMessages((prev) => (prev.length > 0 ? prev : (data.messages || [])));
+        setMessages((prev) =>
+          prev.length > 0 ? prev : normalizeMessages(data.messages, conversationId)
+        );
         hasCachedMessages.current = true;
       }
     };
@@ -117,6 +122,48 @@ export default function ConversationPage() {
     let assistantContent = "";
     let assistantAttachments: MessageAttachment[] = [];
     const assistantCreatedAt = now;
+    let doneProvider: string | undefined;
+    let doneModel: string | undefined;
+    let revealAssistantAttachments = false;
+
+    const upsertAssistantMessage = () => {
+      const visibleAttachments = revealAssistantAttachments ? assistantAttachments : [];
+
+      setMessages((prev) => {
+        const exists = prev.some((msg) => msg.id === assistantMessageId);
+        if (exists) {
+          return prev.map((msg) =>
+            msg.id === assistantMessageId
+              ? {
+                  ...msg,
+                  content: assistantContent,
+                  attachments: visibleAttachments,
+                  provider: doneProvider ?? msg.provider,
+                  model: doneModel ?? msg.model,
+                }
+              : msg
+          );
+        }
+
+        if (!assistantContent && visibleAttachments.length === 0) {
+          return prev;
+        }
+
+        return [
+          ...prev,
+          {
+            id: assistantMessageId,
+            conversationId,
+            role: "agent",
+            content: assistantContent,
+            attachments: visibleAttachments,
+            createdAt: assistantCreatedAt,
+            provider: doneProvider,
+            model: doneModel,
+          },
+        ];
+      });
+    };
 
     setMessages((prev) => [...prev, userMessage]);
     setIsAgentTyping(true);
@@ -142,17 +189,12 @@ export default function ConversationPage() {
           }
 
           if (event === "done") {
-            const doneProvider = typeof data.provider === "string" ? data.provider : undefined;
-            const doneModel = typeof data.model === "string" ? data.model : undefined;
+            doneProvider = typeof data.provider === "string" ? data.provider : undefined;
+            doneModel = typeof data.model === "string" ? data.model : undefined;
+            revealAssistantAttachments = true;
             setAgentActivity("Finishing the response");
             setAgentActivities((prev) => appendRecentActivity(prev, "Finishing the response"));
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === assistantMessageId
-                  ? { ...msg, provider: doneProvider, model: doneModel }
-                  : msg
-              )
-            );
+            upsertAssistantMessage();
             return;
           }
 
@@ -175,32 +217,12 @@ export default function ConversationPage() {
                 data: (data.data || {}) as Record<string, unknown>,
               },
             ];
+            if (!revealAssistantAttachments) return;
           } else {
             return;
           }
 
-          // Pure updater: check actual state instead of closure variable
-          setMessages((prev) => {
-            const exists = prev.some((msg) => msg.id === assistantMessageId);
-            if (exists) {
-              return prev.map((msg) =>
-                msg.id === assistantMessageId
-                  ? { ...msg, content: assistantContent, attachments: assistantAttachments }
-                  : msg
-              );
-            }
-            return [
-              ...prev,
-              {
-                id: assistantMessageId,
-                conversationId,
-                role: "agent",
-                content: assistantContent,
-                attachments: assistantAttachments,
-                createdAt: assistantCreatedAt,
-              },
-            ];
-          });
+          upsertAssistantMessage();
         },
       });
     } catch (error) {

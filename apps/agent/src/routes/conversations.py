@@ -6,6 +6,10 @@ from src.auth import get_user_id
 router = APIRouter()
 
 
+def _chat_role(role: str) -> str:
+    return "agent" if role in ("assistant", "agent") else role
+
+
 @router.get("/conversations")
 async def list_conversations(request: Request):
     user_id = get_user_id(request)
@@ -33,17 +37,22 @@ async def get_conversation(conversation_id: str, request: Request):
     return {
         "id": conv.id,
         "title": conv.title,
+        "messageCount": conv.message_count,
         "message_count": conv.message_count,
+        "createdAt": conv.created_at,
         "created_at": conv.created_at,
+        "updatedAt": conv.updated_at,
         "updated_at": conv.updated_at,
         "provider": conv.provider,
         "model": conv.model,
         "reasoning_effort": conv.reasoning_effort,
+        "reasoningEffort": conv.reasoning_effort,
         "messages": [
             {
                 "id": m.id,
-                "role": m.role,
+                "role": _chat_role(m.role),
                 "content": m.content,
+                "createdAt": m.created_at,
                 "created_at": m.created_at,
                 "provider": m.provider,
                 "model": m.model,
