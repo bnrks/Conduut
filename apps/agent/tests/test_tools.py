@@ -29,6 +29,7 @@ from src.agent.tools import (
     compile_workflow_spec,
     create_workflow_from_plan_payload,
     create_workflow_from_spec_payload,
+    run_workflow_batch_with_input,
     run_workflow_with_input,
 )
 from src.agent.tools.factory import _normalized_user_input_request
@@ -1283,6 +1284,159 @@ async def test_run_workflow_with_input_sends_payload_to_webhook(monkeypatch):
     assert sent["path"] == "runtime-test"
     assert sent["payload"] == {"to": "person@example.com"}
     assert result.status == "triggered"
+
+
+@pytest.mark.asyncio
+async def test_run_workflow_with_input_summarizes_execution_after_webhook_error(monkeypatch):
+    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str):
+        return store.WorkflowMetadata(
+            workflow_id=workflow_id,
+            input_schema=[
+                {
+                    "name": "to",
+                    "label": "Recipient email",
+                    "type": "email",
+                    "required": True,
+                }
+            ],
+            created_at="now",
+            updated_at="now",
+        )
+
+    async def fake_readiness(_workflow: dict, *, user_id: str):
+        assert user_id == "user_1"
+        return {"webhook_nodes": [{"parameters": {"path": "runtime-test", "httpMethod": "POST"}}]}
+
+    async def fake_call_webhook(_path: str, _payload: dict):
+        return httpx.Response(500, json={"message": "Error in workflow"})
+
+    async def fake_list_executions(*_args, **_kwargs):
+        return [SimpleNamespace(id="exec_1")]
+
+    async def fake_get_execution_detail(_execution_id: str):
+        return {
+            "id": "exec_1",
+            "workflowId": "wf_1",
+            "status": "error",
+            "data": {
+                "resultData": {
+                    "lastNodeExecuted": "Gmail",
+                    "error": {
+                        "node": {"name": "Gmail"},
+                        "message": "Gmail credential token is invalid or expired.",
+                    },
+                    "runData": {},
+                }
+            },
+        }
+
+    monkeypatch.setattr("src.agent.tools.store.get_workflow_metadata", fake_get_workflow_metadata)
+    monkeypatch.setattr(
+        "src.agent.tools.workflow_runner.analyze_workflow_readiness_payload",
+        fake_readiness,
+    )
+    monkeypatch.setattr("src.agent.tools.n8n_client.call_webhook", fake_call_webhook)
+    monkeypatch.setattr("src.agent.tools.n8n_client.list_executions", fake_list_executions)
+    monkeypatch.setattr(
+        "src.agent.tools.n8n_client.get_execution_detail", fake_get_execution_detail
+    )
+
+    result = await run_workflow_with_input(
+        {
+            "id": "wf_1",
+            "name": "Runtime workflow",
+            "active": True,
+            "nodes": [
+                {
+                    "name": "Webhook",
+                    "type": "n8n-nodes-base.webhook",
+                    "parameters": {"path": "runtime-test", "httpMethod": "POST"},
+                },
+                {
+                    "name": "Gmail",
+                    "type": "n8n-nodes-base.gmail",
+                    "parameters": {"resource": "message", "operation": "send"},
+                },
+            ],
+        },
+        user_id="user_1",
+        input_payload={"to": "person@example.com"},
+    )
+
+    assert result.status == "error"
+    assert result.executionId == "exec_1"
+    assert result.failedNode == "Gmail"
+    assert result.error == "Gmail credential token is invalid or expired."
+    assert "Gmail credential token" in result.summary
+
+
+@pytest.mark.asyncio
+async def test_run_workflow_batch_with_input_continues_after_row_errors(monkeypatch):
+    sent_payloads: list[dict] = []
+
+    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str):
+        return store.WorkflowMetadata(
+            workflow_id=workflow_id,
+            input_schema=[
+                {
+                    "name": "to",
+                    "label": "Recipient email",
+                    "type": "email",
+                    "required": True,
+                }
+            ],
+            created_at="now",
+            updated_at="now",
+        )
+
+    async def fake_readiness(_workflow: dict, *, user_id: str):
+        assert user_id == "user_1"
+        return {"webhook_nodes": [{"parameters": {"path": "runtime-test", "httpMethod": "POST"}}]}
+
+    async def fake_call_webhook(_path: str, payload: dict):
+        sent_payloads.append(payload)
+        if payload["to"] == "broken@example.com":
+            raise RuntimeError("transport failed")
+        return httpx.Response(200, json={"ok": True})
+
+    async def fake_list_executions(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr("src.agent.tools.store.get_workflow_metadata", fake_get_workflow_metadata)
+    monkeypatch.setattr(
+        "src.agent.tools.workflow_runner.analyze_workflow_readiness_payload",
+        fake_readiness,
+    )
+    monkeypatch.setattr("src.agent.tools.n8n_client.call_webhook", fake_call_webhook)
+    monkeypatch.setattr("src.agent.tools.n8n_client.list_executions", fake_list_executions)
+
+    result = await run_workflow_batch_with_input(
+        {
+            "id": "wf_1",
+            "name": "Runtime workflow",
+            "active": True,
+            "nodes": [
+                {
+                    "name": "Webhook",
+                    "type": "n8n-nodes-base.webhook",
+                    "parameters": {"path": "runtime-test", "httpMethod": "POST"},
+                }
+            ],
+        },
+        user_id="user_1",
+        rows=[
+            {"rowNumber": 2, "input": {"to": "person@example.com"}},
+            {"rowNumber": 3, "input": {"to": ""}},
+            {"rowNumber": 4, "input": {"to": "broken@example.com"}},
+        ],
+    )
+
+    assert result.status == "completed_with_errors"
+    assert result.succeeded == 1
+    assert result.skipped == 1
+    assert result.failed == 1
+    assert [row.status for row in result.results] == ["success", "skipped", "failed"]
+    assert sent_payloads == [{"to": "person@example.com"}, {"to": "broken@example.com"}]
 
 
 @pytest.mark.asyncio

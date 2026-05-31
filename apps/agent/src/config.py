@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     default_model: str = "gpt-4o-mini"
 
     # n8n
-    n8n_url: str = "http://localhost:5980"
+    n8n_url: str = "http://localhost:6180"
     n8n_api_key: str = ""
 
     # OAuth broker

@@ -72,7 +72,9 @@ saklanmasini engeller.
   ile ayni assistant mesajinin altinda gosterilir. Bu, Google Sheets artifact
   kartlarinin final "islem tamamlandi" cevabindan once ekranda belirmesini
   engeller.
-- `done`: conversation, provider ve model bilgisini tamamlar.
+- `done`: conversation, provider ve model bilgisini tamamlar. Web UI bu
+  metadata'yi mesajda saklar, ancak chat mesajlarinin hover alaninda model
+  ismini gostermez; kartlarin yaninda yalnizca zaman bilgisi kalir.
 - `error`: toast ile hata gosterir.
 
 ## Workflow Preview
@@ -267,6 +269,10 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
   dogrulamayi kendi yapar ve kullaniciya sade metin cevabi verir. Sheets
   ciktisi varsa teknik kanit yerine kullanici odakli `artifact_preview` karti
   gosterilir.
+- Dashboard, runtime input schema'si olan workflow'lari `.xlsx`/`.csv`
+  satirlariyla batch calistirabilir. Bu V1 ozellik [[adr-0007-batch-workflow-runs]]
+  ile Conduut tarafinda loop olarak tasarlanmistir; workflow JSON'u
+  degismez, chat agent batch tool'u henuz yoktur.
 - n8n production webhook registration icin Webhook node'larinda `webhookId`
   bulunmali. Agent validator/normalizer eksikse otomatik UUID uretir.
 - Connections yapisi n8n editor uyumlulugu icin nested output array formatina

@@ -9,9 +9,9 @@ services:
       N8N_USER_MANAGEMENT_DISABLED: "true"
       N8N_DIAGNOSTICS_ENABLED: "false"
       N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
-      WEBHOOK_URL: "http://localhost:5980"
+      WEBHOOK_URL: "http://localhost:${CONDUUT_N8N_PORT:-6180}"
     ports:
-      - "127.0.0.1:5980:5678"
+      - "127.0.0.1:${CONDUUT_N8N_PORT:-6180}:5678"
     volumes:
       - n8n-data:/home/node/.n8n
     networks:

@@ -20,18 +20,19 @@ Mevcut `docker-compose.yml` uc servis calistirir:
 - `conduut-agent`: FastAPI agent, container port `8000`; local host port
   `8100` because Windows can reserve host port `8000`.
 - `conduut-n8n`: tek shared n8n instance, container port `5678`; local host
-  port `5980` because this Windows environment reserves ranges including
-  `5678`, `5778-5877`, and `5808-5907`.
+  port `6180` because this Windows environment reserves ranges including
+  `5678` and `5980`.
 
 Lokal hizli gelistirme icin root `start-local-dev.bat` hibrit akis saglar:
 yalnizca `docker compose up -d n8n` ile shared n8n image'ini ayaga kaldirir,
 agent'i `apps/agent` altindan `python -m uvicorn src.main:app --reload --port
 8100` ile lokal koddan calistirir, web'i de `apps/web` altindan
-`npm run dev -- --hostname 127.0.0.1 --port 3007` ile baslatir. Bu akista
-agent `CONDUUT_N8N_URL` olarak `http://localhost:5980`,
+`npm run dev -- --hostname localhost --port 3007` ile baslatir. Bu akista
+agent `CONDUUT_N8N_URL` olarak `http://localhost:6180`,
 `CONDUUT_PUBLIC_WEB_URL` olarak `http://localhost:3007`, web BFF route'lari ise
 `AGENT_API_BASE_URL` olarak `http://localhost:8100` kullanir; web/agent Docker
-image build'i gerekmez. Web portu `CONDUUT_WEB_PORT` ile override edilebilir.
+image build'i gerekmez. n8n host portu `CONDUUT_N8N_PORT`, web portu
+`CONDUUT_WEB_PORT` ile override edilebilir.
 Script agent'i `apps/agent` calisma dizininden baslattigi icin root `.env`
 dosyasi Pydantic tarafindan otomatik okunmaz; bu nedenle
 `CONDUUT_GOOGLE_OAUTH_CLIENT_ID`, `CONDUUT_GOOGLE_OAUTH_CLIENT_SECRET` ve

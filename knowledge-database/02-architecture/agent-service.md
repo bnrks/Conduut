@@ -58,7 +58,7 @@ marker yoksa mevcut app dizinine duser. Boylece local dosya yolu
 `apps/agent/src/config.py` iken root `.env` ve `apps/agent/.env` okunur, Docker
 image icinde `/app/src/config.py` iken `parents[3]` gibi sabit path varsayimi
 yuzunden startup kirilmaz. Lokal n8n default URL'i Windows port mapping'iyle
-uyumlu olacak sekilde `http://localhost:5980`'dir; Docker compose agent
+uyumlu olacak sekilde `http://localhost:6180`'dir; Docker compose agent
 container'inda `CONDUUT_N8N_URL=http://n8n:5678` env override'i kullanilir.
 
 ## Diagnostic Logging
@@ -398,6 +398,19 @@ Workflow readiness davranisi:
   runtime contract'tir. Body `{ input, source }` tasir; backend required input
   schema validation yapar, credential readiness'i korur ve n8n webhook'una
   validated payload gonderir. `execute_workflow` ayni helper'i kullanir.
+- `POST /api/workflows/{workflow_id}/batch-run` dashboard batch/loop
+  calistirma contract'idir. Body `{ rows, source, options }` tasir; her row
+  `{ rowNumber, input }` seklindedir. Endpoint credential readiness'i batch
+  basinda kontrol eder, workflow'u Conduut-runnable POST webhook'a hazirlar,
+  en fazla 50 satiri sequential calistirir, required input'u bos satirlari
+  webhook'a gondermeden `skipped` yapar ve satir bazli `success`/`failed`/
+  `skipped` sonuc dondurur. Artifact origin'i `workflow_batch_run`,
+  `batchRunId`, `rowNumber` ve `executionId` bilgilerini tasir.
+- Workflow webhook'u 4xx/5xx donse bile runner son n8n execution detayini
+  okumayi dener. Boylece dashboard single/batch run sonuclari genel
+  `"Error in workflow"` cevabi yerine mumkunse `failedNode` ve node-level hata
+  mesajini (ornegin Gmail OAuth refresh token invalid/expired) kullaniciya
+  tasir.
 - `execute_workflow` Conduut'tan sadece webhook-triggered workflow'lari test
   eder. Manuel tetikleyiciyle olusmus Conduut workflow'lari run isteginde
   otomatik olarak POST webhook trigger'a cevrilir ve sonra Conduut tarafindan

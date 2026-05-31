@@ -5,6 +5,7 @@ set "ROOT=%~dp0"
 cd /d "%ROOT%"
 
 echo Starting Conduut n8n container...
+if "%CONDUUT_N8N_PORT%"=="" set "CONDUUT_N8N_PORT=6180"
 docker compose up -d n8n
 if errorlevel 1 (
   echo Failed to start n8n with Docker Compose.
@@ -23,7 +24,7 @@ if not exist "%ROOT%logs\agent" mkdir "%ROOT%logs\agent"
 if "%CONDUUT_WEB_PORT%"=="" set "CONDUUT_WEB_PORT=3007"
 set "CONDUUT_ENVIRONMENT=development"
 set "CONDUUT_LOG_DIR=%ROOT%logs\agent"
-set "CONDUUT_N8N_URL=http://localhost:5980"
+set "CONDUUT_N8N_URL=http://localhost:%CONDUUT_N8N_PORT%"
 set "CONDUUT_N8N_API_KEY=***REMOVED***"
 set "CONDUUT_PUBLIC_WEB_URL=http://localhost:%CONDUUT_WEB_PORT%"
 if exist "%ROOT%.env" (
@@ -43,7 +44,7 @@ start "Conduut Web" /D "%ROOT%apps\web" cmd /k npm run dev -- --hostname localho
 
 echo.
 echo Started:
-echo   n8n   http://localhost:5980
+echo   n8n   http://localhost:%CONDUUT_N8N_PORT%
 echo   agent http://localhost:8100
 echo   web   http://localhost:%CONDUUT_WEB_PORT%
 echo.

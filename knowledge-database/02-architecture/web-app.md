@@ -62,7 +62,9 @@ Baslica route handler'lar:
 - `api/artifacts`: kalici artifact preview snapshot listesi.
 - `api/artifacts/[artifactId]`: kalici artifact preview snapshot silme.
 - `api/workflows`: workflow listesi.
-- `api/workflows/[workflowId]`: activate/deactivate/delete proxy.
+- `api/workflows/[workflowId]`: activate/deactivate/delete proxy; `POST`
+  `?action=run` tekil workflow run, `?action=batch-run` ise batch run proxy
+  eder.
 - `api/connections`: connection listeleme.
 - `api/connections/[connectionId]`: connection silme proxy.
 - `api/oauth/google/authorize?service=gmail|sheets`: Firebase token ile agent
@@ -118,6 +120,10 @@ SSE event'leri `src/lib/chat/sse.ts` ile parse edilir:
   artifact preview veya user input request gibi ekleri ekler.
 - `done`: provider/model bilgisini mesaj uzerine yazar.
 - `error`: toast ile hata gosterir.
+
+Chat mesajlarinda provider/model bilgisi response metadata'sinda tutulsa da
+`Message` component'i bunu hover metadata'sinda gostermez; workflow preview ve
+artifact kartlarinin yaninda yalnizca zaman bilgisi kalir.
 
 `WorkflowPreview` workflow kaydini daha belirgin bir "Workflow saved" paneliyle
 gosterir. `OAuthPrompt` artik simule connect yapmaz; agent'tan gelen

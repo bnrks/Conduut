@@ -8,7 +8,11 @@ import structlog
 
 from src import n8n_client, store
 from src.agent.artifacts import build_gmail_workflow_artifacts, build_sheets_workflow_artifacts
-from src.agent.schemas import WorkflowRunResultData
+from src.agent.schemas import (
+    WorkflowBatchRowResultData,
+    WorkflowBatchRunResultData,
+    WorkflowRunResultData,
+)
 from src.agent.tools.common import _response_preview
 from src.agent.tools.constants import _MANUAL_TRIGGER_TYPE, _WEBHOOK_TRIGGER_TYPE
 from src.agent.tools.execution import _summarize_execution
@@ -24,6 +28,9 @@ from src.agent.tools.workflow_helpers import (
 )
 
 log = structlog.get_logger()
+
+_FAILED_RUN_STATUSES = {"error", "failed"}
+_MAX_BATCH_ROWS = 50
 
 
 async def run_workflow_with_input(
@@ -46,6 +53,136 @@ async def run_workflow_with_input(
         )
         raise ValueError(f"Missing required workflow input: {', '.join(labels or missing)}")
 
+    workflow, path = await _prepare_workflow_for_conduut_run(workflow, user_id=user_id)
+    result = await _run_prepared_webhook_workflow(
+        workflow,
+        path=path,
+        input_payload=validated_input,
+        metadata=metadata,
+    )
+    log.info(
+        "workflow_run_finished",
+        workflow_id=workflow_id,
+        execution_id=result.executionId,
+        status=result.status,
+        failed_node=result.failedNode,
+        error=result.error,
+    )
+    return result
+
+
+async def run_workflow_batch_with_input(
+    workflow: dict[str, Any],
+    *,
+    user_id: str,
+    rows: list[dict[str, Any]],
+) -> WorkflowBatchRunResultData:
+    workflow_id = str(workflow.get("id") or "")
+    batch_run_id = str(uuid4())
+    log.info("workflow_batch_run_started", workflow_id=workflow_id, batch_run_id=batch_run_id)
+
+    if not rows:
+        raise ValueError("Batch run requires at least one row.")
+    if len(rows) > _MAX_BATCH_ROWS:
+        raise ValueError(f"Batch run supports up to {_MAX_BATCH_ROWS} rows.")
+
+    metadata = await store.get_workflow_metadata(user_id, workflow_id)
+    input_schema = _workflow_input_schema_from_metadata(metadata)
+    if not input_schema:
+        raise ValueError("Batch run requires a workflow input schema.")
+
+    workflow, path = await _prepare_workflow_for_conduut_run(workflow, user_id=user_id)
+    results: list[WorkflowBatchRowResultData] = []
+    succeeded = 0
+    failed = 0
+    skipped = 0
+
+    for index, row in enumerate(rows, start=1):
+        row_number = _batch_row_number(row, fallback=index)
+        raw_input = row.get("input") if isinstance(row, dict) else None
+        validated_input, missing = _validated_workflow_input(input_schema, raw_input)
+        if missing:
+            labels = [field.label for field in input_schema if field.name in missing]
+            skipped += 1
+            results.append(
+                WorkflowBatchRowResultData(
+                    rowNumber=row_number,
+                    status="skipped",
+                    error=f"Missing required workflow input: {', '.join(labels or missing)}",
+                )
+            )
+            continue
+
+        try:
+            row_result = await _run_prepared_webhook_workflow(
+                workflow,
+                path=path,
+                input_payload=validated_input,
+                metadata=metadata,
+            )
+        except Exception as exc:
+            failed += 1
+            log.warning(
+                "workflow_batch_row_error",
+                workflow_id=workflow_id,
+                batch_run_id=batch_run_id,
+                row_number=row_number,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            results.append(
+                WorkflowBatchRowResultData(
+                    rowNumber=row_number,
+                    status="failed",
+                    error=str(exc),
+                )
+            )
+            continue
+
+        row_status = "failed" if row_result.status in _FAILED_RUN_STATUSES else "success"
+        if row_status == "failed":
+            failed += 1
+        else:
+            succeeded += 1
+        results.append(
+            WorkflowBatchRowResultData(
+                rowNumber=row_number,
+                status=row_status,
+                executionId=row_result.executionId,
+                summary=row_result.summary,
+                error=row_result.error,
+                artifacts=row_result.artifacts,
+            )
+        )
+
+    status = _batch_status(succeeded=succeeded, failed=failed, skipped=skipped)
+    log.info(
+        "workflow_batch_run_finished",
+        workflow_id=workflow_id,
+        batch_run_id=batch_run_id,
+        status=status,
+        succeeded=succeeded,
+        failed=failed,
+        skipped=skipped,
+    )
+    return WorkflowBatchRunResultData(
+        workflowId=workflow_id,
+        batchRunId=batch_run_id,
+        status=status,
+        totalRows=len(rows),
+        succeeded=succeeded,
+        failed=failed,
+        skipped=skipped,
+        results=results,
+    )
+
+
+async def _prepare_workflow_for_conduut_run(
+    workflow: dict[str, Any],
+    *,
+    user_id: str,
+) -> tuple[dict[str, Any], str]:
+    workflow_id = str(workflow.get("id") or "")
     workflow, converted_trigger = await ensure_conduut_runnable_workflow(workflow)
     readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id)
     webhook_nodes = readiness["webhook_nodes"]
@@ -64,10 +201,37 @@ async def run_workflow_with_input(
     if not path:
         log.warning("workflow_run_missing_webhook_path", workflow_id=workflow_id)
         raise ValueError("Webhook path missing.")
+    return workflow, str(path)
 
-    webhook_response = await n8n_client.call_webhook(str(path), validated_input)
+
+async def _run_prepared_webhook_workflow(
+    workflow: dict[str, Any],
+    *,
+    path: str,
+    input_payload: dict[str, Any],
+    metadata: store.WorkflowMetadata | None,
+) -> WorkflowRunResultData:
+    workflow_id = str(workflow.get("id") or "")
+    webhook_response = await n8n_client.call_webhook(str(path), input_payload)
     response = _response_preview(webhook_response)
     if webhook_response.status_code >= 400:
+        execution_result = await _latest_workflow_execution_result(
+            workflow,
+            response=response,
+            metadata=metadata,
+        )
+        if execution_result is not None:
+            log.warning(
+                "workflow_run_webhook_error_with_execution_detail",
+                workflow_id=workflow_id,
+                status_code=webhook_response.status_code,
+                execution_id=execution_result.executionId,
+                failed_node=execution_result.failedNode,
+                error=execution_result.error,
+                response=response,
+            )
+            return execution_result
+
         log.warning(
             "workflow_run_webhook_error",
             workflow_id=workflow_id,
@@ -82,8 +246,12 @@ async def run_workflow_with_input(
             response=response,
         )
 
-    executions = await n8n_client.list_executions(workflow_id=workflow_id, limit=1)
-    if not executions:
+    execution_result = await _latest_workflow_execution_result(
+        workflow,
+        response=response,
+        metadata=metadata,
+    )
+    if execution_result is None:
         log.info("workflow_run_triggered_without_execution_detail", workflow_id=workflow_id)
         return WorkflowRunResultData(
             workflowId=workflow_id,
@@ -91,6 +259,28 @@ async def run_workflow_with_input(
             summary="Workflow trigger was accepted. n8n has not exposed execution details yet.",
             response=response,
         )
+
+    log.info(
+        "workflow_run_finished",
+        workflow_id=workflow_id,
+        execution_id=execution_result.executionId,
+        status=execution_result.status,
+        failed_node=execution_result.failedNode,
+        error=execution_result.error,
+    )
+    return execution_result
+
+
+async def _latest_workflow_execution_result(
+    workflow: dict[str, Any],
+    *,
+    response: Any,
+    metadata: store.WorkflowMetadata | None,
+) -> WorkflowRunResultData | None:
+    workflow_id = str(workflow.get("id") or "")
+    executions = await n8n_client.list_executions(workflow_id=workflow_id, limit=1)
+    if not executions:
+        return None
 
     detail = await n8n_client.get_execution_detail(executions[0].id)
     result = _summarize_execution(detail, response=response, workflow=workflow)
@@ -107,15 +297,23 @@ async def run_workflow_with_input(
             metadata=metadata,
         ),
     ]
-    log.info(
-        "workflow_run_finished",
-        workflow_id=workflow_id,
-        execution_id=result.executionId,
-        status=result.status,
-        failed_node=result.failedNode,
-        error=result.error,
-    )
     return result
+
+
+def _batch_row_number(row: dict[str, Any], *, fallback: int) -> int:
+    try:
+        row_number = int(row.get("rowNumber", fallback))
+    except (TypeError, ValueError, AttributeError):
+        return fallback
+    return row_number if row_number > 0 else fallback
+
+
+def _batch_status(*, succeeded: int, failed: int, skipped: int) -> str:
+    if failed == 0 and skipped == 0:
+        return "completed"
+    if succeeded > 0:
+        return "completed_with_errors"
+    return "failed"
 
 
 def _workflow_with_conduut_webhook_trigger(workflow: dict[str, Any]) -> dict[str, Any] | None:

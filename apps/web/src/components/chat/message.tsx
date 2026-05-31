@@ -175,7 +175,7 @@ export function Message({ message, hideInputRequests = false }: MessageProps) {
               {isUser ? message.content : <MarkdownContent content={message.content} />}
             </div>
 
-            {/* Timestamp + model info on hover */}
+            {/* Timestamp on hover */}
             <div
               className={cn(
                 "absolute -bottom-5 flex items-center gap-1.5 whitespace-nowrap transition-opacity duration-150",
@@ -183,16 +183,6 @@ export function Message({ message, hideInputRequests = false }: MessageProps) {
                 showTimestamp ? "opacity-100" : "opacity-0"
               )}
             >
-              {!isUser && message.model && (
-                <span className="text-[11px] text-muted-foreground/70">
-                  {message.provider && <span className="font-medium">{message.provider}</span>}
-                  {message.provider && message.model && <span className="mx-0.5">/</span>}
-                  {message.model}
-                </span>
-              )}
-              {!isUser && message.model && (
-                <span className="text-muted-foreground/40 text-[11px]">·</span>
-              )}
               <span className="text-[11px] text-muted-foreground">
                 {formatTime(message.createdAt)}
               </span>

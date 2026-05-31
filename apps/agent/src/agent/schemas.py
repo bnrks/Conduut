@@ -230,6 +230,26 @@ class WorkflowRunResultData(BaseModel):
     artifacts: list[ArtifactPreviewData] = Field(default_factory=list)
 
 
+class WorkflowBatchRowResultData(BaseModel):
+    rowNumber: int
+    status: str
+    executionId: str | None = None
+    summary: str | None = None
+    error: str | None = None
+    artifacts: list[ArtifactPreviewData] = Field(default_factory=list)
+
+
+class WorkflowBatchRunResultData(BaseModel):
+    workflowId: str
+    batchRunId: str
+    status: str
+    totalRows: int
+    succeeded: int
+    failed: int
+    skipped: int
+    results: list[WorkflowBatchRowResultData] = Field(default_factory=list)
+
+
 AgentAttachment = (
     WorkflowPreviewAttachment
     | ArtifactPreviewAttachment
