@@ -3,7 +3,16 @@
 import type { ChangeEvent, FormEvent } from "react";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { Plus, Search, Table2, Upload, Workflow as WorkflowIcon } from "lucide-react";
+import {
+  Activity,
+  CheckCircle2,
+  Plus,
+  Search,
+  Table2,
+  Upload,
+  Workflow as WorkflowIcon,
+  XCircle,
+} from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { ArtifactPreview } from "@/components/artifacts/artifact-preview";
@@ -59,6 +68,35 @@ interface WorkflowBatchRunResult {
   results: BatchRunRowResult[];
 }
 
+interface BatchRunRowPayload {
+  rowNumber: number;
+  input: Record<string, string>;
+}
+
+interface BatchRowPreview {
+  rowNumber: number;
+  fields: { label: string; value: string }[];
+}
+
+interface BatchRunProgress {
+  workflowId: string;
+  workflowName: string;
+  totalRows: number;
+  completedRows: number;
+  currentIndex: number;
+  currentRowNumber?: number;
+  currentPreview?: BatchRowPreview;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  error?: string;
+}
+
+interface BatchStreamEvent {
+  event: string;
+  data: Record<string, unknown>;
+}
+
 const MAX_BATCH_ROWS = 50;
 
 async function getErrorMessage(response: Response, fallback: string): Promise<string> {
@@ -89,6 +127,223 @@ function columnLabel(headers: string[], index: number): string {
   return headers[index] || `Column ${index + 1}`;
 }
 
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function parseSseEvent(raw: string): BatchStreamEvent | null {
+  const lines = raw.replaceAll("\r", "").split("\n");
+  let event = "message";
+  let data = "";
+
+  for (const line of lines) {
+    if (line.startsWith("event:")) {
+      event = line.slice(6).trim();
+      continue;
+    }
+    if (line.startsWith("data:")) {
+      data += line.slice(5).trimStart();
+    }
+  }
+
+  if (!data) return null;
+
+  try {
+    return { event, data: JSON.parse(data) as Record<string, unknown> };
+  } catch {
+    return null;
+  }
+}
+
+async function streamWorkflowBatchRun({
+  token,
+  workflowId,
+  rows,
+  onEvent,
+}: {
+  token: string;
+  workflowId: string;
+  rows: BatchRunRowPayload[];
+  onEvent: (event: BatchStreamEvent) => void;
+}): Promise<void> {
+  const response = await fetch(
+    `/api/workflows/${encodeURIComponent(workflowId)}?action=batch-run-stream`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        source: "dashboard",
+        rows,
+        options: { continueOnError: true },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response, "Could not run workflow batch."));
+  }
+  if (!response.body) {
+    throw new Error("Batch progress stream could not be opened.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const flushEvents = () => {
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary !== -1) {
+      const rawEvent = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const parsed = parseSseEvent(rawEvent);
+      if (parsed) onEvent(parsed);
+      boundary = buffer.indexOf("\n\n");
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      flushEvents();
+    }
+    buffer += decoder.decode();
+    if (buffer.trim().length > 0) {
+      const parsed = parseSseEvent(buffer);
+      if (parsed) onEvent(parsed);
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* noop */
+    }
+  }
+}
+
+function BatchRunProgressDialog({
+  progress,
+  onClose,
+}: {
+  progress: BatchRunProgress;
+  onClose: () => void;
+}) {
+  const isErrored = Boolean(progress.error);
+  const percent =
+    progress.totalRows > 0
+      ? Math.min(100, Math.round((progress.completedRows / progress.totalRows) * 100))
+      : 0;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="workflow-batch-progress-title"
+      onClick={() => {
+        if (isErrored) onClose();
+      }}
+    >
+      <div
+        className="w-full max-w-xl rounded-lg border border-border bg-card p-5 shadow-xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="mb-5 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="mb-2 flex items-center gap-2">
+              {isErrored ? (
+                <XCircle className="h-5 w-5 text-error" />
+              ) : (
+                <span className="relative flex h-5 w-5 items-center justify-center">
+                  <span className="absolute h-5 w-5 animate-ping rounded-full bg-conduut-500/20" />
+                  <Activity className="relative h-5 w-5 text-conduut-500" />
+                </span>
+              )}
+              <h2
+                id="workflow-batch-progress-title"
+                className="truncate text-[16px] font-medium text-foreground"
+              >
+                {progress.workflowName}
+              </h2>
+            </div>
+            <p className="text-[13px] text-muted-foreground">
+              {isErrored
+                ? progress.error
+                : `${Math.max(progress.currentIndex, progress.completedRows)} / ${progress.totalRows} running`}
+            </p>
+          </div>
+          {isErrored ? (
+            <Button size="sm" variant="outline" onClick={onClose}>
+              Close
+            </Button>
+          ) : (
+            <Spinner size="sm" className="mt-1 shrink-0" />
+          )}
+        </div>
+
+        <div className="mb-5">
+          <div className="mb-2 flex items-center justify-between text-[12px] text-muted-foreground">
+            <span>{progress.completedRows} completed</span>
+            <span>{percent}%</span>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-conduut-500 transition-all duration-300"
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+        </div>
+
+        <div className="mb-5 grid grid-cols-3 gap-2">
+          <div className="rounded-md border border-border px-3 py-2">
+            <p className="text-[11px] uppercase text-muted-foreground">Succeeded</p>
+            <p className="mt-1 flex items-center gap-1.5 text-[15px] font-medium text-foreground">
+              <CheckCircle2 className="h-4 w-4 text-green-600" />
+              {progress.succeeded}
+            </p>
+          </div>
+          <div className="rounded-md border border-border px-3 py-2">
+            <p className="text-[11px] uppercase text-muted-foreground">Failed</p>
+            <p className="mt-1 flex items-center gap-1.5 text-[15px] font-medium text-foreground">
+              <XCircle className="h-4 w-4 text-error" />
+              {progress.failed}
+            </p>
+          </div>
+          <div className="rounded-md border border-border px-3 py-2">
+            <p className="text-[11px] uppercase text-muted-foreground">Skipped</p>
+            <p className="mt-1 text-[15px] font-medium text-foreground">{progress.skipped}</p>
+          </div>
+        </div>
+
+        <div className="rounded-md border border-border bg-muted/30 px-3 py-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <p className="text-[13px] font-medium text-foreground">Current row</p>
+            <span className="text-[12px] text-muted-foreground">
+              {progress.currentRowNumber ? `Row ${progress.currentRowNumber}` : "Preparing"}
+            </span>
+          </div>
+          {progress.currentPreview?.fields.length ? (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {progress.currentPreview.fields.map((field) => (
+                <div key={field.label} className="min-w-0">
+                  <p className="truncate text-[12px] text-muted-foreground">{field.label}</p>
+                  <p className="truncate text-[13px] text-foreground">{field.value || "-"}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[13px] text-muted-foreground">Waiting for the first row.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function WorkflowsPage() {
   const { user, loading: authLoading } = useAuth();
   const confirm = useConfirm();
@@ -106,6 +361,7 @@ export default function WorkflowsPage() {
   const [dataEndRow, setDataEndRow] = useState(2);
   const [batchMappings, setBatchMappings] = useState<Record<string, BatchMapping>>({});
   const [runningWorkflowId, setRunningWorkflowId] = useState<string | null>(null);
+  const [batchRunProgress, setBatchRunProgress] = useState<BatchRunProgress | null>(null);
   const [runResult, setRunResult] = useState<WorkflowRunResult | null>(null);
   const [batchResult, setBatchResult] = useState<WorkflowBatchRunResult | null>(null);
 
@@ -265,7 +521,7 @@ export default function WorkflowsPage() {
     return null;
   };
 
-  const buildBatchRows = (workflow: Workflow) =>
+  const buildBatchRows = (workflow: Workflow): BatchRunRowPayload[] =>
     selectedRows.map(({ rowNumber, row }) => ({
       rowNumber,
       input: Object.fromEntries(
@@ -281,6 +537,29 @@ export default function WorkflowsPage() {
       ),
     }));
 
+  const buildBatchRowPreviews = (
+    workflow: Workflow,
+    rows: BatchRunRowPayload[]
+  ): Map<number, BatchRowPreview> => {
+    const labelsByName = Object.fromEntries(
+      (workflow.inputSchema ?? []).map((field) => [field.name, field.label])
+    );
+    return new Map(
+      rows.map((row) => [
+        row.rowNumber,
+        {
+          rowNumber: row.rowNumber,
+          fields: Object.entries(row.input)
+            .slice(0, 2)
+            .map(([name, value]) => ({
+              label: labelsByName[name] ?? name,
+              value,
+            })),
+        },
+      ])
+    );
+  };
+
   const submitWorkflowBatchRun = async (workflow: Workflow) => {
     if (!user) return;
     const error = batchMappingError(workflow);
@@ -289,36 +568,97 @@ export default function WorkflowsPage() {
       return;
     }
     setRunningWorkflowId(workflow.id);
+    const rows = buildBatchRows(workflow);
+    const rowPreviews = buildBatchRowPreviews(workflow, rows);
+    setBatchRunProgress({
+      workflowId: workflow.id,
+      workflowName: workflow.name,
+      totalRows: rows.length,
+      completedRows: 0,
+      currentIndex: 0,
+      succeeded: 0,
+      failed: 0,
+      skipped: 0,
+    });
     try {
       const token = await user.getIdToken();
-      const response = await fetch(
-        `/api/workflows/${encodeURIComponent(workflow.id)}?action=batch-run`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            source: "dashboard",
-            rows: buildBatchRows(workflow),
-            options: { continueOnError: true },
-          }),
-        }
-      );
-      if (!response.ok) {
-        throw new Error(await getErrorMessage(response, "Could not run workflow batch."));
-      }
-      const result = (await response.json()) as Omit<WorkflowBatchRunResult, "workflowName">;
-      setBatchResult({ ...result, workflowName: workflow.name });
-      toast.success(
-        `Batch completed: ${result.succeeded} succeeded, ${result.failed + result.skipped} need attention.`
-      );
-      setRunWorkflow(null);
-      resetBatchState();
-      void fetchWorkflows();
+      await streamWorkflowBatchRun({
+        token,
+        workflowId: workflow.id,
+        rows,
+        onEvent: (event) => {
+          if (event.event === "started") {
+            const totalRows = optionalNumber(event.data.totalRows) ?? rows.length;
+            setBatchRunProgress((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    totalRows,
+                  }
+                : prev
+            );
+            return;
+          }
+
+          if (event.event === "row_started") {
+            const rowNumber = optionalNumber(event.data.rowNumber);
+            const index = optionalNumber(event.data.index) ?? 0;
+            setBatchRunProgress((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    currentIndex: index,
+                    currentRowNumber: rowNumber,
+                    currentPreview: rowNumber ? rowPreviews.get(rowNumber) : undefined,
+                  }
+                : prev
+            );
+            return;
+          }
+
+          if (event.event === "row_finished") {
+            const status = typeof event.data.status === "string" ? event.data.status : "";
+            setBatchRunProgress((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    completedRows: prev.completedRows + 1,
+                    succeeded: prev.succeeded + (status === "success" ? 1 : 0),
+                    failed: prev.failed + (status === "failed" ? 1 : 0),
+                    skipped: prev.skipped + (status === "skipped" ? 1 : 0),
+                  }
+                : prev
+            );
+            return;
+          }
+
+          if (event.event === "completed") {
+            const result = event.data as unknown as Omit<WorkflowBatchRunResult, "workflowName">;
+            setBatchRunProgress(null);
+            setBatchResult({ ...result, workflowName: workflow.name });
+            toast.success(
+              `Batch completed: ${result.succeeded} succeeded, ${result.failed + result.skipped} need attention.`
+            );
+            setRunWorkflow(null);
+            resetBatchState();
+            void fetchWorkflows();
+            return;
+          }
+
+          if (event.event === "error") {
+            const message =
+              typeof event.data.message === "string"
+                ? event.data.message
+                : "Could not run workflow batch.";
+            setBatchRunProgress((prev) => (prev ? { ...prev, error: message } : prev));
+            throw new Error(message);
+          }
+        },
+      });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not run workflow batch.");
+      const message = error instanceof Error ? error.message : "Could not run workflow batch.";
+      setBatchRunProgress((prev) => (prev ? { ...prev, error: message } : prev));
+      toast.error(message);
     } finally {
       setRunningWorkflowId(null);
     }
@@ -638,7 +978,7 @@ export default function WorkflowsPage() {
         </div>
       )}
 
-      {runWorkflow && (
+      {runWorkflow && !batchRunProgress && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
           role="dialog"
@@ -843,6 +1183,17 @@ export default function WorkflowsPage() {
             </div>
           </form>
         </div>
+      )}
+
+      {batchRunProgress && (
+        <BatchRunProgressDialog
+          progress={batchRunProgress}
+          onClose={() => {
+            setBatchRunProgress(null);
+            setRunWorkflow(null);
+            resetBatchState();
+          }}
+        />
       )}
 
       {runResult && (

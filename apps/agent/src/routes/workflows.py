@@ -1,17 +1,21 @@
 """Workflows router — n8n workflow'larını listeler ve yönetir."""
 
 import asyncio
+import json
 from typing import Any, Literal
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src import n8n_client, store
+from src.agent.schemas import WorkflowBatchRowResultData, WorkflowBatchRunResultData
 from src.agent.tools import (
     _input_schema_payload,
     _workflow_input_schema_from_metadata,
     analyze_workflow_readiness_payload,
+    iter_workflow_batch_with_input,
     run_workflow_batch_with_input,
     run_workflow_with_input,
 )
@@ -39,6 +43,66 @@ class WorkflowBatchRunRequest(BaseModel):
     rows: list[WorkflowBatchRunRowRequest] = Field(min_length=1, max_length=50)
     source: Literal["dashboard"] = "dashboard"
     options: WorkflowBatchRunOptions = Field(default_factory=WorkflowBatchRunOptions)
+
+
+def _sse(event: str, data: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _batch_row_payload(row: WorkflowBatchRowResultData) -> dict[str, Any]:
+    return {
+        "rowNumber": row.rowNumber,
+        "status": row.status,
+        "execution_id": row.executionId,
+        "summary": row.summary,
+        "error": row.error,
+        "artifacts": [artifact.model_dump(exclude_none=True) for artifact in row.artifacts],
+    }
+
+
+def _batch_result_payload(result: WorkflowBatchRunResultData) -> dict[str, Any]:
+    return {
+        "success": result.status != "failed",
+        "workflow_id": result.workflowId,
+        "batchRunId": result.batchRunId,
+        "status": result.status,
+        "totalRows": result.totalRows,
+        "succeeded": result.succeeded,
+        "failed": result.failed,
+        "skipped": result.skipped,
+        "results": [_batch_row_payload(row) for row in result.results],
+    }
+
+
+async def _persist_batch_row_artifacts(
+    user_id: str,
+    workflow_id: str,
+    batch_run_id: str,
+    row: WorkflowBatchRowResultData,
+) -> None:
+    for artifact in row.artifacts:
+        try:
+            await store.save_artifact(
+                user_id,
+                artifact.model_dump(exclude_none=True),
+                origin={
+                    "kind": "workflow_batch_run",
+                    "workflowId": workflow_id,
+                    "batchRunId": batch_run_id,
+                    "rowNumber": row.rowNumber,
+                    "executionId": row.executionId,
+                },
+            )
+        except Exception as exc:
+            log.error(
+                "workflow_batch_artifact_persist_error",
+                workflow_id=workflow_id,
+                batch_run_id=batch_run_id,
+                row_number=row.rowNumber,
+                error_type=type(exc).__name__,
+                error=str(exc),
+                exc_info=True,
+            )
 
 
 @router.get("/workflows")
@@ -173,56 +237,84 @@ async def batch_run_workflow(
             rows=[row.model_dump() for row in body.rows],
         )
         for row in result.results:
-            for artifact in row.artifacts:
-                try:
-                    await store.save_artifact(
-                        user_id,
-                        artifact.model_dump(exclude_none=True),
-                        origin={
-                            "kind": "workflow_batch_run",
-                            "workflowId": workflow_id,
-                            "batchRunId": result.batchRunId,
-                            "rowNumber": row.rowNumber,
-                            "executionId": row.executionId,
-                        },
-                    )
-                except Exception as exc:
-                    log.error(
-                        "workflow_batch_artifact_persist_error",
-                        workflow_id=workflow_id,
-                        batch_run_id=result.batchRunId,
-                        row_number=row.rowNumber,
-                        error_type=type(exc).__name__,
-                        error=str(exc),
-                        exc_info=True,
-                    )
-        return {
-            "success": result.status != "failed",
-            "workflow_id": workflow_id,
-            "batchRunId": result.batchRunId,
-            "status": result.status,
-            "totalRows": result.totalRows,
-            "succeeded": result.succeeded,
-            "failed": result.failed,
-            "skipped": result.skipped,
-            "results": [
-                {
-                    "rowNumber": row.rowNumber,
-                    "status": row.status,
-                    "execution_id": row.executionId,
-                    "summary": row.summary,
-                    "error": row.error,
-                    "artifacts": [
-                        artifact.model_dump(exclude_none=True) for artifact in row.artifacts
-                    ],
-                }
-                for row in result.results
-            ],
-        }
+            await _persist_batch_row_artifacts(user_id, workflow_id, result.batchRunId, row)
+        return _batch_result_payload(result)
     except ValueError as e:
         raise HTTPException(status_code=422, detail={"message": str(e)}) from e
     except n8n_client.N8nApiError as e:
         raise HTTPException(status_code=e.status_code, detail={"message": e.message}) from e
+
+
+@router.post("/workflows/{workflow_id}/batch-run/stream")
+async def stream_batch_run_workflow(
+    workflow_id: str,
+    request: Request,
+    body: WorkflowBatchRunRequest,
+):
+    """Stream row-level workflow batch progress as server-sent events."""
+
+    user_id = get_user_id(request)
+    try:
+        workflow = await n8n_client.get_workflow(workflow_id)
+        readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id)
+        if readiness["missing_credentials"]:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "Workflow has missing credentials."},
+            )
+    except n8n_client.N8nApiError as e:
+        raise HTTPException(status_code=e.status_code, detail={"message": e.message}) from e
+
+    async def events():
+        batch_run_id: str | None = None
+        try:
+            async for event, payload in iter_workflow_batch_with_input(
+                workflow,
+                user_id=user_id,
+                rows=[row.model_dump() for row in body.rows],
+            ):
+                if event == "started":
+                    if isinstance(payload, dict):
+                        batch_run_id = str(payload.get("batchRunId") or "")
+                    yield _sse(event, payload if isinstance(payload, dict) else {})
+                    continue
+
+                if event == "row_started":
+                    yield _sse(event, payload if isinstance(payload, dict) else {})
+                    continue
+
+                if event == "row_finished" and isinstance(payload, WorkflowBatchRowResultData):
+                    if batch_run_id:
+                        await _persist_batch_row_artifacts(
+                            user_id,
+                            workflow_id,
+                            batch_run_id,
+                            payload,
+                        )
+                    yield _sse(event, _batch_row_payload(payload))
+                    continue
+
+                if event == "completed" and isinstance(payload, WorkflowBatchRunResultData):
+                    yield _sse(event, _batch_result_payload(payload))
+        except ValueError as exc:
+            yield _sse("error", {"message": str(exc)})
+        except n8n_client.N8nApiError as exc:
+            yield _sse("error", {"message": exc.message, "status": exc.status_code})
+        except Exception as exc:
+            log.error(
+                "workflow_batch_stream_error",
+                workflow_id=workflow_id,
+                error_type=type(exc).__name__,
+                error=str(exc),
+                exc_info=True,
+            )
+            yield _sse("error", {"message": "Workflow batch run failed."})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.delete("/workflows/{workflow_id}", status_code=204)

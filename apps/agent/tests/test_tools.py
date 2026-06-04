@@ -29,6 +29,7 @@ from src.agent.tools import (
     compile_workflow_spec,
     create_workflow_from_plan_payload,
     create_workflow_from_spec_payload,
+    iter_workflow_batch_with_input,
     run_workflow_batch_with_input,
     run_workflow_with_input,
 )
@@ -1437,6 +1438,79 @@ async def test_run_workflow_batch_with_input_continues_after_row_errors(monkeypa
     assert result.failed == 1
     assert [row.status for row in result.results] == ["success", "skipped", "failed"]
     assert sent_payloads == [{"to": "person@example.com"}, {"to": "broken@example.com"}]
+
+
+@pytest.mark.asyncio
+async def test_iter_workflow_batch_with_input_streams_row_progress(monkeypatch):
+    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str):
+        return store.WorkflowMetadata(
+            workflow_id=workflow_id,
+            input_schema=[
+                {
+                    "name": "to",
+                    "label": "Recipient email",
+                    "type": "email",
+                    "required": True,
+                }
+            ],
+            created_at="now",
+            updated_at="now",
+        )
+
+    async def fake_readiness(_workflow: dict, *, user_id: str):
+        assert user_id == "user_1"
+        return {"webhook_nodes": [{"parameters": {"path": "runtime-test", "httpMethod": "POST"}}]}
+
+    async def fake_call_webhook(_path: str, _payload: dict):
+        return httpx.Response(200, json={"ok": True})
+
+    async def fake_list_executions(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr("src.agent.tools.store.get_workflow_metadata", fake_get_workflow_metadata)
+    monkeypatch.setattr(
+        "src.agent.tools.workflow_runner.analyze_workflow_readiness_payload",
+        fake_readiness,
+    )
+    monkeypatch.setattr("src.agent.tools.n8n_client.call_webhook", fake_call_webhook)
+    monkeypatch.setattr("src.agent.tools.n8n_client.list_executions", fake_list_executions)
+
+    events = [
+        (event, payload)
+        async for event, payload in iter_workflow_batch_with_input(
+            {
+                "id": "wf_1",
+                "name": "Runtime workflow",
+                "active": True,
+                "nodes": [
+                    {
+                        "name": "Webhook",
+                        "type": "n8n-nodes-base.webhook",
+                        "parameters": {"path": "runtime-test", "httpMethod": "POST"},
+                    }
+                ],
+            },
+            user_id="user_1",
+            rows=[
+                {"rowNumber": 2, "input": {"to": "person@example.com"}},
+                {"rowNumber": 3, "input": {"to": ""}},
+            ],
+        )
+    ]
+
+    assert [event for event, _payload in events] == [
+        "started",
+        "row_started",
+        "row_finished",
+        "row_started",
+        "row_finished",
+        "completed",
+    ]
+    assert events[0][1]["totalRows"] == 2
+    assert events[1][1] == {"rowNumber": 2, "index": 1, "totalRows": 2}
+    assert events[2][1].status == "success"
+    assert events[4][1].status == "skipped"
+    assert events[5][1].skipped == 1
 
 
 @pytest.mark.asyncio

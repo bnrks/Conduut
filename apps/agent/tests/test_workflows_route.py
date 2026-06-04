@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from fastapi import HTTPException
 
@@ -9,6 +11,22 @@ from src.agent.schemas import (
     WorkflowRunResultData,
 )
 from src.routes import workflows as workflows_route
+
+
+async def _stream_events(response):
+    events = []
+    async for chunk in response.body_iterator:
+        raw = chunk.decode() if isinstance(chunk, bytes) else chunk
+        for event_block in raw.strip().split("\n\n"):
+            lines = event_block.splitlines()
+            event = next(
+                line.removeprefix("event: ").strip() for line in lines if line.startswith("event:")
+            )
+            data = next(
+                line.removeprefix("data: ").strip() for line in lines if line.startswith("data:")
+            )
+            events.append((event, json.loads(data)))
+    return events
 
 
 @pytest.mark.asyncio
@@ -179,6 +197,107 @@ async def test_batch_run_workflow_persists_row_artifacts(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_stream_batch_run_workflow_emits_progress_and_persists_artifacts(monkeypatch):
+    monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
+
+    async def fake_get_workflow(workflow_id: str):
+        assert workflow_id == "wf_1"
+        return {"id": "wf_1", "name": "Runtime workflow", "nodes": []}
+
+    async def fake_readiness(_workflow: dict, *, user_id: str):
+        assert user_id == "user_1"
+        return {"missing_credentials": []}
+
+    artifact = ArtifactPreviewData(
+        service="gmail",
+        title="Gmail message sent",
+        source={"messageId": "msg_1"},
+    )
+
+    async def fake_iter_batch(_workflow: dict, *, user_id: str, rows: list[dict]):
+        assert user_id == "user_1"
+        assert rows == [{"rowNumber": 2, "input": {"to": "person@example.com"}}]
+        yield "started", {"workflowId": "wf_1", "batchRunId": "batch_1", "totalRows": 1}
+        yield "row_started", {"rowNumber": 2, "index": 1, "totalRows": 1}
+        row = WorkflowBatchRowResultData(
+            rowNumber=2,
+            status="success",
+            executionId="exec_1",
+            summary="Workflow run completed.",
+            artifacts=[artifact],
+        )
+        yield "row_finished", row
+        yield (
+            "completed",
+            WorkflowBatchRunResultData(
+                workflowId="wf_1",
+                batchRunId="batch_1",
+                status="completed",
+                totalRows=1,
+                succeeded=1,
+                failed=0,
+                skipped=0,
+                results=[row],
+            ),
+        )
+
+    saved: list[dict] = []
+
+    async def fake_save_artifact(user_id: str, artifact_payload: dict, *, origin: dict):
+        saved.append({"user_id": user_id, "artifact": artifact_payload, "origin": origin})
+
+    monkeypatch.setattr(workflows_route.n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(
+        workflows_route,
+        "analyze_workflow_readiness_payload",
+        fake_readiness,
+    )
+    monkeypatch.setattr(workflows_route, "iter_workflow_batch_with_input", fake_iter_batch)
+    monkeypatch.setattr(workflows_route.store, "save_artifact", fake_save_artifact)
+
+    response = await workflows_route.stream_batch_run_workflow(
+        "wf_1",
+        object(),
+        workflows_route.WorkflowBatchRunRequest(
+            rows=[
+                workflows_route.WorkflowBatchRunRowRequest(
+                    rowNumber=2,
+                    input={"to": "person@example.com"},
+                )
+            ]
+        ),
+    )
+    events = await _stream_events(response)
+
+    assert [event for event, _payload in events] == [
+        "started",
+        "row_started",
+        "row_finished",
+        "completed",
+    ]
+    assert events[0][1] == {"workflowId": "wf_1", "batchRunId": "batch_1", "totalRows": 1}
+    assert events[2][1]["execution_id"] == "exec_1"
+    assert events[3][1]["succeeded"] == 1
+    assert saved == [
+        {
+            "user_id": "user_1",
+            "artifact": {
+                "service": "gmail",
+                "title": "Gmail message sent",
+                "source": {"messageId": "msg_1"},
+            },
+            "origin": {
+                "kind": "workflow_batch_run",
+                "workflowId": "wf_1",
+                "batchRunId": "batch_1",
+                "rowNumber": 2,
+                "executionId": "exec_1",
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_batch_run_workflow_stops_before_run_when_credentials_missing(monkeypatch):
     monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
 
@@ -202,6 +321,46 @@ async def test_batch_run_workflow_stops_before_run_when_credentials_missing(monk
 
     with pytest.raises(HTTPException) as exc:
         await workflows_route.batch_run_workflow(
+            "wf_1",
+            object(),
+            workflows_route.WorkflowBatchRunRequest(
+                rows=[
+                    workflows_route.WorkflowBatchRunRowRequest(
+                        rowNumber=2,
+                        input={"to": "person@example.com"},
+                    )
+                ]
+            ),
+        )
+
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_stream_batch_run_workflow_stops_before_stream_when_credentials_missing(monkeypatch):
+    monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
+
+    async def fake_get_workflow(_workflow_id: str):
+        return {"id": "wf_1", "name": "Runtime workflow", "nodes": []}
+
+    async def fake_readiness(_workflow: dict, *, user_id: str):
+        assert user_id == "user_1"
+        return {"missing_credentials": [{"type": "oauth_prompt"}]}
+
+    async def fail_iter_batch(*_args, **_kwargs):
+        raise AssertionError("batch stream should not start with missing credentials")
+        yield
+
+    monkeypatch.setattr(workflows_route.n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(
+        workflows_route,
+        "analyze_workflow_readiness_payload",
+        fake_readiness,
+    )
+    monkeypatch.setattr(workflows_route, "iter_workflow_batch_with_input", fail_iter_batch)
+
+    with pytest.raises(HTTPException) as exc:
+        await workflows_route.stream_batch_run_workflow(
             "wf_1",
             object(),
             workflows_route.WorkflowBatchRunRequest(

@@ -1,5 +1,6 @@
 """Workflow run preparation and execution helpers."""
 
+from collections.abc import AsyncIterator
 from copy import deepcopy
 from typing import Any
 from uuid import uuid4
@@ -31,6 +32,7 @@ log = structlog.get_logger()
 
 _FAILED_RUN_STATUSES = {"error", "failed"}
 _MAX_BATCH_ROWS = 50
+BatchProgressPayload = dict[str, Any] | WorkflowBatchRowResultData | WorkflowBatchRunResultData
 
 
 async def run_workflow_with_input(
@@ -77,6 +79,25 @@ async def run_workflow_batch_with_input(
     user_id: str,
     rows: list[dict[str, Any]],
 ) -> WorkflowBatchRunResultData:
+    final_result: WorkflowBatchRunResultData | None = None
+    async for event, payload in iter_workflow_batch_with_input(
+        workflow,
+        user_id=user_id,
+        rows=rows,
+    ):
+        if event == "completed" and isinstance(payload, WorkflowBatchRunResultData):
+            final_result = payload
+    if final_result is None:
+        raise ValueError("Batch run did not produce a result.")
+    return final_result
+
+
+async def iter_workflow_batch_with_input(
+    workflow: dict[str, Any],
+    *,
+    user_id: str,
+    rows: list[dict[str, Any]],
+) -> AsyncIterator[tuple[str, BatchProgressPayload]]:
     workflow_id = str(workflow.get("id") or "")
     batch_run_id = str(uuid4())
     log.info("workflow_batch_run_started", workflow_id=workflow_id, batch_run_id=batch_run_id)
@@ -96,21 +117,39 @@ async def run_workflow_batch_with_input(
     succeeded = 0
     failed = 0
     skipped = 0
+    total_rows = len(rows)
+
+    yield (
+        "started",
+        {
+            "workflowId": workflow_id,
+            "batchRunId": batch_run_id,
+            "totalRows": total_rows,
+        },
+    )
 
     for index, row in enumerate(rows, start=1):
         row_number = _batch_row_number(row, fallback=index)
+        yield (
+            "row_started",
+            {
+                "rowNumber": row_number,
+                "index": index,
+                "totalRows": total_rows,
+            },
+        )
         raw_input = row.get("input") if isinstance(row, dict) else None
         validated_input, missing = _validated_workflow_input(input_schema, raw_input)
         if missing:
             labels = [field.label for field in input_schema if field.name in missing]
             skipped += 1
-            results.append(
-                WorkflowBatchRowResultData(
-                    rowNumber=row_number,
-                    status="skipped",
-                    error=f"Missing required workflow input: {', '.join(labels or missing)}",
-                )
+            row_result = WorkflowBatchRowResultData(
+                rowNumber=row_number,
+                status="skipped",
+                error=f"Missing required workflow input: {', '.join(labels or missing)}",
             )
+            results.append(row_result)
+            yield "row_finished", row_result
             continue
 
         try:
@@ -130,13 +169,13 @@ async def run_workflow_batch_with_input(
                 error_type=type(exc).__name__,
                 error=str(exc),
             )
-            results.append(
-                WorkflowBatchRowResultData(
-                    rowNumber=row_number,
-                    status="failed",
-                    error=str(exc),
-                )
+            row_result_data = WorkflowBatchRowResultData(
+                rowNumber=row_number,
+                status="failed",
+                error=str(exc),
             )
+            results.append(row_result_data)
+            yield "row_finished", row_result_data
             continue
 
         row_status = "failed" if row_result.status in _FAILED_RUN_STATUSES else "success"
@@ -154,6 +193,7 @@ async def run_workflow_batch_with_input(
                 artifacts=row_result.artifacts,
             )
         )
+        yield "row_finished", results[-1]
 
     status = _batch_status(succeeded=succeeded, failed=failed, skipped=skipped)
     log.info(
@@ -165,15 +205,18 @@ async def run_workflow_batch_with_input(
         failed=failed,
         skipped=skipped,
     )
-    return WorkflowBatchRunResultData(
-        workflowId=workflow_id,
-        batchRunId=batch_run_id,
-        status=status,
-        totalRows=len(rows),
-        succeeded=succeeded,
-        failed=failed,
-        skipped=skipped,
-        results=results,
+    yield (
+        "completed",
+        WorkflowBatchRunResultData(
+            workflowId=workflow_id,
+            batchRunId=batch_run_id,
+            status=status,
+            totalRows=total_rows,
+            succeeded=succeeded,
+            failed=failed,
+            skipped=skipped,
+            results=results,
+        ),
     )
 
 

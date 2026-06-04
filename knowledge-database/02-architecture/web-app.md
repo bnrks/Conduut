@@ -63,8 +63,10 @@ Baslica route handler'lar:
 - `api/artifacts/[artifactId]`: kalici artifact preview snapshot silme.
 - `api/workflows`: workflow listesi.
 - `api/workflows/[workflowId]`: activate/deactivate/delete proxy; `POST`
-  `?action=run` tekil workflow run, `?action=batch-run` ise batch run proxy
-  eder.
+  `?action=run` tekil workflow run, `?action=batch-run` batch run JSON proxy,
+  `?action=batch-run-stream` ise batch run SSE progress proxy eder. Stream
+  proxy chat send route'undaki gibi upstream body'yi manuel `ReadableStream`
+  ile pompalar; boylece Next response'u batch bitene kadar bufferlamaz.
 - `api/connections`: connection listeleme.
 - `api/connections/[connectionId]`: connection silme proxy.
 - `api/oauth/google/authorize?service=gmail|sheets`: Firebase token ile agent

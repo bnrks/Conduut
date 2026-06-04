@@ -23,6 +23,7 @@ from src.agent.tools.validation import _validated_runtime_workflow, _validated_w
 from src.agent.tools.workflow_runner import (
     _workflow_with_conduut_webhook_trigger,
     _workflow_with_post_webhook_trigger,
+    iter_workflow_batch_with_input,
     run_workflow_batch_with_input,
     run_workflow_with_input,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "create_workflow_from_spec_payload",
     "n8n_client",
     "registry",
+    "iter_workflow_batch_with_input",
     "run_workflow_batch_with_input",
     "run_workflow_with_input",
     "store",
