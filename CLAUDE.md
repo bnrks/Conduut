@@ -10,6 +10,26 @@ Conduut, kullanıcıların AI agent ile sohbet ederek n8n workflow'ları oluştu
 
 ---
 
+## Oturum Başlangıç Protokolü (Knowledge Database)
+
+Bu projenin kalıcı hafızası `knowledge-database/` Obsidian vault'unda tutulur.
+`index.md` aşağıda otomatik olarak yüklenir (hub/harita). Her yeni oturumda:
+
+1. Aşağıdaki `@knowledge-database/index.md` haritasını oku.
+2. Görevle ilgili notu/notları `index.md`'deki linklerden seç ve **iş yapmadan önce** aç
+   (ör. mimari için [[system-architecture]], agent için [[agent-service]], kararlar için ilgili `adr-*`).
+3. Sonra göreve özgü kaynak dosyaları aç.
+
+**Hafıza güncelleme kuralı (zorunlu):** Önemli bir değişiklik, mimari karar, feature,
+bug fix veya test sonucu sonrası ilgili `knowledge-database` notunu **aynı görevde** güncelle.
+Gerekirse yeni not aç ve Obsidian wikilink (`[[not-adı]]`) ile `index.md`'ye bağla.
+Yeni ADR'leri mevcut yanlış yazımlı `03-desicions/` klasörüne ekle (klasörü yeniden adlandırma).
+Notlar Türkçe öncelikli, teknik tanımlayıcılar İngilizce.
+
+@knowledge-database/index.md
+
+---
+
 ## Proje yapısı (gerçek durum)
 
 ```

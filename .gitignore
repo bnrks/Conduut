@@ -27,3 +27,8 @@ knowledge-database/.obsidian/workspace.json
 knowledge-database/.obsidian/workspaces.json
 knowledge-database/.trash/
 *.md
+
+# Knowledge database notlarını izle (yukarıdaki *.md kuralından muaf tut)
+!knowledge-database/**/*.md
+# ...ama claude-mem'in otomatik ürettiği boş stub'ı izleme
+knowledge-database/CLAUDE.md
