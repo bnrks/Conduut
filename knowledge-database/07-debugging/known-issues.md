@@ -134,6 +134,24 @@ normalizer bu formati artik otomatik duzeltir.
 veya planlanan mimari bilgilerini iceriyor. Kod yazarken once kaynak kod,
 manifestler, root `AGENTS.md` ve bu vault kontrol edilmeli.
 
+## Workflow Intent Engine Reverted — Stale .pyc Kalintisi
+
+2026-06-07: [[adr-0008-typed-workflow-intent-engine]] kararinin 2026-06-05'te
+baslayan ilk implementasyon slice'i kullanici tarafindan geri alindi (birkac
+gunluk ara sonrasi yarim is revert edildi). Sonuc:
+
+- `apps/agent/src/agent/workflow_intent/` icinde kaynak `.py` dosyalari **yok**;
+  yalnizca `__pycache__/*.pyc` bytecode kalintisi (schemas, profiles, renderer,
+  service, evals, __init__) kaldi. Bu kod hicbir yerden import edilmiyor.
+- `create_workflow_from_intent` tool'u kayitli degil; aktif yol
+  `create_workflow_from_plan` (`spec_compiler.py`, WorkflowPlan compiler) ve
+  desteklenen aksiyonlar `gmail.send`, `sheets.row.append`, `sheets.read_rows`,
+  `core.filter` ile sinirli.
+- Stale `__pycache__` klasoru kullanici onayiyla silinebilir; ayri temizlik
+  task'i olarak ele alinmali. Engine'i tekrar kurmak gerekirse karar
+  [[adr-0008-typed-workflow-intent-engine]] ve [[new-engine-plan]] notlarinda
+  duruyor, ancak kaynak commit edilmedigi icin pratikte sifirdan yazim gerekir.
+
 ## n8n Registry Data Availability
 
 `packages/n8n-registry/data/nodes.json` gitignore'da. Dosya yoksa registry node

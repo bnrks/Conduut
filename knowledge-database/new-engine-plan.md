@@ -1,5 +1,12 @@
 # Typed Workflow Intent Engine Planı
 
+> **2026-06-07 DURUM: GERI ALINDI (parked).** Bu plandaki ilk implementasyon
+> slice'i (2026-06-05 `workflow_intent` paketi) kullanici tarafindan revert
+> edildi; kaynak `.py` dosyalari repoda yok, yalnizca stale `.pyc` kalintisi
+> var. Aktif yol yine `create_workflow_from_plan` (WorkflowPlan compiler).
+> Asagidaki plan **hedefi** tarif eder, mevcut kodu degil. Detay:
+> [[adr-0008-typed-workflow-intent-engine]] ve [[known-issues]].
+
 ## Summary
 Conduut workflow generation ana yolunu raw n8n JSON üretiminden çıkarıp typed intent + operation profile engine yapısına taşıyacağız. Agent yalnızca kullanıcı niyetini ve step graph’ını üretecek; engine bu intent’i önceden tanımlı node/operation modelleriyle deterministic n8n JSON’a çevirecek.
 

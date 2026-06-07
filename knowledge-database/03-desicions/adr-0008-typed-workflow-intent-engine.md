@@ -2,8 +2,36 @@
 
 Merkez: [[index]]
 
-Durum: kabul edildi, ilk implementasyon basladi.
-Tarih: 2026-06-05
+Durum: KARAR GECERLI ama implementasyon GERI ALINDI (parked).
+Tarih: 2026-06-05 (karar), 2026-06-07 (revert).
+
+## 2026-06-07 Durum Guncellemesi (ONEMLI)
+
+Bu ADR'nin ilk implementasyon slice'i (2026-06-05'te baslayan
+`apps/agent/src/agent/workflow_intent` paketi) **kullanici tarafindan geri
+alindi**. Kullanici birkac gun projeye bakamadigi icin yarim kalan typed intent
+engine degisikliklerini tamamen revert etti.
+
+Mevcut repo gercegi (2026-06-07):
+
+- `workflow_intent` paketinin kaynak `.py` dosyalari repoda **yok**. Geriye
+  yalnizca `apps/agent/src/agent/workflow_intent/__pycache__/` icinde stale
+  `.pyc` bytecode kalintilari (schemas, profiles, renderer, service, evals,
+  __init__) var. Bu kalintilar import edilmiyor ve temizlenebilir.
+- `create_workflow_from_intent` tool'u `factory.py`'de **kayitli degil**.
+  `WorkflowIntent`/`workflow_intent` referansi hicbir kaynak `.py` dosyasinda
+  gecmiyor (git'e hic commit edilmemis).
+- Aktif workflow generation yolu yine **`create_workflow_from_plan`**
+  (`WorkflowPlan` action graph compiler, [[adr-0005-workflow-spec-compiler]]).
+  Desteklenen aksiyonlar: `gmail.send`, `sheets.row.append`,
+  `sheets.read_rows`, `core.filter`.
+
+Yani asagidaki "Ilk Kapsam" ve "Test Yaklasimi" bolumleri **hedeflenen plani**
+anlatir; su an kodda karsiligi yoktur. Bu karar gelecekte yeniden uygulanmak
+uzere park edilmistir. Yeniden baslarken: ya commit edilmemis kaynak kaybi
+nedeniyle sifirdan yazilacak, ya da `.pyc` bytecode'dan kismi decompile ile
+profile/yapilandirma cikarilmaya calisilacak. Bilinen sorun kaydi:
+[[known-issues]].
 
 ## Karar
 

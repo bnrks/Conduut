@@ -28,6 +28,12 @@ once bu not ve kaynak kod esas alinmalidir.
   activate/deactivate/delete ve runtime input ile run islemleri yapiyor.
 - Agent, workflow olustururken `search_n8n_nodes`, `get_node_schema` ve
   `find_workflow_template` tool'larini kullanabiliyor.
+- Workflow generation aktif ana yolu `create_workflow_from_plan` (WorkflowPlan
+  compiler); desteklenen aksiyonlar `gmail.send`, `sheets.row.append`,
+  `sheets.read_rows`, `core.filter`. Bunun disindaki istekler raw
+  `create_workflow` fallback'ine duser. Planlanan typed intent engine
+  ([[adr-0008-typed-workflow-intent-engine]]) 2026-06-07'de geri alindi;
+  detay [[known-issues]].
 - Connections sayfasi Google Gmail ve Sheets permission pack OAuth akisiyle
   gercek connection listeleme, connect/reconnect, pack grant ve disconnect
   islemlerine bagli.

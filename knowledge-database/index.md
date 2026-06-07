@@ -49,7 +49,9 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
 - [[adr-0007-batch-workflow-runs]] - Runtime input alanli workflow'lari
   Conduut tarafinda dosya satirlariyla batch/loop calistirma karari.
 - [[adr-0008-typed-workflow-intent-engine]] - Raw n8n JSON uretimi yerine
-  typed intent + profile engine yoluna gecis karari.
+  typed intent + profile engine yoluna gecis karari. **DIKKAT (2026-06-07):
+  implementasyon geri alindi/park edildi; aktif yol hala WorkflowPlan
+  compiler.**
 
 ## Kaynak Dokumanlar
 
