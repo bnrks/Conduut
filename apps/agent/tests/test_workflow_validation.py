@@ -378,3 +378,134 @@ def test_bad_connection_reference_fails():
     )
 
     assert "connections references unknown target node 'Missing'" in errors
+
+
+def test_langchain_chat_model_wired_into_main_flow_fails():
+    """Reproduces the empty-email bug: a langchain chat-model sub-node has no
+    main output, so wiring it into the main flow yields empty downstream data.
+    It must attach to an AI Agent via an ai_languageModel port instead."""
+    nodes = valid_nodes()
+    nodes.append(
+        {
+            "id": "chat",
+            "name": "OpenAI Chat Model",
+            "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+            "typeVersion": 1.2,
+            "position": [750, 300],
+            "parameters": {"model": {"__rl": True, "mode": "list", "value": "gpt-4o-mini"}},
+        }
+    )
+    connections = {
+        "Manual Trigger": {"main": [[{"node": "OpenAI Chat Model", "type": "main", "index": 0}]]},
+    }
+
+    errors = validate_workflow_payload(
+        nodes,
+        connections,
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("OpenAI Chat Model" in error and "ai_languageModel" in error for error in errors), (
+        errors
+    )
+
+
+def test_langchain_chat_model_as_main_source_fails():
+    """A chat-model sub-node must not be a source of a main connection either."""
+    nodes = valid_nodes()
+    nodes.append(
+        {
+            "id": "chat",
+            "name": "OpenAI Chat Model",
+            "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+            "typeVersion": 1.2,
+            "position": [750, 300],
+            "parameters": {"model": {"__rl": True, "mode": "list", "value": "gpt-4o-mini"}},
+        }
+    )
+    connections = {
+        "Manual Trigger": {"main": [[{"node": "OpenAI Chat Model", "type": "main", "index": 0}]]},
+        "OpenAI Chat Model": {"main": [[{"node": "Set", "type": "main", "index": 0}]]},
+    }
+
+    errors = validate_workflow_payload(
+        nodes,
+        connections,
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("OpenAI Chat Model" in error and "ai_languageModel" in error for error in errors), (
+        errors
+    )
+
+
+def test_langchain_chat_model_attached_via_ai_port_passes():
+    """A chat model correctly attached to an AI Agent via the ai_languageModel
+    port is valid and must not trigger the sub-node guard (no false positive)."""
+    nodes = [
+        valid_nodes()[0],
+        {
+            "id": "agent",
+            "name": "AI Agent",
+            "type": "@n8n/n8n-nodes-langchain.agent",
+            "typeVersion": 1.9,
+            "position": [500, 300],
+            "parameters": {"promptType": "define", "text": "hello", "options": {}},
+        },
+        {
+            "id": "chat",
+            "name": "OpenAI Chat Model",
+            "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+            "typeVersion": 1.2,
+            "position": [500, 520],
+            "parameters": {"model": {"__rl": True, "mode": "list", "value": "gpt-4o-mini"}},
+        },
+    ]
+    connections = {
+        "Manual Trigger": {"main": [[{"node": "AI Agent", "type": "main", "index": 0}]]},
+        "OpenAI Chat Model": {
+            "ai_languageModel": [[{"node": "AI Agent", "type": "ai_languageModel", "index": 0}]]
+        },
+    }
+
+    errors = validate_workflow_payload(
+        nodes,
+        connections,
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert errors == [], errors
+
+
+def test_bare_input_expression_fails():
+    """The agent sometimes leaks the graph-ref syntax {{input.x}} into raw JSON.
+    'input' is not an n8n variable, so the field renders empty and the AI prompt
+    or email loses the runtime values. It must use the trigger json.body path."""
+    nodes = valid_nodes()
+    nodes[1]["parameters"]["assignments"]["assignments"][0]["value"] = (
+        "=Merhaba {{input.company_name}}, teklifimiz hazir."
+    )
+
+    errors = validate_workflow_payload(
+        nodes,
+        {"Manual Trigger": {"main": [[{"node": "Set", "type": "main", "index": 0}]]}},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("input." in error and "Set" in error for error in errors), errors
+
+
+def test_valid_trigger_body_expression_passes():
+    """Referencing runtime input through the trigger json.body path is valid."""
+    nodes = valid_nodes()
+    nodes[1]["parameters"]["assignments"]["assignments"][0]["value"] = (
+        "={{$('Manual Trigger').first().json.body.company_name}}"
+    )
+
+    errors = validate_workflow_payload(
+        nodes,
+        {"Manual Trigger": {"main": [[{"node": "Set", "type": "main", "index": 0}]]}},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert errors == [], errors

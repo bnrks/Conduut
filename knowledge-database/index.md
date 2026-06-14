@@ -52,6 +52,14 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
   typed intent + profile engine yoluna gecis karari. **DIKKAT (2026-06-07):
   implementasyon geri alindi/park edildi; aktif yol hala WorkflowPlan
   compiler.**
+- [[adr-0009-workflow-graph-compiler]] - WorkflowGraph IR + genel graph
+  compiler (curated block registry + generic n8n: fallback + rol etiketli
+  port cikarimi). **DIKKAT (2026-06-14): [[adr-0010-json-surface-repair-normalizer]]
+  ile model yuzeyinden kaldirildi; artik dahili kutuphane.**
+- [[adr-0010-json-surface-repair-normalizer]] - Tek JSON yuzeyi (kompakt n8n
+  JSON) + onarici normalizer (`repair.py`). Model IR yerine native JSON yazar;
+  uc klasik ham-yol bug'i (sub-node main wiring, `{{input.x}}`, `$json.body`
+  atlama) deterministik onarilir. IR tool'lari kaldirildi.
 
 ## Kaynak Dokumanlar
 

@@ -96,7 +96,7 @@ conduut/
 
 ---
 
-## Geliştirme durumu (son güncelleme: 2026-04-13)
+## Geliştirme durumu (son güncelleme: 2026-06-11)
 
 ### Çalışan servisler (docker compose up)
 - `conduut-agent` — FastAPI agent servisi, port 8000
@@ -108,11 +108,15 @@ conduut/
 ### ✅ Tamamlanan özellikler
 
 #### Agent Servisi (`apps/agent/src/`)
-- **Agentic loop** (`agent/loop.py`) — LiteLLM üzerinden çoklu LLM, tool calling, SSE streaming, MAX_TOOL_ROUNDS=8, keep-alive ping (asyncio + shield, 2s timeout)
-- **n8n araçları** (`agent/tools.py`) — list, get, create, update, delete, activate, deactivate, execute workflow + list_executions + **3 yeni registry tool** (search_n8n_nodes, get_node_schema, find_workflow_template) + Pydantic-free workflow JSON validator
-- **n8n Node Registry** (`packages/n8n-registry/`) — n8n node şema yükleme, keyword search, schema extraction. Startup'ta `/types/nodes.json` endpoint'inden otomatik yüklenir. 100 workflow template (n8n.io API) hazır.
+- **Pydantic AI runner** (`agent/runner.py`) — Eski custom `loop.py` agentic loop **kaldırıldı**; artık Pydantic AI `Agent` kullanılıyor. SSE streaming (token/tool_call/attachment/done), keep-alive ping (asyncio task + 2s queue timeout), `MAX_MODEL_REQUESTS=12`, `MAX_TOOL_CALLS=32`. LLM provider seçimi `provider_factory.py` üzerinden. `loop.py` artık sadece `runner.run`'a yönlendiren ince kabuk.
+- **Tool paketi** (`agent/tools/`) — Tek dosya değil, paket: `factory.py` (Pydantic AI tool kayıtları + agent kurulumu), `prompt.py` (system prompt), `spec_compiler.py` (WorkflowPlan/Spec → n8n JSON compiler), `validation.py` + `../validation.py` (node/connection normalize + `validate_workflow_payload`, hata→`ModelRetry`), `readiness.py` (credential/readiness analizi), `runtime_inputs.py` (runtime input şeması + webhook expression), `workflow_runner.py` (tekil + batch run), `execution.py` (execution özetleme).
+- **Workflow üretimi — tek JSON yüzeyi + repair** (ADR-0010, 2026-06-14): Model yalnızca `create_workflow`/`update_workflow` görür ve **kompakt n8n JSON** yazar (`name`/`type`/`parameters`; `id`/`typeVersion`/`position`/`webhookId` ve lineer `connections` opsiyonel). Deterministik `agent/repair.py` boilerplate doldurur, lineer wiring çıkarır, AI sub-node'u `ai_*` porta taşır, `{{input.x}}`/`$json.x`→`$json.body.x` onarır ("onar-ya-da-reddet"; belirsizi `validate_workflow_payload` emniyet ağı reddeder). IR tool'ları (`create_workflow_from_graph/_plan/_spec`) **model yüzeyinden kaldırıldı**; `graph_compiler.py`/`spec_compiler.py`/`blocks.py` dahili kütüphane + test olarak kalır. typeVersion'lar **registry'den** çekilir. Hat: normalize → repair → apply_runtime_inputs → validate.
+- **Graph compiler** (`agent/tools/graph_compiler.py` + `blocks.py`) — Curated declarative `Block` registry (HTTP, Set/Edit Fields, IF, Filter, Code, Merge, AI Agent + openai/anthropic chat model + memory, Gmail, Sheets) + bilinmeyen node'lar için generic `n8n:<exact-type>` fallback. Compiler connection topolojisini (main, true/false, `ai_*` ters portları), typeVersion, pozisyon, webhookId, resourceLocator, expression ve runtime input'u **her zaman kendisi** sahiplenir. Rol etiketli sub-node'lar (`attached_to`+`role`) → `ai_languageModel`/`ai_tool`/`ai_memory` portları. Ref'ler: `{ref:'input.x'}`, `{ref:'item.y'}`, `{ref:'node.<id>.field'}`. (bkz. ADR-0009)
+- **Platform aksiyon katmanı** (`platforms/`) — `run_platform_action` tool'u ile **n8n'siz** direkt platform API çağrısı (Gmail/Sheets). Tek seferlik iş = platform action; tekrarlayan/zamanlanmış/tetiklenen = workflow. (bkz. ADR-0006)
+- **n8n Node Registry** (`packages/n8n-registry/`) — node şema yükleme, keyword search, schema extraction. Startup'ta `/types/nodes.json`'dan yüklenir. 100 workflow template hazır. Agent emin olmadığı node için `search_n8n_nodes` → `get_node_schema` akışını izler.
 - **n8n client** (`n8n_client.py`) — Async HTTPX, tam CRUD + execution API
-- **Konuşma geçmişi** (`store.py`) — Firestore: conversations, messages, LLMSettings, ProviderConnection, favorites
+- **Konuşma geçmişi** (`store.py`) — Firestore: conversations, messages, LLMSettings, ProviderConnection, favorites, workflow metadata (input_schema/resources), artifacts
+- **OAuth (Google)** (`oauth/google.py`, `routes/connections.py`, `routes/credentials.py`) — Gmail/Sheets için Conduut-managed Google OAuth broker (bkz. ADR-0003)
 - **Auth** (`auth.py`) — Firebase ID token doğrulama
 - **LLM ayarları API** — Provider ekleme, model listeleme, API key doğrulama, favorites
 
@@ -179,6 +183,83 @@ Faz 5 — Production            → Monitoring + Stripe + Marketing sayfası
 
 ---
 
+### Son oturum özeti (2026-06-08) — Nerede kaldık
+
+**Mevcut mimari (kod incelendi):** Agent katmanı 2026-04-13'ten beri büyük ölçüde evrildi:
+- Custom agentic loop → **Pydantic AI runner** (`agent/runner.py`).
+- `tools.py` tek dosya → **`tools/` paketi**.
+- **WorkflowPlan/Spec compiler** eklendi (ADR-0005): agent ham JSON yerine semantik şema üretiyor, deterministik compiler n8n JSON'a çeviriyor. Ham JSON artık fallback.
+- **`run_platform_action`** ile n8n-bypass direkt platform aksiyonları (ADR-0006).
+- **Batch run** (ADR-0007), Google OAuth broker (ADR-0003) aktif.
+- `agent/workflow_intent/` **boş** — typed intent engine (ADR-0008) park edildi, aktif yol WorkflowPlan compiler.
+
+**Tespit edilen darboğaz (2026-06-08):** Compiler sadece Gmail + Sheets + filter action'larını destekliyordu. Yoğun kullanılan node'lar (HTTP Request, AI Agent, Code, Edit Fields/Set, IF, Merge) ham JSON fallback'e düşüyor, agent uzun JSON yazarken `MAX_MODEL_REQUESTS` limitine takılıp çöküyordu. → **2026-06-10'da çözüldü (aşağıya bakın).**
+
+---
+
+### Son oturum özeti (2026-06-14) — Tek JSON yüzeyi + onarıcı normalizer (ADR-0010)
+
+**Karar:** 06-13'teki kök-neden bulgusunun (modele girişte native JSON verip çıkışta pretraining'inde olmayan IR ürettirme çatışması) çözümü brainstorm'da seçildi: **A→A** — modele tek ve doğal yüzey ver (kompakt n8n JSON), hataları **reddetmek yerine deterministik onar**. Plan onaylanıp uygulandı.
+
+**Uygulanan (feature/json-surface-repair):**
+- `schemas.py` — `WorkflowNode`'da `id`/`typeVersion`/`position` opsiyonel (kompakt JSON).
+- `agent/repair.py` (**yeni**) — `repair_workflow`: boilerplate doldur → lineer wiring çıkar → sub-node'u `ai_*` porta taşı (tek-agent; çok-agent belirsizse reddet) → `{{input.x}}`→trigger body expr, trigger'a bağlı node'da deklare input için `$json.x`→`$json.body.x` (Code jsCode dahil). "Onar-ya-da-reddet"; belirsizi `validate_workflow_payload` reddeder. Her onarım loglanır.
+- `tools/validation.py` — `_validated_runtime_workflow` hattına repair eklendi (normalize → **repair** → apply_runtime_inputs → validate); `connections` opsiyonel.
+- `tools/factory.py` — `create_workflow_from_graph/_plan/_spec` **tool kayıtları kaldırıldı**; `create_workflow`/`update_workflow` docstring'leri tek-yüzey + kompakt-JSON olarak güncellendi. Compiler modülleri dahili kaldı.
+- `tools/prompt.py` — tek-yüzey süreci + 2 kanonik **worked example** (teklif senaryosu: webhook+AI Agent+ai_languageModel+Gmail+runtime input; lineer).
+- Testler — `test_repair.py` (9 unit), `test_tools.py` (+1 uçtan-uca pipeline testi: kompakt+bozuk payload → onarılır, reddedilmez). **180 passed** (5 hata `tmp_path` Windows izni, alakasız); ruff temiz.
+
+**Sonraki adım:** Canlı agent + n8n ile "firmalara teklif" senaryosunu test et (n8n şu an kapalı). Detay: [[adr-0010-json-surface-repair-normalizer]], [[known-issues]].
+
+---
+
+### Son oturum özeti (2026-06-13) — Neden agent graph compiler'ı atlıyor? (kök-neden + tool steer)
+
+**Bağlam:** 06-11/06-12'de boş/yanlış AI mail için üç ham-yol bug'ı (langchain main-wiring, `{{input.x}}`, `$json.body` atlama) bulunup ikisi deterministik guard'a, biri prompt kuralına bağlanmıştı. Bu oturumda asıl meta-soru araştırıldı: **agent neden tercih edilen `create_workflow_from_graph`'ı atlayıp ham `create_workflow` kullanıyor?**
+
+**Önemli düzeltme:** Önceki notlar bug'ları "gpt-4o-mini"ye atıyordu — yanlış. 06-12 build'i (`HJXIBudaUl5ZU9Gp`) konuşma metadata'sına göre **gpt-5 (thinking medium)** idi. Yani üç hatayı güçlü bir reasoning modeli bile üretti; "daha güçlü model öner" tavsiyesi geçersiz.
+
+**Kök-neden (statik analiz):** Model gücü değil, **pretraining-önyargısı vs. Conduut'a-özgü soyutlama** çatışması. 4 rakip create tool'u var; ham n8n JSON modelin pretraining'inde bol, WorkflowGraph IR (`kind`/`attached_to`/`role`/`{ref:'input.x'}`) yalnızca bu repoda. Karar anındaki yönlendirme zayıftı: Pydantic AI `@agent.tool` docstring'i LLM'e tool description olarak gider, ama ham `create_workflow`/`update_workflow` docstring'leri tek satırlık ve nötrdü → karar noktasında ham yol eşit görünüp pretraining önyargısı kazanıyordu.
+
+**Aksiyon:** Ham `create_workflow` ve `update_workflow` docstring'leri "Last-resort fallback only" olarak yeniden yazıldı (`factory.py`); `create_workflow_from_graph`'a yönlendiriyor ve üç klasik hatayı (ai_* port, `$json.body.<field>`, `{{input.x}}` yasak) modelin gerçekten okuduğu yere — tool description'a — koyuyor. **36 test geçti (validation + graph_compiler), ruff temiz.** Docstring inert; validation davranışı değişmedi.
+
+**Beklemede:** (1) body-path için deterministik guard (webhook'a doğrudan bağlı node'larda declared input'u `.body`'siz okuyan `$json.<field>`'i yakalayan, düşük-yanlış-pozitif) tasarlandı ama n8n offline olduğu için uçtan uca doğrulanamadı — canlı n8n ile eklenecek. (2) OpenAI API key rotasyonu (geçmiş oturumda plaintext sızdı). Detay: [[known-issues]].
+
+---
+
+### Son oturum özeti (2026-06-11) — Langchain sub-node guard (boş AI mail fix)
+
+**Sorun:** "Firmalara otomatik teklif" senaryosunda mail gövdesi boş gidiyordu (sadece başlık "Teklif" fallback'i). Sistematik debugging ile root cause bulundu: agent (gpt-4o-mini) graph compiler'ı **atlayıp** ham `create_workflow` JSON yolunu kullandı ve langchain chat-model sub-node'unu (`lmChatOpenAi`) düz `main` akışına bağladı (`Webhook → OpenAI Chat Model → Code → Gmail`). Langchain sub-node'ları main I/O'ya sahip değildir; main akışta hiçbir çıktı üretmez → Code `$json.text`=undefined → Gmail `message` boş. Canlı n8n karşı örneği: aynı oturumda `3XskIaDrFUFUEcpv` doğru kurulmuştu (model `ai_languageModel` portundan AI Agent'a bağlı).
+
+**Çözüm (defense-in-depth, kalıcı kök-neden fix, TDD ile):**
+- `apps/agent/src/agent/validation.py` — iki yeni guard: (1) `_is_langchain_ai_subnode` (`lm`/`memory`/`embeddings`/`outputParser`/`textSplitter`/`retriever`/`tool` prefiksleri, `agent`/`chainLlm`/`chatTrigger` hariç) `main` bağlantısında yakalar; (2) `_validate_input_expressions` ham JSON'daki geçersiz `{{input.x}}` ifadelerini yakalar (`input` n8n değişkeni değil → boş çözülür). İkisi de `_validated_runtime_workflow` → `ModelRetry`, yani `create_workflow`/`update_workflow` ham yolunda zorlayıcı.
+- `apps/agent/src/agent/tools/prompt.py` — "Node rules"a ham JSON yolu için langchain sub-node + ai_* port kuralı eklendi.
+- `apps/agent/tests/test_workflow_validation.py` — 5 yeni test. **Tam suite: 170 passed (5 hata Windows tmp-izni, alakasız); ruff temiz.** Her iki guard gerçek bozuk payload'larda (1jbY wiring, TJ1B `{{input.x}}`) `_validated_runtime_workflow` üzerinden kanıtlandı.
+
+**İki ayrı ham-yol bug'ı, aynı kök-neden:** Agent (gpt-4o-mini) `create_workflow_from_graph`'i atlayıp ham `create_workflow` kullandığında (a) langchain modeli main akışa bağlıyor (1jbY → boş gövde) **veya** (b) geçersiz `{{input.x}}` yazıyor (TJ1B/3Xsk → kişiselleştirme çalışmaz). Graph compiler ikisini de imkânsız kılar. **Not:** Bozuk workflow'lar (`1jbYOquxyrLtxTOk` vb.) silinmedi; agent yeniden kurarsa guard'lar doğru yapıyı zorlar. gpt-4o-mini build için tutarsız → daha güçlü model önerilir. Detay: [[known-issues]], [[adr-0009-workflow-graph-compiler]].
+
+---
+
+### Son oturum özeti (2026-06-10) — Graph compiler (ADR-0009)
+
+**Ne yaptık:** 2026-06-08 darboğazını çözen genel, genişletilebilir graph compiler'ı tasarlayıp (brainstorming → tasarım onayı) implemente ettik.
+
+**Eklenen/değişen kod:**
+- `apps/agent/src/agent/schemas.py` — `GraphNode`, `GraphEdge`, `WorkflowGraph` IR tipleri.
+- `apps/agent/src/agent/tools/blocks.py` — **yeni**, declarative `Block` + `ParamRule` registry, `ROLE_PORTS`, `BLOCKS` (curated kind kataloğu).
+- `apps/agent/src/agent/tools/graph_compiler.py` — **yeni**, tek genel compiler: resolve (curated/generic) → params/builders → topology (main + true/false + ters `ai_*` portları) → boilerplate (typeVersion/layout/webhookId/`__rl`/expression) → validation. `compile_workflow_graph` + `create_workflow_from_graph_payload`.
+- `apps/agent/src/agent/tools/factory.py` — `create_workflow_from_graph` tool'u (tercih edilen builder, plan'dan önce).
+- `apps/agent/src/agent/tools/prompt.py` — graph-first süreç + kompakt curated kind kataloğu + `n8n:<type>` fallback talimatı.
+- `apps/agent/tests/test_graph_compiler.py` — **yeni**, 8 golden test (http linear, if-branch, AI agent port wiring, set fields, generic fallback, node ref, hata yolları). **Hepsi geçiyor; ruff temiz; tam suite 164 passed** (5 hata Windows tmp-izni, alakasız).
+
+**Mimari kararlar (4 temel):** hibrit cozunurluk (curated block + generic `n8n:` fallback), rol etiketli IR + compiler port cikarimi, declarative data registry, hibrit katalog kesfi. Detay: [[adr-0009-workflow-graph-compiler]].
+
+**Sınırlamalar (V1, iteratif):** chat-model `model` basit `list` resourceLocator; `sheets.row.append` graph modunda auto Set üretmez; generic sub-node portu `ROLE_PORTS` varsayılanına dayanır. AI Agent için langchain node typeVersion'ları registry'de yoksa block fallback değeri kullanılır.
+
+**Sonraki adım:** Canlı n8n ile uçtan uca test (AI agent + model içeren workflow import → execute). Çalışırsa curated kataloğu genişlet (Switch, SplitInBatches/loop, daha fazla AI tool/memory) veya Faz 2 (Dashboard).
+
+---
+
 ### Son oturum özeti (2026-04-13) — Nerede kaldık
 
 **Ne yaptık:** Agent'ın n8n workflow üretimindeki halüsinasyon sorununu çözdük. Agent artık node şemalarını runtime'da lookup ediyor.
@@ -214,10 +295,14 @@ python packages/n8n-registry/scripts/fetch_nodes.py
 
 ---
 
-### Agent system prompt kuralları (`apps/agent/src/agent/loop.py`)
+### Agent system prompt kuralları (`apps/agent/src/agent/tools/prompt.py`)
 - Act directly — onay sorma, hemen yap
-- CREATE vs UPDATE: yeni workflow için `create_workflow`, mevcut için `update_workflow`
-- `update_workflow` öncesi `get_workflow` ile mevcut yapıyı çek, merge et, tam yapıyı gönder
+- Kullanıcı n8n/node/webhook terminolojisi bilmek zorunda değil; doğal dilden intent çıkar
+- Eksik **business** bilgisi için `request_user_input` (tek seferde tek alan, step-by-step); teknik node seçimini sorma. Placeholder/uydurma değer **yasak**
+- Tek seferlik aksiyon → `run_platform_action`; tekrarlayan/zamanlanmış → workflow
+- Workflow üretimi → tek yüzey `create_workflow`/`update_workflow` ile **kompakt n8n JSON** (name/type/parameters; boilerplate ve lineer connections opsiyonel). `agent/repair.py` boilerplate'i doldurur ve klasik hataları onarır (ADR-0010). IR builder'lar (graph/plan/spec) artık model yüzeyinde yok.
+- CREATE vs UPDATE: yeni için `create_workflow`, mevcut için önce `get_workflow` sonra `update_workflow` (tam yapı)
+- Bilinmeyen node için `search_n8n_nodes` → `get_node_schema`, sonra build
 - Workflow ID'lerini konuşma boyunca takip et
 
 ### n8n node registry kuralları
@@ -228,8 +313,21 @@ python packages/n8n-registry/scripts/fetch_nodes.py
 - Template sayısı artırmak için: `python packages/n8n-registry/scripts/fetch_templates.py --limit 200`
 
 ### Önemli dosyalar
-- `apps/agent/src/agent/loop.py` — agentic loop, system prompt, keep-alive
-- `apps/agent/src/agent/tools.py` — tool tanımları + executor + workflow validator
+- `apps/agent/src/agent/runner.py` — Pydantic AI runner, SSE stream, geçmiş→ModelMessage dönüşümü, keep-alive
+- `apps/agent/src/agent/loop.py` — ince kabuk (`runner.run`'a yönlendirir)
+- `apps/agent/src/agent/tools/factory.py` — Pydantic AI tool kayıtları + `create_agent`
+- `apps/agent/src/agent/tools/prompt.py` — system prompt
+- `apps/agent/src/agent/repair.py` — **onarıcı normalizer** (`repair_workflow`): kompakt JSON → boilerplate doldur + lineer wiring + sub-node `ai_*` port + `$json.body`/`{{input.x}}` onarımı (ADR-0010, tek JSON yüzeyinin kalbi)
+- `apps/agent/src/agent/tools/graph_compiler.py` — WorkflowGraph → n8n JSON compiler (curated + generic, port çıkarımı, ADR-0009; **artık dahili kütüphane**, model yüzeyinde değil)
+- `apps/agent/src/agent/tools/blocks.py` — declarative `Block`/`ParamRule` registry + `BLOCKS` curated kind kataloğu + `ROLE_PORTS`
+- `apps/agent/src/agent/tools/spec_compiler.py` — WorkflowPlan/Spec → n8n JSON compiler (⚠️ 977 satır, refactor edilecek; graph_compiler helper'ları buradan reuse eder)
+- `apps/agent/src/agent/schemas.py` — WorkflowGraph/Plan/Spec/Node IR, attachment ve AgentDeps tipleri
+- `apps/agent/tests/test_graph_compiler.py` — graph compiler golden testleri
+- `apps/agent/tests/test_repair.py` — repair motoru unit testleri (boilerplate, wiring, ai_* port, expression onarımı)
+- `apps/agent/src/agent/tools/validation.py` + `agent/validation.py` — node/connection normalize + validate + ModelRetry
+- `apps/agent/src/agent/tools/runtime_inputs.py` — runtime input şeması + webhook expression
+- `apps/agent/src/agent/tools/workflow_runner.py` — tekil + batch workflow run
+- `apps/agent/src/platforms/actions.py` — n8n'siz direkt platform aksiyonları (Gmail/Sheets)
 - `apps/agent/src/registry.py` — NodeRegistry singleton (n8n'den startup'ta yüklenir)
 - `apps/agent/src/n8n_client.py` — n8n REST API client
 - `apps/agent/src/store.py` — Firestore veri katmanı

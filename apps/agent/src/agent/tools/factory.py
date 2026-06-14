@@ -16,10 +16,8 @@ from src.agent.schemas import (
     UserInputRequestData,
     WorkflowInputField,
     WorkflowNode,
-    WorkflowPlan,
     WorkflowPreviewAttachment,
     WorkflowPreviewData,
-    WorkflowSpec,
     dump_workflow_nodes,
 )
 from src.agent.tools.common import (
@@ -38,10 +36,6 @@ from src.agent.tools.runtime_inputs import (
     _input_schema_payload,
     _validated_workflow_input,
     _workflow_input_schema_from_metadata,
-)
-from src.agent.tools.spec_compiler import (
-    create_workflow_from_plan_payload,
-    create_workflow_from_spec_payload,
 )
 from src.agent.tools.validation import _validated_runtime_workflow
 from src.agent.tools.workflow_runner import run_workflow_with_input
@@ -275,56 +269,25 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             return result
 
     @agent.tool
-    async def create_workflow_from_plan(
-        ctx: RunContext[AgentDeps],
-        name: str,
-        plan: WorkflowPlan,
-    ) -> dict[str, Any]:
-        """Create a supported workflow from semantic WorkflowPlan action graph."""
-
-        if ctx.deps.awaiting_user_input:
-            return _waiting_for_user_input_result()
-        await ctx.deps.emit_tool_call("create_workflow_from_plan")
-        started_at = perf_counter()
-        result = await create_workflow_from_plan_payload(
-            ctx.deps,
-            name,
-            plan,
-        )
-        _log_tool_finished("create_workflow_from_plan", started_at, result)
-        return result
-
-    @agent.tool
-    async def create_workflow_from_spec(
-        ctx: RunContext[AgentDeps],
-        name: str,
-        spec: WorkflowSpec,
-        input_schema: list[WorkflowInputField] | None = None,
-    ) -> dict[str, Any]:
-        """Create a supported workflow from compact WorkflowSpec IR."""
-
-        if ctx.deps.awaiting_user_input:
-            return _waiting_for_user_input_result()
-        await ctx.deps.emit_tool_call("create_workflow_from_spec")
-        started_at = perf_counter()
-        result = await create_workflow_from_spec_payload(
-            ctx.deps,
-            name,
-            spec,
-            input_schema,
-        )
-        _log_tool_finished("create_workflow_from_spec", started_at, result)
-        return result
-
-    @agent.tool
     async def create_workflow(
         ctx: RunContext[AgentDeps],
         name: str,
         nodes: list[WorkflowNode],
-        connections: dict[str, Any],
+        connections: dict[str, Any] | None = None,
         input_schema: list[WorkflowInputField] | None = None,
     ) -> dict[str, Any]:
-        """Create a new n8n workflow after validating nodes and connections."""
+        """Create an n8n workflow. The single workflow builder.
+
+        Write compact n8n JSON: per node give only name, type and parameters —
+        Conduut fills id, typeVersion, position and webhookId, infers linear
+        connections when you omit them, and repairs common slips (AI chat-model
+        sub-nodes wired into the main flow are moved to the agent's ai_* port;
+        webhook runtime inputs read as bare $json.<field> become
+        $json.body.<field>). Still aim to be correct: attach langchain chat
+        models / memory / tools to an AI Agent (text in its prompt), and read
+        the agent answer downstream from its json.output. See the system prompt
+        for worked examples.
+        """
 
         if ctx.deps.awaiting_user_input:
             return _waiting_for_user_input_result()
@@ -388,10 +351,16 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         workflow_id: str,
         name: str,
         nodes: list[WorkflowNode],
-        connections: dict[str, Any],
+        connections: dict[str, Any] | None = None,
         input_schema: list[WorkflowInputField] | None = None,
     ) -> dict[str, Any]:
-        """Update an existing n8n workflow with the complete validated structure."""
+        """Update an existing workflow with the complete compact n8n JSON.
+
+        First call get_workflow, then pass the full updated node/connection
+        structure. Same compact-JSON contract and auto-repair as create_workflow
+        (boilerplate filled, AI sub-nodes wired to ai_* ports, webhook inputs
+        read as $json.body.<field>).
+        """
 
         if ctx.deps.awaiting_user_input:
             return _waiting_for_user_input_result()
