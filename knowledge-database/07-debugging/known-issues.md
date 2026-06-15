@@ -235,7 +235,25 @@ jsCode dahil). Model artik IR yerine kompakt n8n JSON yaziyor (IR tool'lari
 model yuzeyinden kaldirildi), bu yuzden A->B format catismasi da ortadan kalkti.
 Belirsiz durumlar (cok-agent, trigger yok) hala `validate_workflow_payload`
 tarafindan reddedilir. Test: `test_repair.py` (9) + `test_tools.py` pipeline
-testi. **Canli n8n ile uctan uca dogrulama bekliyor** (n8n kapali).
+testi.
+
+**Canli dogrulama (2026-06-15, `HMIb1xyrmhcoZlS8`, gpt-5):** Uc klasik bug da
+YOK — AI Agent `{{ $json.body.company/... }}`, Gmail `{{ $json.body.email }}` +
+`{{ $('AI Agent').first().json.output }}`, chat model `ai_languageModel`
+portunda. **Ama yeni bir regresyon yakalandi:** ai_languageModel baglantisinin
+`type` alani `"main"` idi (dogru: `"ai_languageModel"`). Kok-neden:
+`normalize_workflow_connections` -> `_ensure_connection_target` her hedefin
+`type`'ini korlemesine `"main"` yapiyordu; AI portu altindaki baglantilarda bu
+n8n'in chat model'i gormezden gelmesine -> bos agent'a yol acar. Fix:
+`_normalize_connection_shape` artik port adini (`ai_languageModel`/`ai_tool`/...)
+hedef `type`'ina threadliyor (test: `test_normalize_connections_assigns_ai_port_type`).
+Few-shot ornegine de acik `"type": "ai_languageModel"` eklendi. Canli workflow
+API'den yamalandi.
+
+**Hala bekleyen:** workflow'u gercekten EXECUTE edip dolu mail uretildigini
+gormek icin n8n'de "OpenAI Chat Model" node'una OpenAI credential ve Gmail
+node'una Google credential baglanmali (yapi/expression dogru, calistirma
+credential bekliyor).
 
 ## Mock Dashboard Areas
 
