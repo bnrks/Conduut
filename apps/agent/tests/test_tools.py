@@ -123,8 +123,10 @@ def test_validated_workflow_raises_model_retry_on_invalid_payload():
 
 
 def test_runtime_pipeline_repairs_compact_broken_ai_workflow(monkeypatch):
-    """End-to-end: compact JSON with the three classic raw-path bugs is repaired,
-    not rejected, by normalize -> repair -> validate."""
+    """End-to-end proof of the create_workflow path: a compact payload carrying
+    every raw-path bug GPT-5 makes (chat model in main, {{input.x}}, $json.body
+    read in a non-trigger-fed node, a {{ }} field with no '=') is turned into a
+    correct n8n workflow by normalize -> repair -> validate, with no ModelRetry."""
 
     schemas = {
         "n8n-nodes-base.webhook": {
@@ -173,8 +175,10 @@ def test_runtime_pipeline_repairs_compact_broken_ai_workflow(monkeypatch):
             parameters={
                 "resource": "message",
                 "operation": "send",
+                # bug 3: $json.body.* read in a node fed by the AI Agent, not the
+                # webhook. bug 4: subject has {{ }} but no leading '='.
                 "sendTo": "={{ $json.body.email }}",
-                "subject": "Proposal",
+                "subject": "Proposal for {{ $json.body.company }}",
                 "message": "={{ $('AI Agent').first().json.output }}",
                 "emailType": "text",
             },
@@ -196,15 +200,28 @@ def test_runtime_pipeline_repairs_compact_broken_ai_workflow(monkeypatch):
         nodes, connections, input_schema
     )
 
-    # Bug 1 fixed: chat model attached via ai_languageModel, gone from main.
+    # Bug 1 fixed: chat model attached via the ai_languageModel port (with the
+    # correct connection type), gone from the main flow.
     chat = validated_connections["OpenAI Chat Model"]
     assert "main" not in chat
     assert chat["ai_languageModel"][0][0]["node"] == "AI Agent"
+    assert chat["ai_languageModel"][0][0]["type"] == "ai_languageModel"
 
-    # Bug 2 fixed: {{input.company}} -> trigger body expression.
+    # Bug 2 fixed: {{input.company}} -> trigger body expression; and the AI Agent
+    # (fed directly by the webhook) keeps $json.body but becomes an expression.
     agent = next(n for n in validated_nodes if n.name == "AI Agent")
     assert "input.company" not in agent.parameters["text"]
     assert "$('Webhook').first().json.body.company" in agent.parameters["text"]
+    assert agent.parameters["text"].startswith("=")
+
+    # Bugs 3 & 4 fixed: Gmail is fed by the AI Agent, so webhook inputs are
+    # qualified to $('Webhook')...; the subject gains the leading '='.
+    gmail = next(n for n in validated_nodes if n.name == "Send Email")
+    assert gmail.parameters["sendTo"] == "={{ $('Webhook').first().json.body.email }}"
+    assert gmail.parameters["subject"].startswith("=")
+    assert "$('Webhook').first().json.body.company" in gmail.parameters["subject"]
+    # The already-correct agent-output reference is left intact.
+    assert gmail.parameters["message"] == "={{ $('AI Agent').first().json.output }}"
 
     # Boilerplate filled.
     for node in validated_nodes:
