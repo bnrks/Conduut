@@ -88,6 +88,23 @@ def test_valid_minimal_workflow_passes():
     assert errors == []
 
 
+def test_normalize_connections_assigns_ai_port_type():
+    # The connection type under an AI sub-node port must be the port name, not
+    # "main" — otherwise n8n ignores the chat model and the agent runs empty.
+    nodes = [
+        {"name": "Webhook", "type": "n8n-nodes-base.webhook"},
+        {"name": "OpenAI Chat Model", "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi"},
+        {"name": "AI Agent", "type": "@n8n/n8n-nodes-langchain.agent"},
+    ]
+    connections = {
+        "Webhook": {"main": [[{"node": "AI Agent"}]]},
+        "OpenAI Chat Model": {"ai_languageModel": [[{"node": "AI Agent"}]]},
+    }
+    out = normalize_workflow_connections(connections, nodes)
+    assert out["OpenAI Chat Model"]["ai_languageModel"][0][0]["type"] == "ai_languageModel"
+    assert out["Webhook"]["main"][0][0]["type"] == "main"
+
+
 def test_empty_nodes_fail():
     errors = validate_workflow_payload([], {}, node_registry=FakeRegistry({}))  # type: ignore[arg-type]
 

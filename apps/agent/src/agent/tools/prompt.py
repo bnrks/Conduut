@@ -143,7 +143,8 @@ SYSTEM_PROMPT = (
     "  ],\n"
     '  "connections": {\n'
     '    "Webhook": {"main": [[{"node": "AI Agent"}]]},\n'
-    '    "OpenAI Chat Model": {"ai_languageModel": [[{"node": "AI Agent"}]]},\n'
+    '    "OpenAI Chat Model": {"ai_languageModel": [[{"node": "AI Agent",'
+    ' "type": "ai_languageModel", "index": 0}]]},\n'
     '    "AI Agent": {"main": [[{"node": "Send Email"}]]}\n'
     "  },\n"
     '  "input_schema": [\n'

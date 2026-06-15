@@ -142,31 +142,34 @@ def _normalize_connection_value(value: Any, references: Mapping[str, str]) -> An
     return value
 
 
-def _ensure_connection_target(value: Any) -> Any:
+def _ensure_connection_target(value: Any, default_type: str = "main") -> Any:
     if not isinstance(value, Mapping) or "node" not in value:
         return value
     target = dict(value)
-    target.setdefault("type", "main")
+    # The connection type must match the output port: "main" for the main flow,
+    # but "ai_languageModel" / "ai_tool" / "ai_memory" etc. for AI sub-node ports.
+    # Defaulting AI ports to "main" makes n8n ignore the sub-node (empty agent).
+    target.setdefault("type", default_type)
     target.setdefault("index", 0)
     return target
 
 
-def _normalize_output_connection_groups(value: Any) -> Any:
+def _normalize_output_connection_groups(value: Any, default_type: str = "main") -> Any:
     if isinstance(value, Mapping) and "node" in value:
-        return [[_ensure_connection_target(value)]]
+        return [[_ensure_connection_target(value, default_type)]]
 
     if not isinstance(value, list):
         return value
 
     if all(isinstance(item, Mapping) and "node" in item for item in value):
-        return [[_ensure_connection_target(item) for item in value]]
+        return [[_ensure_connection_target(item, default_type) for item in value]]
 
     groups: list[Any] = []
     for group in value:
         if isinstance(group, Mapping) and "node" in group:
-            groups.append([_ensure_connection_target(group)])
+            groups.append([_ensure_connection_target(group, default_type)])
         elif isinstance(group, list):
-            groups.append([_ensure_connection_target(item) for item in group])
+            groups.append([_ensure_connection_target(item, default_type) for item in group])
         else:
             groups.append(group)
     return groups
@@ -181,7 +184,7 @@ def _normalize_connection_shape(value: Any) -> Any:
 
     if isinstance(value, Mapping):
         return {
-            output_type: _normalize_output_connection_groups(output_groups)
+            output_type: _normalize_output_connection_groups(output_groups, output_type)
             for output_type, output_groups in value.items()
         }
 
