@@ -250,10 +250,29 @@ hedef `type`'ina threadliyor (test: `test_normalize_connections_assigns_ai_port_
 Few-shot ornegine de acik `"type": "ai_languageModel"` eklendi. Canli workflow
 API'den yamalandi.
 
-**Hala bekleyen:** workflow'u gercekten EXECUTE edip dolu mail uretildigini
-gormek icin n8n'de "OpenAI Chat Model" node'una OpenAI credential ve Gmail
-node'una Google credential baglanmali (yapi/expression dogru, calistirma
-credential bekliyor).
+**Calistirma sirasinda iki ek bug daha (2026-06-15, execution datasi ile):**
+Ilk execution `error` verdi ve AI ciktisi `{{ $json.body.company }}`'i LITERAL
+icieriyordu. Iki kok-neden:
+1. **`=` oneki eksik:** AI Agent `text` (ve Gmail `subject`) `{{ }}` iceriyordu
+   ama `=` ile baslamiyordu; n8n bir alani ancak `=` ile basliyorsa ifade olarak
+   degerlendirir, aksi halde `{{ }}`'i duz metin gonderir. Fix: `repair`
+   `{{ }}` iceren ama `=`'siz alanlara `=` ekler (Code `jsCode` haric — o JS'tir).
+2. **Dolaylı node'da nitelemesiz webhook referansi:** Gmail `sendTo` =
+   `{{ $json.body.email }}` idi; ama Gmail webhook'tan DOLAYLI besleniyor (AI
+   Agent'tan sonra), orada `$json` = AI Agent ciktisi (`{output}`), `body` yok ->
+   `undefined.split` hatasi. Fix: `repair` trigger'a dogrudan bagli OLMAYAN
+   node'larda deklare input referanslarini `$('<trigger>').first().json.body.<f>`
+   olarak niteler. (Dogrudan bagli node'da `$json.body.<f>` kalir.)
+   Testler: `test_template_field_gets_equals_prefix`,
+   `test_non_trigger_fed_node_qualifies_webhook_reference`,
+   `test_code_node_jscode_not_prefixed_with_equals`.
+
+**SONUC — uctan uca BASARILI (execution 96, status=success):** Repair canli
+workflow'a uygulandiktan sonra AI ciktisi gercek firma adiyla ("Acme Yazilim
+A.S. olarak KOBI'lere...") uretildi ve Gmail dolu govdeyle gonderildi (label
+SENT). Tek JSON yuzeyi + repair zinciri artik "firmalara teklif" senaryosunu
+uctan uca dogru calistiriyor. Few-shot ornegi de `=` + nitelenmis referans
+gosterecek sekilde guncellendi.
 
 ## Mock Dashboard Areas
 

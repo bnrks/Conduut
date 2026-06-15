@@ -106,9 +106,15 @@ SYSTEM_PROMPT = (
     " as {{ $('AI Agent').first().json.output }}. A chat model placed in the main flow"
     " produces nothing, so the next node receives empty data.\n"
     "- Webhook runtime inputs arrive nested under body. Read them as $json.body.<field>"
-    " (or $('<WebhookName>').first().json.body.<field>) in expressions AND inside Code"
-    " node jsCode — never bare $json.<field> and never {{input.<field>}} ('input' is not"
-    " an n8n variable and resolves to empty).\n"
+    " in expressions AND inside Code node jsCode — never bare $json.<field> and never"
+    " {{input.<field>}} ('input' is not an n8n variable and resolves to empty). $json"
+    " refers to the CURRENT node's input, so $json.body.<field> only works in a node fed"
+    " DIRECTLY by the webhook; in any later node (e.g. a Gmail after an AI Agent) qualify"
+    " it as $('<WebhookName>').first().json.body.<field>.\n"
+    "- A field value that contains {{ }} must START with '=' to be evaluated as an"
+    " expression (e.g. \"=Teklif: {{ $json.body.company }}\"); without the '=' n8n sends"
+    " the {{ }} literally. (Code node jsCode is plain JavaScript and must NOT start with"
+    " '='.)\n"
     "- Reusable workflows should accept runtime input instead of hard-coded one-off"
     " values, passed via input_schema. For Gmail Message Send prefer runtime fields"
     " named to, subject, and message. For an immediate one-off send, call"
@@ -133,12 +139,13 @@ SYSTEM_PROMPT = (
     ' "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",'
     ' "parameters": {"model": "gpt-4o-mini"}},\n'
     '    {"name": "AI Agent", "type": "@n8n/n8n-nodes-langchain.agent",'
-    ' "parameters": {"promptType": "define", "text": "Write a short professional'
+    ' "parameters": {"promptType": "define", "text": "=Write a short professional'
     " proposal for {{ $json.body.company }} ({{ $json.body.description }}) offering"
     ' these services: {{ $json.body.services }}."}},\n'
     '    {"name": "Send Email", "type": "n8n-nodes-base.gmail",'
     ' "parameters": {"resource": "message", "operation": "send",'
-    ' "sendTo": "={{ $json.body.email }}", "subject": "Proposal",'
+    ' "sendTo": "={{ $(\'Webhook\').first().json.body.email }}",'
+    ' "subject": "Proposal",'
     ' "message": "={{ $(\'AI Agent\').first().json.output }}", "emailType": "text"}}\n'
     "  ],\n"
     '  "connections": {\n'

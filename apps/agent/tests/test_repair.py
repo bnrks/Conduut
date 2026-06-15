@@ -205,6 +205,73 @@ def test_bare_json_field_rewritten_to_body_for_trigger_fed_node():
     assert "$json.company" not in code["parameters"]["jsCode"]
 
 
+def test_template_field_gets_equals_prefix():
+    # A field with {{ }} but no leading '=' is sent literally by n8n; repair must
+    # turn it into an expression.
+    nodes = [
+        _node("Webhook", "n8n-nodes-base.webhook"),
+        _node(
+            "AI Agent",
+            "@n8n/n8n-nodes-langchain.agent",
+            parameters={"text": "Teklif: {{ $json.body.company }}"},
+        ),
+    ]
+    connections = {"Webhook": {"main": [[{"node": "AI Agent", "type": "main", "index": 0}]]}}
+    repaired, _conns, _ = repair_workflow(
+        nodes, connections, runtime_fields={"company"}, trigger_name="Webhook", registry=REGISTRY
+    )
+    agent = next(n for n in repaired if n["name"] == "AI Agent")
+    assert agent["parameters"]["text"].startswith("=")
+
+
+def test_non_trigger_fed_node_qualifies_webhook_reference():
+    # Gmail is fed by AI Agent, not the webhook, so $json.body.email is undefined
+    # there; it must be qualified to $('Webhook').first().json.body.email.
+    nodes = [
+        _node("Webhook", "n8n-nodes-base.webhook"),
+        _node("AI Agent", "@n8n/n8n-nodes-langchain.agent", parameters={"text": "hi"}),
+        _node(
+            "Gmail",
+            "n8n-nodes-base.gmail",
+            parameters={
+                "resource": "message",
+                "operation": "send",
+                "sendTo": "={{ $json.body.email }}",
+                "message": "={{ $('AI Agent').first().json.output }}",
+            },
+        ),
+    ]
+    connections = {
+        "Webhook": {"main": [[{"node": "AI Agent", "type": "main", "index": 0}]]},
+        "AI Agent": {"main": [[{"node": "Gmail", "type": "main", "index": 0}]]},
+    }
+    repaired, _conns, _ = repair_workflow(
+        nodes, connections, runtime_fields={"email"}, trigger_name="Webhook", registry=REGISTRY
+    )
+    gmail = next(n for n in repaired if n["name"] == "Gmail")
+    assert gmail["parameters"]["sendTo"] == "={{ $('Webhook').first().json.body.email }}"
+    # The agent-output reference is already qualified and must be left intact.
+    assert gmail["parameters"]["message"] == "={{ $('AI Agent').first().json.output }}"
+
+
+def test_code_node_jscode_not_prefixed_with_equals():
+    nodes = [
+        _node("Webhook", "n8n-nodes-base.webhook"),
+        _node(
+            "Code",
+            "n8n-nodes-base.code",
+            parameters={"jsCode": "const c = $json.company; return [{json:{c}}];"},
+        ),
+    ]
+    connections = {"Webhook": {"main": [[{"node": "Code", "type": "main", "index": 0}]]}}
+    repaired, _conns, _ = repair_workflow(
+        nodes, connections, runtime_fields={"company"}, trigger_name="Webhook", registry=REGISTRY
+    )
+    code = next(n for n in repaired if n["name"] == "Code")
+    assert not code["parameters"]["jsCode"].startswith("=")
+    assert "$json.body.company" in code["parameters"]["jsCode"]
+
+
 def test_body_path_not_rewritten_when_field_not_declared():
     nodes = [
         _node("Webhook", "n8n-nodes-base.webhook"),

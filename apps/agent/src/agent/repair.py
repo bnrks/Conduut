@@ -11,9 +11,12 @@ Repairs performed (in order):
   2. linear wiring       — infer sequential ``main`` connections when missing
   3. sub-node ports      — move langchain chat-model/memory/tool out of the main
                            flow onto the AI Agent's ai_* port (single-agent only)
-  4. expressions         — {{input.x}} -> trigger body expr; bare $json.<field>
-                           -> $json.body.<field> for declared runtime inputs read
-                           by a node directly fed by the trigger
+  4. expressions         — {{input.x}} -> trigger body expr; declared runtime
+                           inputs read via $json.<field> become $json.body.<field>
+                           (node fed directly by the trigger) or
+                           $('<trigger>').first().json.body.<field> (any later
+                           node); fields holding {{ }} get the leading '=' so n8n
+                           evaluates them (Code jsCode excluded)
 
 Every change is appended to a ``repairs`` list (logged, not user-facing) so we
 can measure what fires and, later, build a finetune corpus.
@@ -51,6 +54,7 @@ _AGENT_LOCALS = ("agent", "chainLlm", "conversationalAgent", "openAiAssistant")
 _INPUT_EXPR_RE = re.compile(r"\{\{\s*input\.(\w+)\s*\}\}")
 _JSON_DOT_RE = re.compile(r"\$json\.(?!body\.)(\w+)")
 _JSON_BRACKET_RE = re.compile(r"""\$json\[(['"])(\w+)\1\]""")
+_JSON_BODY_RE = re.compile(r"\$json\.body\.(\w+)")
 
 
 def repair_workflow(
@@ -261,37 +265,82 @@ def _repair_expressions(
             for conn in group:
                 trigger_fed.add(conn["node"])
 
+    # A node directly fed by the trigger reads webhook input as $json.body.<field>.
+    # Any other node must qualify the reference to the trigger node, because its
+    # own $json is the previous node's output (e.g. the AI Agent's {output}).
+    qualified = f"$('{trigger_name}').first().json.body." if trigger_name else "$json.body."
+
     def _input_repl(match: re.Match[str]) -> str:
         field = match.group(1)
         if trigger_name:
             return "{{$('" + trigger_name + "').first().json.body." + field + "}}"
         return "{{$json.body." + field + "}}"
 
-    def _dot_repl(match: re.Match[str]) -> str:
-        field = match.group(1)
-        return f"$json.body.{field}" if field in runtime_fields else match.group(0)
+    def transform(text: str, is_fed: bool, add_prefix: bool = True) -> str:
+        new = _INPUT_EXPR_RE.sub(_input_repl, text)
+        if runtime_fields:
+            if is_fed:
+                # bare $json.<field> / $json["<field>"] -> $json.body.<field>
+                new = _JSON_DOT_RE.sub(
+                    lambda m: (
+                        f"$json.body.{m.group(1)}" if m.group(1) in runtime_fields else m.group(0)
+                    ),
+                    new,
+                )
+                new = _JSON_BRACKET_RE.sub(
+                    lambda m: (
+                        f"$json.body.{m.group(2)}" if m.group(2) in runtime_fields else m.group(0)
+                    ),
+                    new,
+                )
+            else:
+                # $json.body.<field> / $json.<field> / $json["<field>"] -> qualified
+                new = _JSON_BODY_RE.sub(
+                    lambda m: (
+                        f"{qualified}{m.group(1)}" if m.group(1) in runtime_fields else m.group(0)
+                    ),
+                    new,
+                )
+                new = _JSON_DOT_RE.sub(
+                    lambda m: (
+                        f"{qualified}{m.group(1)}" if m.group(1) in runtime_fields else m.group(0)
+                    ),
+                    new,
+                )
+                new = _JSON_BRACKET_RE.sub(
+                    lambda m: (
+                        f"{qualified}{m.group(2)}" if m.group(2) in runtime_fields else m.group(0)
+                    ),
+                    new,
+                )
+        return _ensure_expression(new) if add_prefix else new
 
-    def _bracket_repl(match: re.Match[str]) -> str:
-        field = match.group(2)
-        return f"$json.body.{field}" if field in runtime_fields else match.group(0)
-
+    # Code nodes hold JavaScript, not an n8n expression; rewrite $json paths but
+    # never prefix '=' (that would turn the code into an expression).
+    code_types = {"n8n-nodes-base.code", "n8n-nodes-base.function"}
     for node in nodes:
         is_fed = node["name"] in trigger_fed
-
-        def transform(text: str, is_fed: bool = is_fed) -> str:
-            new = _INPUT_EXPR_RE.sub(_input_repl, text)
-            if is_fed and runtime_fields:
-                new = _JSON_DOT_RE.sub(_dot_repl, new)
-                new = _JSON_BRACKET_RE.sub(_bracket_repl, new)
-            return new
-
+        prefix = node.get("type") not in code_types
         parameters = node.get("parameters")
         if not isinstance(parameters, Mapping):
             continue
-        rewritten = _rewrite_strings(parameters, transform)
+        rewritten = _rewrite_strings(
+            parameters, lambda text, fed=is_fed, pre=prefix: transform(text, fed, pre)
+        )
         if rewritten != parameters:
             node["parameters"] = rewritten
             repairs.append(f"rewrote runtime-input expressions in '{node['name']}'")
+
+
+def _ensure_expression(text: str) -> str:
+    """n8n evaluates {{ }} only when the field value is an expression (starts
+    with '='). The model often omits the '=', so a {{ }} reference is sent
+    literally. Prefix '=' when the string contains a template but is not yet an
+    expression."""
+
+    if "{{" in text and not text.startswith("="):
+        return "=" + text
+    return text
 
 
 def _rewrite_strings(value: Any, fn: Any) -> Any:
