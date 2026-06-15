@@ -360,6 +360,28 @@ def _normalize_gmail_node(data: dict[str, Any]) -> None:
     parameters.pop("additionalFields", None)
 
 
+_LANGCHAIN_CHAT_PREFIX = "@n8n/n8n-nodes-langchain.lmChat"
+
+
+def _normalize_chat_model_node(data: dict[str, Any]) -> None:
+    """Wrap a langchain chat model's ``model`` string as a resourceLocator.
+
+    n8n's lmChat* nodes expose ``model`` as a resourceLocator object; a plain
+    string makes n8n raise "Could not get parameter" at run time. The graph
+    compiler built this shape; on the compact JSON surface the model writes a
+    bare string, so normalize it here.
+    """
+
+    if not str(data.get("type") or "").startswith(_LANGCHAIN_CHAT_PREFIX):
+        return
+    parameters = data.get("parameters")
+    if not isinstance(parameters, dict):
+        return
+    model = parameters.get("model")
+    if isinstance(model, str) and model.strip():
+        parameters["model"] = {"__rl": True, "mode": "list", "value": model.strip()}
+
+
 def _normalize_google_sheets_node(data: dict[str, Any]) -> None:
     if data.get("type") != "n8n-nodes-base.googleSheets":
         return
@@ -530,6 +552,7 @@ def normalize_workflow_nodes(
             data["typeVersion"] = schema.get("typeVersion", data.get("typeVersion"))
         _normalize_gmail_node(data)
         _normalize_google_sheets_node(data)
+        _normalize_chat_model_node(data)
         if data.get("type") == "n8n-nodes-base.webhook" and not data.get("webhookId"):
             data["webhookId"] = str(uuid4())
         normalized.append(WorkflowNode.model_validate(data))

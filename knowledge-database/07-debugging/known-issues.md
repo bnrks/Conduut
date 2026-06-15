@@ -274,6 +274,25 @@ SENT). Tek JSON yuzeyi + repair zinciri artik "firmalara teklif" senaryosunu
 uctan uca dogru calistiriyor. Few-shot ornegi de `=` + nitelenmis referans
 gosterecek sekilde guncellendi.
 
+**Chat model `model` param sekli (2026-06-15, `IjahkWKFE9nhxnJa`):** Agent yeni
+senaryoyu (adaylara geri donus) **bastan dogru** kurdu (ai_languageModel portu +
+type, `=` ifadeler, nitelenmis refler) — yani tek-yuzey+repair canli teyit edildi.
+Ama execution "Could not get parameter" verdi: `lmChatOpenAi` tv1.3 `model`'i
+**resourceLocator** bekliyor (`{__rl,mode:list,value}`), agent ise duz string
+`"gpt-4o-mini"` yaziyordu. Eski graph compiler `_build_chat_model` bunu uretirdi;
+kompakt yuzeyde node'a-ozgu sekillendirme yoktu. Fix: `validation._normalize_chat_model_node`
+(Gmail/Sheets normalizer'lari gibi) `@n8n/n8n-nodes-langchain.lmChat*` node'larinda
+string `model`'i resourceLocator'a cevirir. Yamadan sonra execution 98 success,
+kisisellestirilmis mail gonderildi. (NOT bir credential sorunu degildi.)
+
+**Acik feature — n8n node credential yonetimi:** OpenAI Chat Model node'u n8n
+icinde kendi `openAiApi` credential'ina ihtiyac duyuyor; bu, app'in workflow'u
+KURMAK icin kullandigi LLM provider key'inden ayri. Su an Gmail/Sheets icin OAuth
+broker var (ADR-0003) ama LLM/API-key node'lari icin credential enjeksiyonu yok;
+kullanici n8n'de elle baglamali. Secenekler (tartisilacak): (A) credential
+broker'i API-key'lere genislet, (B) app provider key'ini n8n'e enjekte et,
+(C) n8n OpenAI node yerine Conduut LLM katmanini kullan. Bkz. [[issue-backlog]].
+
 ## Mock Dashboard Areas
 
 - Usage sayfasi mock data.

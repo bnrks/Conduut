@@ -88,6 +88,37 @@ def test_valid_minimal_workflow_passes():
     assert errors == []
 
 
+def test_normalize_chat_model_wraps_model_as_resource_locator():
+    # n8n's lmChat* nodes expect `model` as a resourceLocator, not a plain
+    # string; a bare string raises "Could not get parameter" at run time.
+    nodes = [
+        {
+            "name": "OpenAI Chat Model",
+            "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+            "typeVersion": 1.3,
+            "position": [0, 0],
+            "parameters": {"model": "gpt-4o-mini", "options": {}},
+        }
+    ]
+    out = normalize_workflow_nodes(nodes, node_registry=FakeRegistry({}))  # type: ignore[arg-type]
+    assert out[0].parameters["model"] == {"__rl": True, "mode": "list", "value": "gpt-4o-mini"}
+
+
+def test_normalize_chat_model_leaves_resource_locator_untouched():
+    rl = {"__rl": True, "mode": "list", "value": "gpt-4o"}
+    nodes = [
+        {
+            "name": "OpenAI Chat Model",
+            "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+            "typeVersion": 1.3,
+            "position": [0, 0],
+            "parameters": {"model": rl},
+        }
+    ]
+    out = normalize_workflow_nodes(nodes, node_registry=FakeRegistry({}))  # type: ignore[arg-type]
+    assert out[0].parameters["model"] == rl
+
+
 def test_normalize_connections_assigns_ai_port_type():
     # The connection type under an AI sub-node port must be the port name, not
     # "main" — otherwise n8n ignores the chat model and the agent runs empty.
