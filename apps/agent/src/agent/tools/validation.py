@@ -5,6 +5,7 @@ from typing import Any
 import structlog
 from pydantic_ai import ModelRetry
 
+from src.agent.repair import repair_workflow
 from src.agent.schemas import WorkflowInputField, WorkflowNode, dump_workflow_nodes
 from src.agent.tools.runtime_inputs import (
     _apply_runtime_inputs_to_nodes,
@@ -34,7 +35,7 @@ def _validated_workflow(
 
 def _validated_runtime_workflow(
     nodes: list[WorkflowNode],
-    connections: dict[str, Any],
+    connections: dict[str, Any] | None,
     input_schema: list[WorkflowInputField] | None = None,
 ) -> tuple[list[WorkflowNode], dict[str, Any], list[WorkflowInputField]]:
     normalized_nodes = normalize_workflow_nodes(nodes)
@@ -42,9 +43,22 @@ def _validated_runtime_workflow(
     runtime_schema = _normalized_input_schema(input_schema)
     if input_schema is None and not runtime_schema:
         runtime_schema = _infer_runtime_input_schema(node_dicts)
+
+    # Canonicalize connection shape/aliases, then deterministically repair the
+    # compact JSON the model wrote (boilerplate, linear wiring, AI sub-node
+    # ports, runtime-input expressions) before applying runtime inputs.
+    normalized_connections = normalize_workflow_connections(connections or {}, normalized_nodes)
+    node_dicts, normalized_connections, _repairs = repair_workflow(
+        node_dicts,
+        normalized_connections,
+        runtime_fields={field.name for field in runtime_schema},
+    )
+
     _apply_runtime_inputs_to_nodes(node_dicts, runtime_schema)
     normalized_nodes = [WorkflowNode.model_validate(node) for node in node_dicts]
-    normalized_connections = normalize_workflow_connections(connections, normalized_nodes)
+    normalized_connections = normalize_workflow_connections(
+        normalized_connections, normalized_nodes
+    )
     _normalize_conduut_webhook_methods(normalized_nodes)
     _normalize_webhook_response_modes(normalized_nodes, normalized_connections)
     _raise_workflow_validation_errors(normalized_nodes, normalized_connections)

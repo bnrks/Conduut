@@ -11,16 +11,20 @@ log = structlog.get_logger()
 
 
 class WorkflowNode(BaseModel):
-    """Minimal n8n node shape required before writing a workflow."""
+    """Minimal n8n node shape. Boilerplate (id/typeVersion/position) is optional.
+
+    The model writes compact JSON (name/type/parameters) and the repair layer
+    (``agent.repair``) fills the rest deterministically before validation.
+    """
 
     model_config = ConfigDict(extra="allow")
 
-    id: str
     name: str
     type: str
-    typeVersion: int | float
-    position: list[int | float] = Field(min_length=2, max_length=2)
-    parameters: dict[str, Any]
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    id: str | None = None
+    typeVersion: int | float | None = None
+    position: list[int | float] | None = Field(default=None, min_length=2, max_length=2)
 
 
 class WorkflowPreviewData(BaseModel):
@@ -119,6 +123,55 @@ class WorkflowPlan(BaseModel):
     trigger: WorkflowTriggerSpec
     inputs: list[WorkflowInputField] = Field(default_factory=list)
     actions: list[WorkflowActionSpec] = Field(min_length=1)
+
+
+class GraphNode(BaseModel):
+    """Semantic node the agent emits; the compiler owns all n8n boilerplate.
+
+    `kind` selects a curated block (e.g. ``http_request``, ``ai_agent``,
+    ``gmail.send``) or a generic n8n node via the ``n8n:<exact-type>`` escape
+    hatch. `params` are semantic values; literals or refs like
+    ``{"ref": "input.to"}``, ``{"ref": "item.email"}`` or
+    ``{"ref": "node.<id>.field"}``. Sub-nodes (AI model/tool/memory) set
+    `attached_to` to a parent node id and `role` to the connection role.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    kind: str = Field(min_length=1)
+    name: str | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+    attached_to: str | None = None
+    role: str | None = None
+
+
+class GraphEdge(BaseModel):
+    """A directed link between two main nodes by id.
+
+    `on` selects a branch output for branching nodes (``"true"``/``"false"``
+    for IF, a case name for Switch). ``None`` uses the default main output.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(min_length=1)
+    target: str = Field(min_length=1)
+    on: str | None = None
+
+
+class WorkflowGraph(BaseModel):
+    """Graph workflow IR compiled deterministically into n8n JSON.
+
+    Superset of :class:`WorkflowPlan`: a linear plan is a graph whose edges
+    form a single chain. `trigger` is a single start node; `nodes` are the
+    remaining main and sub-nodes; `edges` wire main nodes together.
+    """
+
+    trigger: GraphNode
+    nodes: list[GraphNode] = Field(default_factory=list)
+    edges: list[GraphEdge] = Field(default_factory=list)
+    inputs: list[WorkflowInputField] = Field(default_factory=list)
 
 
 class PlatformActionPlan(BaseModel):

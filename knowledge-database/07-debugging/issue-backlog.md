@@ -92,6 +92,22 @@ Ornek format:
 
 <!-- Bug olmayabilir ama duzeltilmesi gereken urun/teknik sorunlar buraya tasinir. -->
 
+- [ ] n8n LLM/API-key node credential auto-injection (broker) - Etkilenen alan:
+  [[agent-service]] / [[system-architecture]].
+  Not: 2026-06-15 canli testte AI workflow'u (OpenAI Chat Model) calistirilirken
+  n8n node'u kendi `openAiApi` credential'ina ihtiyac duydu; kullanici elle
+  bagladi ("missing credential"). Bu credential, agent'in workflow'u KURMAK icin
+  kullandigi app-side LLM provider key'inden (store.py `ProviderConnection`)
+  ayridir. Gmail/Sheets icin OAuth broker var (ADR-0003) ama LLM/API-key node'lari
+  icin yok. Hedef: Conduut workflow kaydederken AI/API-key node'lari icin n8n
+  credential'ini kullanicinin kayitli key'inden otomatik olusturup baglasin
+  (`POST /api/v1/credentials` + node'a referans). Mimari niyet (kullanici
+  2026-06-15): her kullanicinin kendi n8n container'i olacak, credential'lar o
+  container'da izole; agent yalniz konustugu kullanicinin container'ina baglanir.
+  Bu yuzden per-user container fazina (izolasyon) bagli; shared-n8n MVP'de pooled
+  Conduut-managed key ile gecici cozulebilir. Su an tekil calistigi icin
+  ertelendi. Bkz. [[known-issues]] "Acik feature".
+
 - [ ] Takip mesajinda agent mevcut workflow'u kullanmak yerine duplicate
   workflow olusturabiliyor - Etkilenen alan: [[chat-workflow-generation]] /
   [[agent-service]].

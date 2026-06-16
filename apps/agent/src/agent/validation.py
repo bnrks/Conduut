@@ -1,5 +1,6 @@
 """Workflow validation helpers used before writing to n8n."""
 
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import uuid4
@@ -10,6 +11,26 @@ from src.agent.schemas import WorkflowNode
 from src.registry import registry as default_registry
 
 _N8N_TYPE_PREFIXES = ("n8n-nodes-base.", "@n8n/", "n8n-nodes-")
+_LANGCHAIN_PREFIX = "@n8n/n8n-nodes-langchain."
+# Local-name prefixes of langchain nodes that connect ONLY through ai_* ports
+# and have no main input/output. Wired into the main flow they emit nothing and
+# silently produce empty downstream data. Agents and chains (agent, chainLlm,
+# chatTrigger) DO have main I/O and are intentionally excluded.
+_LANGCHAIN_SUBNODE_LOCALS = (
+    "lm",  # language / chat models: lmChatOpenAi, lmChatAnthropic, ...
+    "memory",  # memoryBufferWindow, memoryRedisChat, ...
+    "embeddings",  # embeddingsOpenAi, ...
+    "outputParser",  # outputParserStructured, ...
+    "textSplitter",  # textSplitterRecursiveCharacterTextSplitter, ...
+    "retriever",  # retrieverVectorStore, ...
+    "tool",  # toolWorkflow, toolHttpRequest, toolCode, ...
+)
+# Bare `input.` at the start of an n8n expression reference. The agent confuses
+# the graph-compiler ref syntax {ref:'input.x'} with n8n syntax and emits
+# {{input.x}} into raw JSON; `input` is not an n8n variable, so the value
+# resolves to empty (lost AI prompt / email content). Matches {{input. and the
+# whitespace variant {{ input. but not $json.input / nested .input. paths.
+_BARE_INPUT_EXPR = re.compile(r"\{\{\s*input\.")
 _PLACEHOLDER_EMAIL_DOMAINS = {"email.com", "example.com", "example.org", "example.net"}
 _PLACEHOLDER_EMAILS = {
     "receiver@email.com",
@@ -28,6 +49,48 @@ def _as_node_dict(node: WorkflowNode | Mapping[str, Any]) -> dict[str, Any]:
 
 def _has_n8n_type_prefix(node_type: str) -> bool:
     return node_type.startswith(_N8N_TYPE_PREFIXES)
+
+
+def _is_langchain_ai_subnode(node_type: str) -> bool:
+    """True for langchain sub-nodes that only attach via ai_* ports.
+
+    These nodes (chat models, memory, tools, parsers, ...) have no main I/O.
+    Placing them in the main flow yields empty downstream data, so they must
+    connect to an AI Agent / chain through an ai_* port instead.
+    """
+
+    if not node_type.startswith(_LANGCHAIN_PREFIX):
+        return False
+    return node_type[len(_LANGCHAIN_PREFIX) :].startswith(_LANGCHAIN_SUBNODE_LOCALS)
+
+
+def _iter_param_strings(value: Any):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for nested in value.values():
+            yield from _iter_param_strings(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            yield from _iter_param_strings(nested)
+
+
+def _validate_input_expressions(node: Mapping[str, Any], label: str) -> list[str]:
+    """Flag bare {{input.x}} expressions that n8n cannot resolve."""
+
+    parameters = node.get("parameters")
+    if not isinstance(parameters, Mapping):
+        return []
+    for text in _iter_param_strings(parameters):
+        if _BARE_INPUT_EXPR.search(text):
+            return [
+                f"Node '{label}' uses an invalid expression with bare 'input.' (e.g. "
+                "{{input.field}}). 'input' is not an n8n variable, so the value resolves to "
+                "empty. Reference runtime input as $('<TriggerNodeName>').first().json.body."
+                "<field>, or build the workflow with create_workflow_from_graph using "
+                "{ref: 'input.<field>'}."
+            ]
+    return []
 
 
 def _reference_key(value: Any) -> str:
@@ -79,31 +142,34 @@ def _normalize_connection_value(value: Any, references: Mapping[str, str]) -> An
     return value
 
 
-def _ensure_connection_target(value: Any) -> Any:
+def _ensure_connection_target(value: Any, default_type: str = "main") -> Any:
     if not isinstance(value, Mapping) or "node" not in value:
         return value
     target = dict(value)
-    target.setdefault("type", "main")
+    # The connection type must match the output port: "main" for the main flow,
+    # but "ai_languageModel" / "ai_tool" / "ai_memory" etc. for AI sub-node ports.
+    # Defaulting AI ports to "main" makes n8n ignore the sub-node (empty agent).
+    target.setdefault("type", default_type)
     target.setdefault("index", 0)
     return target
 
 
-def _normalize_output_connection_groups(value: Any) -> Any:
+def _normalize_output_connection_groups(value: Any, default_type: str = "main") -> Any:
     if isinstance(value, Mapping) and "node" in value:
-        return [[_ensure_connection_target(value)]]
+        return [[_ensure_connection_target(value, default_type)]]
 
     if not isinstance(value, list):
         return value
 
     if all(isinstance(item, Mapping) and "node" in item for item in value):
-        return [[_ensure_connection_target(item) for item in value]]
+        return [[_ensure_connection_target(item, default_type) for item in value]]
 
     groups: list[Any] = []
     for group in value:
         if isinstance(group, Mapping) and "node" in group:
-            groups.append([_ensure_connection_target(group)])
+            groups.append([_ensure_connection_target(group, default_type)])
         elif isinstance(group, list):
-            groups.append([_ensure_connection_target(item) for item in group])
+            groups.append([_ensure_connection_target(item, default_type) for item in group])
         else:
             groups.append(group)
     return groups
@@ -118,7 +184,7 @@ def _normalize_connection_shape(value: Any) -> Any:
 
     if isinstance(value, Mapping):
         return {
-            output_type: _normalize_output_connection_groups(output_groups)
+            output_type: _normalize_output_connection_groups(output_groups, output_type)
             for output_type, output_groups in value.items()
         }
 
@@ -294,6 +360,28 @@ def _normalize_gmail_node(data: dict[str, Any]) -> None:
     parameters.pop("additionalFields", None)
 
 
+_LANGCHAIN_CHAT_PREFIX = "@n8n/n8n-nodes-langchain.lmChat"
+
+
+def _normalize_chat_model_node(data: dict[str, Any]) -> None:
+    """Wrap a langchain chat model's ``model`` string as a resourceLocator.
+
+    n8n's lmChat* nodes expose ``model`` as a resourceLocator object; a plain
+    string makes n8n raise "Could not get parameter" at run time. The graph
+    compiler built this shape; on the compact JSON surface the model writes a
+    bare string, so normalize it here.
+    """
+
+    if not str(data.get("type") or "").startswith(_LANGCHAIN_CHAT_PREFIX):
+        return
+    parameters = data.get("parameters")
+    if not isinstance(parameters, dict):
+        return
+    model = parameters.get("model")
+    if isinstance(model, str) and model.strip():
+        parameters["model"] = {"__rl": True, "mode": "list", "value": model.strip()}
+
+
 def _normalize_google_sheets_node(data: dict[str, Any]) -> None:
     if data.get("type") != "n8n-nodes-base.googleSheets":
         return
@@ -321,6 +409,7 @@ def validate_workflow_payload(
 
     seen_ids: set[str] = set()
     node_names: set[str] = set()
+    node_type_by_name: dict[str, str] = {}
     has_trigger = False
 
     for index, node in enumerate(raw_nodes):
@@ -340,6 +429,8 @@ def validate_workflow_payload(
             node_names.add(str(node_name))
 
         node_type = str(node.get("type") or "")
+        if node_name and node_type:
+            node_type_by_name[str(node_name)] = node_type
         schema = node_registry.get_node_schema(node_type) if node_type else None
 
         if node_type:
@@ -382,6 +473,7 @@ def validate_workflow_payload(
 
         errors.extend(_validate_set_node(node, label))
         errors.extend(_validate_gmail_node(node, label))
+        errors.extend(_validate_input_expressions(node, label))
 
         if _is_trigger_node(node, schema):
             has_trigger = True
@@ -400,7 +492,48 @@ def validate_workflow_payload(
                 if target_name and str(target_name) not in node_names:
                     errors.append(f"connections references unknown target node '{target_name}'")
 
+        errors.extend(_langchain_subnode_wiring_errors(connections, node_type_by_name))
+
     return errors
+
+
+def _langchain_subnode_wiring_errors(
+    connections: Mapping[str, Any],
+    node_type_by_name: Mapping[str, str],
+) -> list[str]:
+    """Flag langchain AI sub-nodes wired into the main flow.
+
+    Chat models, memory, tools and parsers have no main I/O; a main connection
+    in or out of them yields empty downstream data (the empty-email bug). They
+    must attach to an AI Agent / chain via an ai_* port instead.
+    """
+
+    subnode_names = {
+        name for name, node_type in node_type_by_name.items() if _is_langchain_ai_subnode(node_type)
+    }
+    if not subnode_names:
+        return []
+
+    flagged: set[str] = set()
+    for source_name, value in connections.items():
+        if not isinstance(value, Mapping):
+            continue
+        main_groups = value.get("main")
+        if not main_groups:
+            continue
+        if str(source_name) in subnode_names:
+            flagged.add(str(source_name))
+        for target in _iter_connection_targets({"main": main_groups}):
+            target_name = target.get("node")
+            if target_name and str(target_name) in subnode_names:
+                flagged.add(str(target_name))
+
+    return [
+        f"Node '{name}' is an AI sub-node (chat model / memory / tool) with no main input or "
+        "output; attach it to an AI Agent via an ai_languageModel (or ai_tool / ai_memory) "
+        "connection instead of wiring it into the main flow."
+        for name in sorted(flagged)
+    ]
 
 
 def normalize_workflow_nodes(
@@ -419,6 +552,7 @@ def normalize_workflow_nodes(
             data["typeVersion"] = schema.get("typeVersion", data.get("typeVersion"))
         _normalize_gmail_node(data)
         _normalize_google_sheets_node(data)
+        _normalize_chat_model_node(data)
         if data.get("type") == "n8n-nodes-base.webhook" and not data.get("webhookId"):
             data["webhookId"] = str(uuid4())
         normalized.append(WorkflowNode.model_validate(data))

@@ -122,6 +122,177 @@ formatinin editor icin `{"main": [[{"node": "Gmail", "type": "main",
 "index": 0}]]}` nested output array formatina cevrilmesi gerekiyor. Agent
 normalizer bu formati artik otomatik duzeltir.
 
+## Langchain Sub-Node Main-Flow Wiring (Bos AI Mail Govdesi)
+
+2026-06-11: "Firmalara otomatik teklif" senaryosu test edilirken mail govdesi
+bos gidiyordu (yalnizca baslik atiliyordu). Root cause: agent (gpt-4o-mini)
+graph compiler'i (`create_workflow_from_graph`) **atlayip** ham `create_workflow`
+JSON yolunu kullandi ve langchain chat-model sub-node'unu (`lmChatOpenAi`) duz
+`main` akisina bagladi:
+
+`Webhook -> OpenAI Chat Model -> Code -> Gmail` (hepsi main).
+
+Langchain sub-node'lari (chat model, memory, tool, output parser) **main I/O'ya
+sahip degildir**; yalnizca bir AI Agent'a `ai_*` portundan baglanir. Main akista
+tek baslarina hicbir cikti uretmezler. Sonuc: Code dugumu `$json.text` =
+undefined okudu, Gmail `message` bos kaldi, `subject` fallback "Teklif" oldu.
+(Karsi ornek: ayni oturumdaki `3XskIaDrFUFUEcpv` dogru kurulmustu — model
+`ai_languageModel` portundan AI Agent'a bagli, Gmail `={{$('AI Agent').first()
+.json["output"]}}`.)
+
+Cozum (defense-in-depth, kalici kok-neden fix):
+
+- `apps/agent/src/agent/validation.py` — `validate_workflow_payload` artik
+  langchain sub-node'larini (`_is_langchain_ai_subnode`: `lm`, `memory`,
+  `embeddings`, `outputParser`, `textSplitter`, `retriever`, `tool` prefiksleri)
+  `main` baglantisinda (kaynak veya hedef) yakalar ve hata dondurur. Hata
+  `_validated_runtime_workflow` -> `ModelRetry` ile modele geri gider, yani hem
+  `create_workflow` hem `update_workflow` ham yolunda zorlayicidir. AI Agent ve
+  chain (`agent`, `chainLlm`, `chatTrigger`) bilincli olarak haric.
+- `apps/agent/src/agent/tools/prompt.py` — "Node rules" bolumune ham JSON yolu
+  icin langchain sub-node kurali eklendi (ai_* port zorunlulugu + bos cikti
+  uyarisi).
+- Test: `apps/agent/tests/test_workflow_validation.py` — 5 yeni test (main-target
+  fail, main-source fail, ai_languageModel ile dogru baglama pass; bare
+  `{{input.x}}` fail, trigger json.body ifadesi pass).
+
+**Ikinci ham-yol bug'i (ayni kok-neden):** Ayni oturumdaki `TJ1BBPbuDhtGdUYD` ve
+`3XskIaDrFUFUEcpv` wiring'i DOGRU kurmustu ama AI Agent prompt'unda gecersiz
+`{{input.company_name}}` ifadeleri vardi. `input` n8n'de tanimli degildir (graph
+compiler `{ref:'input.X'}`'i `$('trigger').json.body.X`'e cevirir; ham yol
+ceviremez), bu yuzden kisisellestirme calismaz. Ek guard:
+`validation.py` `_validate_input_expressions` artik `{{input.` (ve `{{ input.`)
+deseni iceren parametre ifadelerini yakalayip `ModelRetry` dondurur. Yani ham
+`create_workflow` yolu artik hem sub-node wiring'i hem gecersiz input ifadesini
+reddediyor. Asil cozum agent'in `create_workflow_from_graph` kullanmasidir (her
+iki hata da o yolda imkansiz); gpt-4o-mini build icin tutarsiz oldugundan daha
+guclu bir model onerilir.
+
+**Ucuncu ham-yol bug'i (2026-06-12):** Iki guard sonrasi agent **gpt-5 (thinking
+medium)** ile yeniden kurdu (`HJXIBudaUl5ZU9Gp`): wiring DOGRU, `{{input.x}}` YOK
+— ama Code node webhook girdisini `$json.company_name` ile okudu. Conduut webhook'a
+payload'i POST body olarak gonderir (`n8n_client.call_webhook`), n8n bunu
+`$json.body.*` altinda acar; dogru yol `$json.body.company_name`. Sonuc:
+company/desc/services `undefined` -> AI kisisellestirilemeyen genel metin uretir
+(mail bos degil ama yanlis). Code node jsCode'u freeform oldugundan ne validator
+ne compiler ic veri yolunu denetler. Calisan workflow icin Code node `$json.X` ->
+`$json.body.X` elle yamalandi. Prevention: `prompt.py` "Node rules"a "webhook
+girdileri `$json.body.<field>` altindadir" kurali eklendi.
+
+> **Model atfi duzeltmesi (2026-06-13):** Onceki notlar bu uc bug'i "gpt-4o-mini"ye
+> bagliyordu — yanlis. 06-10 build'leri (`1jbY`, `TJ1B`) gpt-4o-mini idi, ama
+> 06-12 build'i (`HJXIBudaUl5ZU9Gp`) konusma metadata'sina gore **gpt-5**. Yani
+> uc ham-yol hatasini guclu bir reasoning modeli (gpt-5) bile uretti.
+
+**Kok-neden (neden agent `create_workflow_from_graph`'i atliyor?) — 2026-06-13
+statik analiz:** Sorun model gucu degil, **pretraining-onyargisi vs. Conduut'a-ozgu
+soyutlama** catismasi:
+
+- Agent'in 4 rakip "create" tool'u var: `create_workflow_from_graph`,
+  `_from_plan`, `_from_spec` (hepsi Conduut'un uydurdugu IR'lar) ve `create_workflow`
+  (ham n8n JSON). Ilk uçu yalnizca bu repoda + prompt'ta var; ham n8n JSON ise
+  modelin pretraining'inde bol bol gecer (`@n8n/n8n-nodes-langchain.lmChatOpenAi`,
+  connections objesi, `$json` ifadeleri internette her yerde).
+- Herhangi bir belirsizlik/karmasiklik altinda model en yuksek olasilikli bildigi
+  yola (ham JSON) geriler. WorkflowGraph IR'in `kind` sozlugu, `attached_to`/`role`
+  mekanizmasi ve `{ref:'input.x'}` ifadeleri ogrenilmesi gereken yeni soyutlamadir.
+- Karar anindaki tek yonlendirme zayifti: graph tool'unda "Preferred" kelimesi +
+  bir prompt madde isareti. **Pydantic AI `@agent.tool` docstring'i LLM'e tool
+  description olarak gonderir**, ama ham `create_workflow`/`update_workflow`
+  docstring'leri tek satirlik ve notrdu ("Create a new n8n workflow after
+  validating...") — hicbir karsi-sinyal vermiyordu. Karar noktasinda iki tool esit
+  goruunuyor, model pretraining onyargisina gore ham yolu seciyor.
+- Uc gozlemlenen bug da (langchain main-wiring, `{{input.x}}`, `$json.body` atlama)
+  modelin hafizadan ham n8n JSON yazip Conduut'a-ozgu runtime detaylarini yanlis
+  yapmasinin semptomudur.
+
+**Cikarim:** Sadece prompt ile GPT-5'i guvenilir sekilde graph yoluna zorlayamazsin
+(pretraining ile savasiyorsun). Dogru strateji ham yolu GUVENLI kilmak — her klasik
+hatayi `ModelRetry`'a ceviren deterministik guard'lar. Uc delikten ikisi kapali
+(wiring + input-expr guard'lari). Aksiyon (2026-06-13): ham `create_workflow` ve
+`update_workflow` docstring'leri "Last-resort fallback only" olarak yeniden yazildi;
+`create_workflow_from_graph`'a yonlendiriyor ve uc klasik hatayi (ai_* port,
+`$json.body.<field>`, `{{input.x}}` yasak) karar aninda modele isaret ediyor —
+sistem prompt'una gomulu bir madde yerine modelin gercekten okudugu tool
+description'ina. **Beklemede:** body-path bug'i icin deterministik guard
+(webhook'a dogrudan bagli node'larda, deklare edilmis runtime input alanini
+`.body` olmadan okuyan `$json.<field>` ifadesini yakalayan, dusuk-yanlis-pozitif
+kapsamli) tasarlandi ama n8n offline oldugu icin uctan uca dogrulanamadi; canli
+n8n ile dogrulanip eklenecek.
+
+Not: O an n8n'de duran bozuk workflow (`1jbYOquxyrLtxTOk`) silinmedi/yeniden
+kurulmadi; kullanici secimi yalnizca kalici fix idi. Agent'a yeniden kurdurulursa
+guard artik dogru yapiyi zorlar. Ilgili: [[adr-0009-workflow-graph-compiler]],
+[[agent-service]].
+
+**COZUM (2026-06-14, [[adr-0010-json-surface-repair-normalizer]]):** Uc ham-yol
+bug'i artik deterministik **onariliyor** (reddedilmiyor). Yeni `agent/repair.py`
+hatti (normalize -> repair -> validate): (1) tek-agent varsa langchain sub-node'u
+`main`'den alip `ai_languageModel` portuna tasir; (2) `{{input.x}}`'i
+`$('<trigger>').first().json.body.x`'e cevirir; (3) trigger'a dogrudan bagli
+node'da deklare runtime input icin `$json.x`'i `$json.body.x`'e cevirir (Code
+jsCode dahil). Model artik IR yerine kompakt n8n JSON yaziyor (IR tool'lari
+model yuzeyinden kaldirildi), bu yuzden A->B format catismasi da ortadan kalkti.
+Belirsiz durumlar (cok-agent, trigger yok) hala `validate_workflow_payload`
+tarafindan reddedilir. Test: `test_repair.py` (9) + `test_tools.py` pipeline
+testi.
+
+**Canli dogrulama (2026-06-15, `HMIb1xyrmhcoZlS8`, gpt-5):** Uc klasik bug da
+YOK — AI Agent `{{ $json.body.company/... }}`, Gmail `{{ $json.body.email }}` +
+`{{ $('AI Agent').first().json.output }}`, chat model `ai_languageModel`
+portunda. **Ama yeni bir regresyon yakalandi:** ai_languageModel baglantisinin
+`type` alani `"main"` idi (dogru: `"ai_languageModel"`). Kok-neden:
+`normalize_workflow_connections` -> `_ensure_connection_target` her hedefin
+`type`'ini korlemesine `"main"` yapiyordu; AI portu altindaki baglantilarda bu
+n8n'in chat model'i gormezden gelmesine -> bos agent'a yol acar. Fix:
+`_normalize_connection_shape` artik port adini (`ai_languageModel`/`ai_tool`/...)
+hedef `type`'ina threadliyor (test: `test_normalize_connections_assigns_ai_port_type`).
+Few-shot ornegine de acik `"type": "ai_languageModel"` eklendi. Canli workflow
+API'den yamalandi.
+
+**Calistirma sirasinda iki ek bug daha (2026-06-15, execution datasi ile):**
+Ilk execution `error` verdi ve AI ciktisi `{{ $json.body.company }}`'i LITERAL
+icieriyordu. Iki kok-neden:
+1. **`=` oneki eksik:** AI Agent `text` (ve Gmail `subject`) `{{ }}` iceriyordu
+   ama `=` ile baslamiyordu; n8n bir alani ancak `=` ile basliyorsa ifade olarak
+   degerlendirir, aksi halde `{{ }}`'i duz metin gonderir. Fix: `repair`
+   `{{ }}` iceren ama `=`'siz alanlara `=` ekler (Code `jsCode` haric — o JS'tir).
+2. **Dolaylı node'da nitelemesiz webhook referansi:** Gmail `sendTo` =
+   `{{ $json.body.email }}` idi; ama Gmail webhook'tan DOLAYLI besleniyor (AI
+   Agent'tan sonra), orada `$json` = AI Agent ciktisi (`{output}`), `body` yok ->
+   `undefined.split` hatasi. Fix: `repair` trigger'a dogrudan bagli OLMAYAN
+   node'larda deklare input referanslarini `$('<trigger>').first().json.body.<f>`
+   olarak niteler. (Dogrudan bagli node'da `$json.body.<f>` kalir.)
+   Testler: `test_template_field_gets_equals_prefix`,
+   `test_non_trigger_fed_node_qualifies_webhook_reference`,
+   `test_code_node_jscode_not_prefixed_with_equals`.
+
+**SONUC — uctan uca BASARILI (execution 96, status=success):** Repair canli
+workflow'a uygulandiktan sonra AI ciktisi gercek firma adiyla ("Acme Yazilim
+A.S. olarak KOBI'lere...") uretildi ve Gmail dolu govdeyle gonderildi (label
+SENT). Tek JSON yuzeyi + repair zinciri artik "firmalara teklif" senaryosunu
+uctan uca dogru calistiriyor. Few-shot ornegi de `=` + nitelenmis referans
+gosterecek sekilde guncellendi.
+
+**Chat model `model` param sekli (2026-06-15, `IjahkWKFE9nhxnJa`):** Agent yeni
+senaryoyu (adaylara geri donus) **bastan dogru** kurdu (ai_languageModel portu +
+type, `=` ifadeler, nitelenmis refler) — yani tek-yuzey+repair canli teyit edildi.
+Ama execution "Could not get parameter" verdi: `lmChatOpenAi` tv1.3 `model`'i
+**resourceLocator** bekliyor (`{__rl,mode:list,value}`), agent ise duz string
+`"gpt-4o-mini"` yaziyordu. Eski graph compiler `_build_chat_model` bunu uretirdi;
+kompakt yuzeyde node'a-ozgu sekillendirme yoktu. Fix: `validation._normalize_chat_model_node`
+(Gmail/Sheets normalizer'lari gibi) `@n8n/n8n-nodes-langchain.lmChat*` node'larinda
+string `model`'i resourceLocator'a cevirir. Yamadan sonra execution 98 success,
+kisisellestirilmis mail gonderildi. (NOT bir credential sorunu degildi.)
+
+**Acik feature — n8n node credential yonetimi:** OpenAI Chat Model node'u n8n
+icinde kendi `openAiApi` credential'ina ihtiyac duyuyor; bu, app'in workflow'u
+KURMAK icin kullandigi LLM provider key'inden ayri. Su an Gmail/Sheets icin OAuth
+broker var (ADR-0003) ama LLM/API-key node'lari icin credential enjeksiyonu yok;
+kullanici n8n'de elle baglamali. Secenekler (tartisilacak): (A) credential
+broker'i API-key'lere genislet, (B) app provider key'ini n8n'e enjekte et,
+(C) n8n OpenAI node yerine Conduut LLM katmanini kullan. Bkz. [[issue-backlog]].
+
 ## Mock Dashboard Areas
 
 - Usage sayfasi mock data.
