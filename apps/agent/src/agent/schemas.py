@@ -325,6 +325,10 @@ class AgentDeps:
     attachments: list[dict[str, Any]] = field(default_factory=list)
     platform_resources: dict[str, dict[str, Any]] = field(default_factory=dict)
     awaiting_user_input: bool = False
+    # Workflows already created in this conversation (name -> id), rebuilt from
+    # history each run. create_workflow reuses these to update instead of
+    # creating duplicate workflows when the agent rebuilds the same automation.
+    conversation_workflows: dict[str, str] = field(default_factory=dict)
 
     async def emit_tool_call(self, tool: str) -> None:
         log.info(

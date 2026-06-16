@@ -119,6 +119,19 @@ Ornek format:
   olustuktan sonra kullanici "calistir/test et" dediginde agent yeniden
   `create_workflow_from_plan` cagirmak yerine mevcut workflow id ile
   `execute_workflow` kullanmali. (2026-05-17)
+  **Tekrar/agirlasti (2026-06-16):** Kullanici runtime girdileri ("benden alacagi
+  girdiler sunlar...") tarif eden tek istek verdi; agent her clarification
+  cevabinda yeniden `create_workflow` cagirip **5 duplicate** workflow uretti
+  (ADmS0Fjx, pZGKfSsn, b48RYv5u, svRsOiqP, idRw9 — hepsi "AI ile Teklif E-postasi
+  Gonder"), hic `update_workflow` cagirmadi. Ayrica runtime alanlarin DEGERLERINI
+  `request_user_input` ile topladi (yanlis). **Fix:** (1) prompt — runtime-input
+  tanima kurali (degerlerini sorma, input_schema yap) + "tek workflow kur, sonra
+  update" kurali; (2) deterministik dedup — `runner._conversation_workflows_from_messages`
+  history'den name->id cikariyor, `AgentDeps.conversation_workflows`'a koyuyor,
+  `create_workflow` ayni isimde mevcut workflow varsa create yerine update yapiyor
+  (`create_workflow_deduped_to_update`). Testler: `test_runner.py` (+2). Duplicate'ler
+  silindi. **DIKKAT:** local agent stale idi (08:03 UTC'den beri reload yok); fix'in
+  devreye girmesi icin agent restart sart.
 - [ ] WorkflowSpec compiler akislara ozel hardcoded shape'lere bagli ve dinamik
   degil - Etkilenen alan: [[chat-workflow-generation]] / [[agent-service]] /
   [[n8n-registry]].

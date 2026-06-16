@@ -67,6 +67,28 @@ def _history_from_store_messages(messages: list[dict]) -> tuple[str, list[ModelM
     return user_prompt, history
 
 
+def _conversation_workflows_from_messages(messages: list[dict]) -> dict[str, str]:
+    """Map workflow name -> id from prior workflow_preview attachments so the
+    agent reuses (updates) the same workflow instead of creating duplicates."""
+
+    workflows: dict[str, str] = {}
+    for message in messages:
+        attachments = message.get("attachments")
+        if not isinstance(attachments, list):
+            continue
+        for attachment in attachments:
+            if not isinstance(attachment, dict) or attachment.get("type") != "workflow_preview":
+                continue
+            data = attachment.get("data")
+            if not isinstance(data, dict):
+                continue
+            name = data.get("name")
+            workflow_id = data.get("id")
+            if name and workflow_id:
+                workflows[str(name)] = str(workflow_id)
+    return workflows
+
+
 def _platform_resources_from_messages(messages: list[dict]) -> dict[str, dict[str, str]]:
     resources: dict[str, dict[str, str]] = {}
     for message in messages:
@@ -244,6 +266,7 @@ async def run(
         conversation_id=conv_id,
         event_queue=event_queue,
         platform_resources=_platform_resources_from_messages(messages),
+        conversation_workflows=_conversation_workflows_from_messages(messages),
     )
     user_prompt, message_history = _history_from_store_messages(messages)
 

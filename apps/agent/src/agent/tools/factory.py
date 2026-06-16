@@ -300,17 +300,44 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         )
         node_dicts = dump_workflow_nodes(validated_nodes)
 
+        # Dedup: if this conversation already built a workflow with this name,
+        # update it instead of creating a duplicate (the agent often rebuilds the
+        # same automation after each clarification answer).
+        existing_id = ctx.deps.conversation_workflows.get(name)
+
         try:
-            workflow = await n8n_client.create_workflow(
-                name=name,
-                nodes=node_dicts,
-                connections=validated_connections,
-            )
+            if existing_id:
+                existing = await n8n_client.get_workflow(existing_id)
+                workflow = await n8n_client.update_workflow(
+                    workflow_id=existing_id,
+                    name=name,
+                    nodes=node_dicts,
+                    connections=validated_connections,
+                    settings=(
+                        existing.get("settings")
+                        if isinstance(existing.get("settings"), dict)
+                        else None
+                    ),
+                )
+                log.info(
+                    "create_workflow_deduped_to_update",
+                    name=name,
+                    workflow_id=existing_id,
+                    conversation_id=ctx.deps.conversation_id,
+                )
+            else:
+                workflow = await n8n_client.create_workflow(
+                    name=name,
+                    nodes=node_dicts,
+                    connections=validated_connections,
+                )
         except Exception as exc:
             log.error("tool_error", tool="create_workflow", error=str(exc))
             result = {"error": _safe_error(exc)}
             _log_tool_finished("create_workflow", started_at, result)
             return result
+
+        ctx.deps.conversation_workflows[name] = workflow.id
 
         await store.save_workflow_metadata(
             ctx.deps.user_id,

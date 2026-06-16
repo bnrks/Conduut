@@ -338,3 +338,45 @@ async def test_runner_reports_unsupported_provider():
     event, data = _parse_sse(chunks[0])
     assert event == "error"
     assert data["code"] == "model_config"
+
+
+def test_conversation_workflows_from_messages_maps_name_to_id():
+    messages = [
+        {"role": "user", "content": "build it"},
+        {
+            "role": "assistant",
+            "content": "done",
+            "attachments": [
+                {
+                    "type": "workflow_preview",
+                    "data": {"id": "wf1", "name": "Teklif", "status": "inactive"},
+                }
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": "updated",
+            "attachments": [
+                {
+                    "type": "workflow_preview",
+                    "data": {"id": "wf2", "name": "Teklif", "status": "inactive"},
+                },
+                {"type": "artifact_preview", "data": {"title": "x"}},
+            ],
+        },
+    ]
+    result = runner._conversation_workflows_from_messages(messages)
+    # Latest id wins for a given name -> next create_workflow reuses (updates) it.
+    assert result == {"Teklif": "wf2"}
+
+
+def test_conversation_workflows_from_messages_ignores_non_workflow_attachments():
+    messages = [
+        {
+            "role": "assistant",
+            "content": "x",
+            "attachments": [{"type": "artifact_preview", "data": {"title": "t"}}],
+        },
+        {"role": "assistant", "content": "y"},
+    ]
+    assert runner._conversation_workflows_from_messages(messages) == {}
