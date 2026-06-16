@@ -206,6 +206,75 @@ async def _attach_managed_connection_if_available(
     return True
 
 
+# Credential types provisioned through the Google OAuth broker (ADR-0003); these
+# keep using the managed-connection / OAuth-prompt path, not the reuse bridge.
+_MANAGED_CREDENTIAL_TYPES = {"gmailOAuth2", "googleSheetsOAuth2"}
+
+
+async def _discover_existing_credential(
+    credential_type: str, skip_workflow_id: str
+) -> tuple[str, str] | None:
+    """Find a credential of this type already bound to some other workflow.
+
+    Single-tenant bridge: the n8n public API can't list credentials, but it can
+    read workflows. Until the per-user credential broker exists, reuse a
+    credential the user already bound (e.g. their one OpenAI account) so
+    agent-built AI workflows run without manual credential binding.
+    """
+
+    try:
+        workflows = await n8n_client.list_workflows()
+    except Exception:
+        return None
+    for summary in workflows:
+        if summary.id == skip_workflow_id:
+            continue
+        try:
+            full = await n8n_client.get_workflow(summary.id)
+        except Exception:
+            continue
+        for other in full.get("nodes", []):
+            credentials = other.get("credentials") if isinstance(other, dict) else None
+            entry = credentials.get(credential_type) if isinstance(credentials, dict) else None
+            credential_id = entry.get("id") if isinstance(entry, dict) else None
+            if credential_id:
+                return str(credential_id), str(entry.get("name") or "")
+    return None
+
+
+async def _attach_existing_credential_if_available(
+    workflow_id: str, node: dict[str, Any], credential_type: str
+) -> bool:
+    if not workflow_id or credential_type in _MANAGED_CREDENTIAL_TYPES:
+        return False
+    node_name = str(node.get("name") or "")
+    if not node_name:
+        return False
+    found = await _discover_existing_credential(credential_type, workflow_id)
+    if not found:
+        return False
+    credential_id, credential_name = found
+    await n8n_client.attach_credential_to_workflow(
+        workflow_id,
+        node_name,
+        credential_type,
+        credential_id,
+        credential_name,
+    )
+    node.setdefault("credentials", {})[credential_type] = {
+        "id": credential_id,
+        "name": credential_name,
+    }
+    log.info(
+        "existing_credential_reused",
+        workflow_id=workflow_id,
+        node=node_name,
+        credential_type=credential_type,
+        credential_id=credential_id,
+    )
+    return True
+
+
 def _fields_from_schema(schema: dict[str, Any]) -> list[CredentialField]:
     properties = schema.get("properties") if isinstance(schema, dict) else None
     required = set(schema.get("required") or []) if isinstance(schema, dict) else set()
@@ -314,6 +383,22 @@ async def analyze_workflow_readiness_payload(
                     error=str(exc),
                 )
                 attached = False
+            if not attached and not has_credential:
+                try:
+                    attached = await _attach_existing_credential_if_available(
+                        workflow_id,
+                        node,
+                        credential_type,
+                    )
+                except Exception as exc:
+                    log.warning(
+                        "existing_credential_reuse_failed",
+                        workflow_id=workflow_id,
+                        node=node.get("name"),
+                        credential_type=credential_type,
+                        error=str(exc),
+                    )
+                    attached = False
             if attached:
                 continue
             if has_credential:

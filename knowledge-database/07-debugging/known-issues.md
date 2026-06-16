@@ -288,10 +288,24 @@ kisisellestirilmis mail gonderildi. (NOT bir credential sorunu degildi.)
 **Acik feature — n8n node credential yonetimi:** OpenAI Chat Model node'u n8n
 icinde kendi `openAiApi` credential'ina ihtiyac duyuyor; bu, app'in workflow'u
 KURMAK icin kullandigi LLM provider key'inden ayri. Su an Gmail/Sheets icin OAuth
-broker var (ADR-0003) ama LLM/API-key node'lari icin credential enjeksiyonu yok;
-kullanici n8n'de elle baglamali. Secenekler (tartisilacak): (A) credential
-broker'i API-key'lere genislet, (B) app provider key'ini n8n'e enjekte et,
-(C) n8n OpenAI node yerine Conduut LLM katmanini kullan. Bkz. [[issue-backlog]].
+broker var (ADR-0003) ama LLM/API-key node'lari icin tam broker yok.
+
+**Tekil-asama koprusu (2026-06-16, uygulandi):** n8n public API credential
+listelemeyi desteklemiyor (`GET /credentials` -> 405), ama `list_workflows` +
+`get_workflow` calisiyor. `readiness._attach_existing_credential_if_available`:
+bir node managed-olmayan bir credential'a (orn. `openAiApi`) ihtiyac duyup
+node'da yoksa, kullanicinin **baska bir workflow'a zaten bagladigi** ayni tipteki
+credential'i kesfedip (`_discover_existing_credential`) node'a baglar. Managed
+Google tipleri (`gmailOAuth2`/`googleSheetsOAuth2`) haric (OAuth broker'a dokunmaz).
+Canli dogrulandi: throwaway workflow'da `openAiApi` -> `nk5cJsBDTXOt7134`
+("OpenAi account") otomatik baglandi. Testler: `test_readiness.py` (4). Boylece
+agent-kurdugu AI workflow'lari elle credential baglamadan calisiyor.
+
+**Hala bekleyen (tam cozum):** per-user container + kullanici credential saklama
+gelince broker'a evrilecek (kullanicinin kendi `ProviderConnection` key'ini kendi
+container'ina enjekte). Secenekler: (A) credential broker'i API-key'lere genislet,
+(B) app provider key'ini n8n'e enjekte et, (C) n8n OpenAI node yerine Conduut LLM
+katmani. Bkz. [[issue-backlog]], [[per-user-container-credentials]] (memory).
 
 ## Mock Dashboard Areas
 
