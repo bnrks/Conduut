@@ -220,6 +220,12 @@ class CredentialField(BaseModel):
     required: bool = False
 
 
+class CredentialTypeOption(BaseModel):
+    type: str
+    label: str
+    fields: list[CredentialField]
+
+
 class CredentialRequestData(BaseModel):
     workflowId: str
     workflowName: str | None = None
@@ -230,6 +236,10 @@ class CredentialRequestData(BaseModel):
     fields: list[CredentialField]
     submitPath: str
     description: str
+    # When non-empty, the credential card shows a type picker (generic HTTP
+    # auth). host is the URL host extracted from the node, prefilled + editable.
+    allowedTypes: list[CredentialTypeOption] = Field(default_factory=list)
+    host: str | None = None
 
 
 class CredentialRequestAttachment(BaseModel):
