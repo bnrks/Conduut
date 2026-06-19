@@ -6,12 +6,19 @@ import structlog
 from pydantic_ai import RunContext
 
 from src import n8n_client, store
+from src.agent.credential_types import (
+    credential_type_catalog,
+    is_supported_http_type,
+    match_credentials,
+    normalize_host,
+)
 from src.agent.schemas import (
     AgentAttachment,
     AgentDeps,
     CredentialField,
     CredentialRequestAttachment,
     CredentialRequestData,
+    CredentialTypeOption,
     OAuthPromptAttachment,
     OAuthPromptData,
 )
@@ -69,6 +76,11 @@ def _required_credential_types_for_node(
         authentication = str(parameters.get("authentication", auth_default)).lower()
         if authentication in {"", "none", "noauth"}:
             return []
+        if authentication == "genericcredentialtype":
+            generic = str(parameters.get("genericAuthType") or "").strip()
+            if generic and generic in credential_types:
+                return [generic]
+            return [item for item in credential_types if is_supported_http_type(item)]
         mapped = _AUTH_TO_CREDENTIAL_TYPE.get(authentication)
         if mapped:
             return [mapped] if mapped in credential_types else []
@@ -304,6 +316,45 @@ def _fields_from_schema(schema: dict[str, Any]) -> list[CredentialField]:
     ]
 
 
+def _http_credential_request(
+    workflow_id: str,
+    workflow_name: str | None,
+    node: dict[str, Any],
+    credential_type: str,
+) -> CredentialRequestAttachment:
+    """Build a type-picker credential card for a generic HTTP auth node."""
+
+    node_name = node.get("name", "Workflow node")
+    parameters = node.get("parameters") if isinstance(node.get("parameters"), dict) else {}
+    host = normalize_host(parameters.get("url"))
+    generic = str(parameters.get("genericAuthType") or "").strip()
+    catalog = {entry["type"]: entry for entry in credential_type_catalog()}
+    allowed_specs = [catalog[generic]] if generic in catalog else list(catalog.values())
+    primary = allowed_specs[0]["type"]
+    return CredentialRequestAttachment(
+        data=CredentialRequestData(
+            workflowId=workflow_id,
+            workflowName=workflow_name,
+            nodeName=node_name,
+            service=host or "HTTP API",
+            credentialType=primary,
+            credentialName=f"{host or 'HTTP API'} - Conduut",
+            fields=[CredentialField(**field) for field in catalog[primary]["fields"]],
+            allowedTypes=[
+                CredentialTypeOption(
+                    type=entry["type"],
+                    label=entry["label"],
+                    fields=[CredentialField(**field) for field in entry["fields"]],
+                )
+                for entry in allowed_specs
+            ],
+            host=host,
+            submitPath="/api/credentials",
+            description="This API call needs authentication. Add or pick a credential below.",
+        )
+    )
+
+
 async def _credential_request_for_node(
     workflow_id: str,
     workflow_name: str | None,
@@ -321,6 +372,9 @@ async def _credential_request_for_node(
                 returnTo="/dashboard/connections",
             )
         )
+
+    if is_supported_http_type(credential_type):
+        return _http_credential_request(workflow_id, workflow_name, node, credential_type)
 
     try:
         schema = await n8n_client.get_credential_schema(credential_type)
@@ -351,6 +405,8 @@ async def analyze_workflow_readiness_payload(
     user_id: str | None = None,
 ) -> dict[str, Any]:
     missing: list[AgentAttachment] = []
+    reuse_candidates: list[dict[str, Any]] = []
+    http_credentials: list[Any] | None = None
     workflow_id = str(workflow.get("id") or "")
     for node in workflow.get("nodes", []):
         if not isinstance(node, dict):
@@ -360,48 +416,55 @@ async def analyze_workflow_readiness_payload(
         if not credential_types:
             continue
         credential_type = _select_credential_type(node, credential_types)
-        if credential_type:
-            has_credential = _node_has_credential(node, credential_types)
-            managed_connection = _managed_google_connection_for_node(node, credential_type)
-            try:
-                attached = (
-                    await _attach_managed_connection_if_available(
-                        user_id,
-                        workflow_id,
-                        node,
-                        credential_type,
-                    )
-                    if managed_connection
-                    else False
+        if not credential_type:
+            continue
+        has_credential = _node_has_credential(node, credential_types)
+        managed_connection = _managed_google_connection_for_node(node, credential_type)
+        try:
+            attached = (
+                await _attach_managed_connection_if_available(
+                    user_id,
+                    workflow_id,
+                    node,
+                    credential_type,
                 )
-            except Exception as exc:
-                log.warning(
-                    "managed_connection_attach_failed",
-                    workflow_id=workflow_id,
-                    node=node.get("name"),
-                    credential_type=credential_type,
-                    error=str(exc),
-                )
-                attached = False
-            if not attached and not has_credential:
-                try:
-                    attached = await _attach_existing_credential_if_available(
-                        workflow_id,
-                        node,
-                        credential_type,
+                if managed_connection
+                else False
+            )
+        except Exception as exc:
+            log.warning(
+                "managed_connection_attach_failed",
+                workflow_id=workflow_id,
+                node=node.get("name"),
+                credential_type=credential_type,
+                error=str(exc),
+            )
+            attached = False
+        if attached or has_credential:
+            continue
+
+        # Custom HTTP credential: match the user's saved library by host
+        # (confirm-first). Do NOT use the cross-workflow reuse bridge here.
+        if is_supported_http_type(credential_type):
+            if http_credentials is None:
+                http_credentials = await store.list_custom_credentials(user_id) if user_id else []
+            generic = str(node.get("parameters", {}).get("genericAuthType") or "").strip() or None
+            matches = match_credentials(
+                node.get("parameters", {}).get("url"),
+                http_credentials,
+                credential_type=generic,
+            )
+            if matches:
+                for credential in matches:
+                    reuse_candidates.append(
+                        {
+                            "nodeName": str(node.get("name") or ""),
+                            "credentialId": credential.id,
+                            "label": credential.label,
+                            "credentialType": credential.credential_type,
+                            "host": credential.host,
+                        }
                     )
-                except Exception as exc:
-                    log.warning(
-                        "existing_credential_reuse_failed",
-                        workflow_id=workflow_id,
-                        node=node.get("name"),
-                        credential_type=credential_type,
-                        error=str(exc),
-                    )
-                    attached = False
-            if attached:
-                continue
-            if has_credential:
                 continue
             log.info(
                 "workflow_missing_credential",
@@ -409,22 +472,53 @@ async def analyze_workflow_readiness_payload(
                 node=node.get("name"),
                 node_type=node.get("type"),
                 credential_type=credential_type,
-                managed_connection=bool(managed_connection),
             )
             missing.append(
                 await _credential_request_for_node(
-                    workflow.get("id", ""),
-                    workflow.get("name"),
-                    node,
-                    credential_type,
+                    workflow.get("id", ""), workflow.get("name"), node, credential_type
                 )
             )
+            continue
+
+        # Non-HTTP, managed-less types (e.g. openAiApi): cross-workflow reuse bridge.
+        try:
+            attached = await _attach_existing_credential_if_available(
+                workflow_id, node, credential_type
+            )
+        except Exception as exc:
+            log.warning(
+                "existing_credential_reuse_failed",
+                workflow_id=workflow_id,
+                node=node.get("name"),
+                credential_type=credential_type,
+                error=str(exc),
+            )
+            attached = False
+        if attached:
+            continue
+        log.info(
+            "workflow_missing_credential",
+            workflow_id=workflow_id,
+            node=node.get("name"),
+            node_type=node.get("type"),
+            credential_type=credential_type,
+            managed_connection=bool(managed_connection),
+        )
+        missing.append(
+            await _credential_request_for_node(
+                workflow.get("id", ""),
+                workflow.get("name"),
+                node,
+                credential_type,
+            )
+        )
 
     webhook_nodes = _workflow_trigger_nodes(workflow, _WEBHOOK_TRIGGER_TYPE)
     manual_trigger_nodes = _workflow_trigger_nodes(workflow, _MANUAL_TRIGGER_TYPE)
     return {
-        "ready": len(missing) == 0,
+        "ready": len(missing) == 0 and len(reuse_candidates) == 0,
         "missing_credentials": missing,
+        "reuse_candidates": reuse_candidates,
         "testable": len(webhook_nodes) > 0 or len(manual_trigger_nodes) > 0,
         "webhook_nodes": webhook_nodes,
         "manual_trigger_nodes": manual_trigger_nodes,
