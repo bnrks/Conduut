@@ -287,12 +287,26 @@ async def attach_credential_to_workflow(
     credential_type: str,
     credential_id: str,
     credential_name: str,
+    *,
+    generic_auth_type: str | None = None,
 ) -> dict:
+    """Attach a credential to a workflow node.
+
+    When ``generic_auth_type`` is given (HTTP Request generic auth), the node's
+    parameters are also set to ``authentication=genericCredentialType`` and
+    ``genericAuthType=<generic_auth_type>`` so n8n actually uses the credential.
+    Default None preserves the existing behaviour (Gmail/Sheets OAuth).
+    """
+
     workflow = await get_workflow(workflow_id)
     nodes = workflow.get("nodes", [])
     matched = False
     for node in nodes:
         if node.get("name") == node_name:
+            if generic_auth_type:
+                params = node.setdefault("parameters", {})
+                params["authentication"] = "genericCredentialType"
+                params["genericAuthType"] = generic_auth_type
             credentials = node.setdefault("credentials", {})
             credentials[credential_type] = {"id": credential_id, "name": credential_name}
             matched = True
