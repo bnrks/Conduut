@@ -3,6 +3,7 @@ import {
   Workflow,
   Files,
   Plug,
+  KeyRound,
   BarChart3,
   Settings,
   type LucideIcon,
@@ -19,6 +20,7 @@ export const DASHBOARD_NAV: NavItem[] = [
   { label: "Workflows", href: "/dashboard/workflows", icon: Workflow },
   { label: "Artifacts", href: "/dashboard/artifacts", icon: Files },
   { label: "Connections", href: "/dashboard/connections", icon: Plug },
+  { label: "Credentials", href: "/dashboard/credentials", icon: KeyRound },
   { label: "Usage", href: "/dashboard/usage", icon: BarChart3 },
   { label: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
