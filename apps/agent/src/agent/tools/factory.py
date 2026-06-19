@@ -21,10 +21,12 @@ from src.agent.schemas import (
     dump_workflow_nodes,
 )
 from src.agent.tools.common import (
+    _credential_suggestion_instruction,
     _missing_credentials_instruction,
     _safe_error,
     _waiting_for_user_input_result,
 )
+from src.agent.tools.credentials import attach_credential_payload, list_credentials_payload
 from src.agent.tools.execution import _summarize_execution
 from src.agent.tools.prompt import SYSTEM_PROMPT
 from src.agent.tools.readiness import (
@@ -72,6 +74,46 @@ def _log_tool_finished(tool: str, started_at: float, result: Any) -> None:
         status=_tool_status(result),
         result_keys=result_keys,
     )
+
+
+def _workflow_result_with_readiness(workflow: Any, readiness: dict[str, Any]) -> dict[str, Any]:
+    """Build a create/update result, surfacing missing creds or reuse suggestions."""
+
+    base: dict[str, Any] = {"id": workflow.id, "name": workflow.name, "active": workflow.active}
+    missing_count = readiness.get("missing_count", 0)
+    suggestions = readiness.get("reuse_candidates", [])
+    if not missing_count and not suggestions:
+        return base
+    base["ready"] = False
+    base["missing_credentials"] = missing_count
+    if suggestions:
+        base["credential_suggestions"] = suggestions
+        base["instruction"] = _credential_suggestion_instruction()
+    else:
+        base["instruction"] = _missing_credentials_instruction()
+    return base
+
+
+def _readiness_block_result(workflow_id: str, readiness: dict[str, Any]) -> dict[str, Any] | None:
+    """Block activate/execute when credentials are missing or pending confirmation."""
+
+    missing_count = readiness.get("missing_count", 0)
+    suggestions = readiness.get("reuse_candidates", [])
+    if not missing_count and not suggestions:
+        return None
+    result: dict[str, Any] = {
+        "success": False,
+        "workflow_id": workflow_id,
+        "missing_credentials": missing_count,
+    }
+    if suggestions:
+        result["credential_suggestions"] = suggestions
+        result["error"] = "A saved credential matches this workflow but is not attached yet."
+        result["instruction"] = _credential_suggestion_instruction()
+    else:
+        result["error"] = "Missing credentials. Ask the user to submit the credential request."
+        result["instruction"] = _missing_credentials_instruction()
+    return result
 
 
 def _normalized_user_input_request(
@@ -356,19 +398,8 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             )
         )
         full_workflow = await n8n_client.get_workflow(workflow.id)
-        missing_count = await _emit_missing_credentials(ctx, full_workflow)
-        if missing_count:
-            result = {
-                "id": workflow.id,
-                "name": workflow.name,
-                "active": workflow.active,
-                "ready": False,
-                "missing_credentials": missing_count,
-                "instruction": _missing_credentials_instruction(),
-            }
-            _log_tool_finished("create_workflow", started_at, result)
-            return result
-        result = {"id": workflow.id, "name": workflow.name, "active": workflow.active}
+        readiness = await _emit_missing_credentials(ctx, full_workflow)
+        result = _workflow_result_with_readiness(workflow, readiness)
         _log_tool_finished("create_workflow", started_at, result)
         return result
 
@@ -436,19 +467,8 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             )
         )
         full_workflow = await n8n_client.get_workflow(workflow.id)
-        missing_count = await _emit_missing_credentials(ctx, full_workflow)
-        if missing_count:
-            result = {
-                "id": workflow.id,
-                "name": workflow.name,
-                "active": workflow.active,
-                "ready": False,
-                "missing_credentials": missing_count,
-                "instruction": _missing_credentials_instruction(),
-            }
-            _log_tool_finished("update_workflow", started_at, result)
-            return result
-        result = {"id": workflow.id, "name": workflow.name, "active": workflow.active}
+        readiness = await _emit_missing_credentials(ctx, full_workflow)
+        result = _workflow_result_with_readiness(workflow, readiness)
         _log_tool_finished("update_workflow", started_at, result)
         return result
 
@@ -463,16 +483,11 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         try:
             workflow = await _get_workflow_for_reference(workflow_id)
             workflow_id = str(workflow.get("id") or workflow_id)
-            missing_count = await _emit_missing_credentials(ctx, workflow)
-            if missing_count:
-                result = {
-                    "success": False,
-                    "workflow_id": workflow_id,
-                    "error": "Missing credentials. Ask the user to submit the credential request.",
-                    "instruction": _missing_credentials_instruction(),
-                }
-                _log_tool_finished("activate_workflow", started_at, result)
-                return result
+            readiness = await _emit_missing_credentials(ctx, workflow)
+            block = _readiness_block_result(workflow_id, readiness)
+            if block:
+                _log_tool_finished("activate_workflow", started_at, block)
+                return block
             await n8n_client.activate_workflow(workflow_id)
             result = {"success": True, "workflow_id": workflow_id}
             _log_tool_finished("activate_workflow", started_at, result)
@@ -517,16 +532,11 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         try:
             workflow = await _get_workflow_for_reference(workflow_id)
             workflow_id = str(workflow.get("id") or workflow_id)
-            missing_count = await _emit_missing_credentials(ctx, workflow)
-            if missing_count:
-                result = {
-                    "success": False,
-                    "workflow_id": workflow_id,
-                    "error": "Missing credentials. Ask the user to submit the credential request.",
-                    "instruction": _missing_credentials_instruction(),
-                }
-                _log_tool_finished("execute_workflow", started_at, result)
-                return result
+            readiness = await _emit_missing_credentials(ctx, workflow)
+            block = _readiness_block_result(workflow_id, readiness)
+            if block:
+                _log_tool_finished("execute_workflow", started_at, block)
+                return block
 
             metadata = await store.get_workflow_metadata(ctx.deps.user_id, workflow_id)
             input_schema = _workflow_input_schema_from_metadata(metadata)
@@ -584,16 +594,21 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                 await ctx.deps.emit_attachment(attachment)
             if readiness["missing_credentials"]:
                 ctx.deps.awaiting_user_input = True
+            suggestions = readiness.get("reuse_candidates", [])
+            if readiness["missing_credentials"]:
+                instruction = _missing_credentials_instruction()
+            elif suggestions:
+                instruction = _credential_suggestion_instruction()
+            else:
+                instruction = "No missing credentials were found."
             result = {
                 "ready": readiness["ready"],
                 "testable": readiness["testable"],
                 "missing_credentials": len(readiness["missing_credentials"]),
-                "instruction": (
-                    _missing_credentials_instruction()
-                    if readiness["missing_credentials"]
-                    else "No missing credentials were found."
-                ),
+                "instruction": instruction,
             }
+            if suggestions:
+                result["credential_suggestions"] = suggestions
             _log_tool_finished("analyze_workflow_readiness", started_at, result)
             return result
         except Exception as exc:
@@ -665,5 +680,39 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             result = {"error": _safe_error(exc)}
             _log_tool_finished("delete_workflow", started_at, result)
             return result
+
+    @agent.tool
+    async def list_credentials(
+        ctx: RunContext[AgentDeps], url: str | None = None
+    ) -> dict[str, Any]:
+        """List the user's saved custom credentials (labels/types/hosts only, never secrets).
+
+        Pass the HTTP node URL to see which saved credentials match its host.
+        """
+
+        await ctx.deps.emit_tool_call("list_credentials")
+        started_at = perf_counter()
+        result = await list_credentials_payload(ctx.deps, url)
+        _log_tool_finished("list_credentials", started_at, result)
+        return result
+
+    @agent.tool
+    async def attach_credential(
+        ctx: RunContext[AgentDeps],
+        workflow_id: str,
+        node_name: str,
+        credential_id: str,
+    ) -> dict[str, Any]:
+        """Attach a saved custom credential to a workflow node after the user confirms.
+
+        Use the credential_id from list_credentials or a create/update result's
+        credential_suggestions. Only call this once the user has confirmed.
+        """
+
+        await ctx.deps.emit_tool_call("attach_credential")
+        started_at = perf_counter()
+        result = await attach_credential_payload(ctx.deps, workflow_id, node_name, credential_id)
+        _log_tool_finished("attach_credential", started_at, result)
+        return result
 
     return agent

@@ -71,15 +71,18 @@ async def submit_credential(request: Request, body: CredentialSubmitIn):
         or credential_type
     )
 
-    host = ""
-    if is_supported_http_type(credential_type):
-        normalized = normalize_host(body.host)
-        if not normalized:
-            raise HTTPException(
-                status_code=422,
-                detail={"message": "A valid host (e.g. api.example.com) is required."},
-            )
-        host = normalized
+    # Host is required for the outbound HTTP credential library (dashboard create
+    # or an HTTP Request type-picker card, which sends generic_auth_type). The
+    # legacy per-workflow reactive flow (e.g. Webhook basic auth) has no host.
+    host = normalize_host(body.host) or ""
+    host_required = is_supported_http_type(credential_type) and (
+        body.generic_auth_type is not None or not body.workflow_id
+    )
+    if host_required and not host:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": "A valid host (e.g. api.example.com) is required."},
+        )
 
     try:
         credential = await n8n_client.create_credential(label, credential_type, body.data)

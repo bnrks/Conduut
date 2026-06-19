@@ -40,6 +40,14 @@ from src.registry import registry
 
 log = structlog.get_logger()
 
+_HTTP_REQUEST_NODE_TYPE = "n8n-nodes-base.httpRequest"
+
+
+def _is_http_request_node(node: dict[str, Any]) -> bool:
+    """Whether this is an outbound HTTP Request node (host-matched custom creds)."""
+
+    return node.get("type") == _HTTP_REQUEST_NODE_TYPE
+
 
 def _service_name(node_type: str, node_name: str) -> str:
     service = node_type.split(".")[-1].replace("Trigger", "")
@@ -322,14 +330,26 @@ def _http_credential_request(
     node: dict[str, Any],
     credential_type: str,
 ) -> CredentialRequestAttachment:
-    """Build a type-picker credential card for a generic HTTP auth node."""
+    """Build a credential card for a generic HTTP Request auth node.
+
+    Shows a type picker only when the node uses genericCredentialType without a
+    chosen genericAuthType; otherwise the specific selected type is used.
+    """
 
     node_name = node.get("name", "Workflow node")
     parameters = node.get("parameters") if isinstance(node.get("parameters"), dict) else {}
     host = normalize_host(parameters.get("url"))
+    authentication = str(parameters.get("authentication") or "").lower()
     generic = str(parameters.get("genericAuthType") or "").strip()
     catalog = {entry["type"]: entry for entry in credential_type_catalog()}
-    allowed_specs = [catalog[generic]] if generic in catalog else list(catalog.values())
+    if generic in catalog:
+        allowed_specs = [catalog[generic]]
+    elif authentication == "genericcredentialtype":
+        allowed_specs = list(catalog.values())  # ambiguous -> full picker
+    elif credential_type in catalog:
+        allowed_specs = [catalog[credential_type]]
+    else:
+        allowed_specs = list(catalog.values())
     primary = allowed_specs[0]["type"]
     return CredentialRequestAttachment(
         data=CredentialRequestData(
@@ -373,7 +393,7 @@ async def _credential_request_for_node(
             )
         )
 
-    if is_supported_http_type(credential_type):
+    if is_supported_http_type(credential_type) and _is_http_request_node(node):
         return _http_credential_request(workflow_id, workflow_name, node, credential_type)
 
     try:
@@ -444,8 +464,9 @@ async def analyze_workflow_readiness_payload(
             continue
 
         # Custom HTTP credential: match the user's saved library by host
-        # (confirm-first). Do NOT use the cross-workflow reuse bridge here.
-        if is_supported_http_type(credential_type):
+        # (confirm-first). Scoped to outbound HTTP Request nodes; do NOT use the
+        # cross-workflow reuse bridge here.
+        if is_supported_http_type(credential_type) and _is_http_request_node(node):
             if http_credentials is None:
                 http_credentials = await store.list_custom_credentials(user_id) if user_id else []
             generic = str(node.get("parameters", {}).get("genericAuthType") or "").strip() or None
@@ -525,14 +546,26 @@ async def analyze_workflow_readiness_payload(
     }
 
 
-async def _emit_missing_credentials(ctx: RunContext[AgentDeps], workflow: dict[str, Any]) -> int:
+async def _emit_missing_credentials(
+    ctx: RunContext[AgentDeps], workflow: dict[str, Any]
+) -> dict[str, Any]:
+    """Emit missing-credential cards and return counts + reuse suggestions.
+
+    Returns ``{"missing_count": int, "reuse_candidates": list}``. Missing cards
+    set ``awaiting_user_input``; reuse candidates do not (the agent asks for
+    confirmation via request_user_input, which sets the flag itself).
+    """
+
     readiness = await analyze_workflow_readiness_payload(workflow, user_id=ctx.deps.user_id)
     missing = readiness["missing_credentials"]
     for attachment in missing:
         await ctx.deps.emit_attachment(attachment)
     if missing:
         ctx.deps.awaiting_user_input = True
-    return len(missing)
+    return {
+        "missing_count": len(missing),
+        "reuse_candidates": readiness.get("reuse_candidates", []),
+    }
 
 
 async def _get_workflow_for_reference(workflow_ref: str) -> dict[str, Any]:

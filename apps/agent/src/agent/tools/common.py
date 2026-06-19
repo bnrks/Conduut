@@ -41,6 +41,16 @@ def _missing_credentials_instruction() -> str:
     )
 
 
+def _credential_suggestion_instruction() -> str:
+    return (
+        "A saved credential matches this API's host (see credential_suggestions). "
+        "Stop and ask the user to confirm with request_user_input, naming the "
+        "credential's label; if several match a node, pass the labels as choices. "
+        "When the user confirms, call attach_credential(workflow_id, node_name, "
+        "credential_id) with the chosen credential. Never attach without confirmation."
+    )
+
+
 def _preview_value(value: Any, *, depth: int = 0) -> Any:
     if isinstance(value, str):
         return value if len(value) <= _MAX_OUTPUT_STRING else f"{value[:_MAX_OUTPUT_STRING]}..."
