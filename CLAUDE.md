@@ -197,6 +197,18 @@ Faz 5 — Production            → Monitoring + Stripe + Marketing sayfası
 
 ---
 
+### Son oturum özeti (2026-06-19) — Custom (HTTP) credential kütüphanesi (ADR-0012)
+
+**Karar/uygulama:** Kullanıcılar OAuth dışındaki "normal" credential'ları (HTTP node auth tipleri) Conduut'ta kaydedip HTTP Request node'larında kullanabilir. Brainstorm → spec → plan → TDD uygulama. (bkz. [[adr-0012-custom-http-credentials]])
+
+**Mimari:** Secret yalnızca n8n credential store'unda (write-only; n8n public API `GET /credentials`→405, geri okunamaz); secret-olmayan metadata (`label`, `credential_type`, `host`, `n8n_credential_id`) per-user Firestore `users/{uid}/credentials`'te. V1 tipleri: `httpHeaderAuth`, `httpBasicAuth`, `httpQueryAuth`, `httpCustomAuth` (OAuth2/predefined kapsam dışı). Eşleştirme **host'a göre deterministik** (yalnız `n8n-nodes-base.httpRequest`); bağlama **onay-önce** (agent `request_user_input` ile sorar → `attach_credential`). Host outbound library/kart için **zorunlu**.
+
+**Eklenen/değişen (backend):** `agent/credential_types.py` (**yeni**: katalog + `normalize_host` + `match_credentials`), `agent/tools/credentials.py` (**yeni**: `list_credentials_payload`/`attach_credential_payload`), `store.py` (`CustomCredential` + CRUD), `n8n_client.attach_credential_to_workflow` (`generic_auth_type` param → `authentication`/`genericAuthType` wiring), `routes/credentials.py` (POST library create+optional attach, GET, GET `/types`, DELETE `/{id}`), `schemas.py` (`CredentialTypeOption` + `CredentialRequestData.allowedTypes`/`host`), `tools/readiness.py` (genericCredentialType tespiti + host-match `reuse_candidates` + tip-seçicili kart; cross-workflow reuse köprüsü HTTP custom için kullanılmaz), `tools/factory.py` (`list_credentials`+`attach_credential` tool'ları, create/update sonucuna `credential_suggestions`), `tools/common.py` (`_credential_suggestion_instruction`), `tools/prompt.py` (HTTP auth kuralları). **235 passed (5 hata Windows tmp-izni, alakasız); ruff temiz.**
+
+**Frontend:** `/dashboard/credentials` sayfası + nav (`navigation.ts`), `credential-request.tsx` (tip seçici + host + Custom JSON), BFF `api/credentials/types` + `api/credentials/[credentialId]` (DELETE). **tsc temiz, eslint 0 hata.**
+
+**Bekleyen:** Canlı uçtan-uca test (n8n + agent + web açık) — plan Task 12 Step 5: dashboard'dan Header Auth ekle → "httpbin.org'a istek at" workflow'u → `credential_suggestions` → onay → `attach_credential` → node'da `genericAuthType`+`credentials` dolu; eşleşmesiz host → tip-seçicili kart. Eski `workflow_credentials` koleksiyonu deprecate (migrasyon yok).
+
 ### Son oturum özeti (2026-06-18b) — Conduut-yönetimli 3-kademe model + routing (ADR-0011)
 
 **Karar/uygulama:** BYO-provider (kullanıcının kendi LLM key'ini bağlaması) **kaldırıldı**; modeller artık Conduut'un kendi anahtarlarıyla merkezi. Router isteği kademeye sınıflandırır; her kademe sabit model + thinking ayarı kullanır. (bkz. [[adr-0011-conduut-managed-tiered-models]])
@@ -350,6 +362,10 @@ python packages/n8n-registry/scripts/fetch_nodes.py
 - `apps/agent/src/agent/schemas.py` — WorkflowGraph/Plan/Spec/Node IR, attachment ve AgentDeps tipleri
 - `apps/agent/tests/test_graph_compiler.py` — graph compiler golden testleri
 - `apps/agent/tests/test_repair.py` — repair motoru unit testleri (boilerplate, wiring, ai_* port, expression onarımı)
+- `apps/agent/src/agent/credential_types.py` — custom HTTP credential V1 tip kataloğu + `normalize_host` + `match_credentials` (host eşleştirme) (ADR-0012)
+- `apps/agent/src/agent/tools/credentials.py` — `list_credentials_payload` (secret yok, host-eşleşme bayraklı) + `attach_credential_payload` (ownership doğrular, generic auth wiring) (ADR-0012)
+- `apps/agent/src/routes/credentials.py` — custom credential kütüphanesi route'ları (POST create/attach, GET, GET `/types`, DELETE `/{id}`) (ADR-0012)
+- `apps/web/src/app/(dashboard)/dashboard/credentials/page.tsx` — credential yönetim sayfası (ekle/sil, tip seçici + host)
 - `apps/agent/src/agent/tools/validation.py` + `agent/validation.py` — node/connection normalize + validate + ModelRetry
 - `apps/agent/src/agent/tools/runtime_inputs.py` — runtime input şeması + webhook expression
 - `apps/agent/src/agent/tools/workflow_runner.py` — tekil + batch workflow run

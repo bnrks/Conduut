@@ -64,6 +64,10 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
   Conduut-yonetimli 3-kademe model (basit/orta/zor) + router. Her kademe sabit
   model + thinking; her kademe 2.tercih=GPT; `CONDUUT_MODEL_PROFILE`=default|gpt
   (tek-switch full-GPT). Yeni `model_registry.py` + `router.py`.
+- [[adr-0012-custom-http-credentials]] - Custom (HTTP) credential kutuphanesi:
+  Header/Basic/Query/Custom Auth, secret n8n'de + metadata Firestore'da, host'a
+  gore deterministik eslestirme, onay-once baglama (`attach_credential`),
+  dashboard + chat-ici yonetim. Yeni `credential_types.py` + `tools/credentials.py`.
 
 ## Kaynak Dokumanlar
 

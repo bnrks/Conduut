@@ -421,12 +421,37 @@ Workflow readiness davranisi:
   verir, fakat chat'e `workflow_run_result` attachment'i emit etmez. Kullanici
   teknik kanit karti gormez; agent kanita dayanarak sade metin cevap uretir.
 
-Credential route'lari:
+Credential route'lari (custom HTTP credential kutuphanesi, [[adr-0012-custom-http-credentials]]):
 
-- `GET /api/credentials`: kullanicinin Conduut uzerinden kaydedilen workflow
-  credential metadata listesini dondurur.
-- `POST /api/credentials`: API-key credential'i n8n public API'ye kaydeder,
-  ilgili workflow node'una attach eder ve Firestore'a metadata yazar.
+- `GET /api/credentials`: kullanicinin kayitli custom credential metadata
+  listesini dondurur (`users/{uid}/credentials`; label/type/host, secret yok).
+- `POST /api/credentials`: credential'i n8n public API'ye kaydeder, Firestore
+  `credentials` koleksiyonuna metadata yazar; body `workflow_id`+`node_name`
+  tasiyorsa ilgili node'a da baglar (HTTP generic tipleri icin
+  `generic_auth_type` ile `authentication=genericCredentialType` +
+  `genericAuthType` wiring). Host outbound HTTP library create / tip-secici kart
+  icin zorunlu (`generic_auth_type` set ya da workflow'suz); eski reaktif
+  per-workflow yol (Webhook basic auth) host gerektirmez.
+- `GET /api/credentials/types`: V1 tip katalogu (Header/Basic/Query/Custom Auth +
+  alanlar), dashboard ve chat formunu besler.
+- `DELETE /api/credentials/{id}`: Firestore metadata'sini siler + best-effort
+  n8n credential'i siler; yoksa 404.
+
+Custom HTTP credential eslestirme/baglama:
+
+- `agent/credential_types.py` V1 tip katalogu + `normalize_host` +
+  `match_credentials` (deterministik host eslestirme).
+- `agent/tools/readiness.py` yalniz `n8n-nodes-base.httpRequest` node'larinda
+  `authentication=genericCredentialType` icin `genericAuthType`'tan gereken
+  tipi okur; kullanicinin kutuphanesinde host eslesirse kart yerine
+  `reuse_candidates` dondurur (create/update sonucunda `credential_suggestions`),
+  eslesme yoksa tip-secicili `credential_request` (host onceden dolu) emit eder.
+- `agent/tools/credentials.py` `list_credentials_payload` (secret yok,
+  host-eslesme bayrakli) ve `attach_credential_payload` (ownership Firestore'dan
+  dogrulanir, `n8n_client.attach_credential_to_workflow(..., generic_auth_type=)`
+  ile auth parametrelerini de yazar). Tool'lar: `list_credentials`,
+  `attach_credential`. Baglama onay-once: agent `request_user_input` ile sorar,
+  onay gelince `attach_credential` cagirir.
 
 Connection route'lari:
 
