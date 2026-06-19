@@ -60,6 +60,10 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
   JSON) + onarici normalizer (`repair.py`). Model IR yerine native JSON yazar;
   uc klasik ham-yol bug'i (sub-node main wiring, `{{input.x}}`, `$json.body`
   atlama) deterministik onarilir. IR tool'lari kaldirildi.
+- [[adr-0011-conduut-managed-tiered-models]] - BYO-provider kaldirildi;
+  Conduut-yonetimli 3-kademe model (basit/orta/zor) + router. Her kademe sabit
+  model + thinking; her kademe 2.tercih=GPT; `CONDUUT_MODEL_PROFILE`=default|gpt
+  (tek-switch full-GPT). Yeni `model_registry.py` + `router.py`.
 
 ## Kaynak Dokumanlar
 

@@ -1,5 +1,4 @@
 import pytest
-from fastapi import HTTPException
 
 from src import store
 from src.routes import chat as chat_route
@@ -10,13 +9,6 @@ async def test_chat_send_streams_runner_response(monkeypatch):
     monkeypatch.setattr(chat_route, "get_user_id", lambda _request: "user_1")
     captured_runner_args = {}
 
-    async def fake_get_settings(_user_id: str):
-        return store.LLMSettings(
-            provider="openai",
-            model="gpt-4o-mini",
-            api_key="key",
-        )
-
     async def fake_get_or_create_conversation(*_args, **_kwargs):
         return store.Conversation(
             id="conv_1",
@@ -26,7 +18,6 @@ async def test_chat_send_streams_runner_response(monkeypatch):
             updated_at="now",
         )
 
-    monkeypatch.setattr(chat_route.store, "get_llm_settings", fake_get_settings)
     monkeypatch.setattr(
         chat_route.store,
         "get_or_create_conversation",
@@ -82,45 +73,11 @@ async def test_chat_send_streams_runner_response(monkeypatch):
     assert captured_runner_args["messages"][0]["attachments"][0]["type"] == "user_input_request"
 
 
-@pytest.mark.asyncio
-async def test_chat_send_rejects_unsupported_provider_override(monkeypatch):
-    monkeypatch.setattr(chat_route, "get_user_id", lambda _request: "user_1")
-
-    async def fake_get_settings(_user_id: str):
-        return store.LLMSettings(
-            provider="openai",
-            model="gpt-4o-mini",
-            api_key="key",
-        )
-
-    monkeypatch.setattr(chat_route.store, "get_llm_settings", fake_get_settings)
-
-    with pytest.raises(HTTPException) as exc:
-        await chat_route.chat_send(
-            object(),
-            chat_route.ChatRequest(content="hello", provider="custom"),
-        )
-
-    assert exc.value.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_chat_send_rejects_unsupported_reasoning_effort(monkeypatch):
-    monkeypatch.setattr(chat_route, "get_user_id", lambda _request: "user_1")
-
-    async def fake_get_settings(_user_id: str):
-        return store.LLMSettings(
-            provider="openai",
-            model="gpt-4o",
-            api_key="key",
-        )
-
-    monkeypatch.setattr(chat_route.store, "get_llm_settings", fake_get_settings)
-
-    with pytest.raises(HTTPException) as exc:
-        await chat_route.chat_send(
-            object(),
-            chat_route.ChatRequest(content="hello", reasoning_effort="medium"),
-        )
-
-    assert exc.value.status_code == 422
+def test_chat_request_ignores_legacy_provider_fields():
+    # The agent no longer takes provider/model from the request; a stale frontend
+    # that still POSTs them must not cause a 422.
+    req = chat_route.ChatRequest(
+        content="hi", provider="openai", model="gpt-4o", reasoning_effort="low"
+    )
+    assert req.content == "hi"
+    assert not hasattr(req, "provider")

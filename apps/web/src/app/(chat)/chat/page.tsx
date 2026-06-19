@@ -11,7 +11,6 @@ import {
   type ClarificationPanelData,
 } from "@/components/chat/clarification-panel";
 import { useAuth } from "@/hooks/use-auth";
-import { useModelSelector } from "@/hooks/use-model-selector";
 import { streamChat } from "@/lib/chat/sse";
 import { setConversationCache } from "@/lib/chat/conversation-cache";
 import { toolActivityLabel } from "@/lib/chat/tool-activity";
@@ -53,20 +52,6 @@ export default function NewChatPage() {
   const [isAgentTyping, setIsAgentTyping] = useState(false);
   const [agentActivity, setAgentActivity] = useState<string | undefined>();
   const [agentActivities, setAgentActivities] = useState<string[]>([]);
-  const {
-    providers,
-    selectedProvider,
-    setSelectedProvider,
-    models,
-    selectedModel,
-    setSelectedModel,
-    reasoningEfforts,
-    selectedReasoningEffort,
-    setSelectedReasoningEffort,
-    loadingModels,
-    isFavorite,
-    toggleFavorite,
-  } = useModelSelector();
 
   const handleSend = async (content: string) => {
     if (!user || isAgentTyping) return;
@@ -87,6 +72,7 @@ export default function NewChatPage() {
     let createdConversationId = "";
     let doneProvider: string | undefined;
     let doneModel: string | undefined;
+    let doneTier: string | undefined;
     let revealAssistantAttachments = false;
 
     const upsertAssistantMessage = () => {
@@ -110,6 +96,7 @@ export default function NewChatPage() {
                   conversationId: createdConversationId || msg.conversationId,
                   provider: doneProvider ?? msg.provider,
                   model: doneModel ?? msg.model,
+                  tier: doneTier ?? msg.tier,
                 }
               : msg
           );
@@ -130,6 +117,7 @@ export default function NewChatPage() {
             createdAt: now,
             provider: doneProvider,
             model: doneModel,
+            tier: doneTier,
           },
         ];
       });
@@ -143,12 +131,7 @@ export default function NewChatPage() {
     try {
       await streamChat({
         token,
-        body: {
-          content,
-          provider: selectedProvider || undefined,
-          model: selectedModel || undefined,
-          reasoning_effort: selectedReasoningEffort || undefined,
-        },
+        body: { content },
         onEvent: ({ event, data }) => {
           const streamConversationId =
             typeof data.conversation_id === "string" ? data.conversation_id : "";
@@ -166,6 +149,7 @@ export default function NewChatPage() {
           if (event === "done") {
             doneProvider = typeof data.provider === "string" ? data.provider : undefined;
             doneModel = typeof data.model === "string" ? data.model : undefined;
+            doneTier = typeof data.tier === "string" ? data.tier : undefined;
             revealAssistantAttachments = true;
             setAgentActivity("Finishing the response");
             setAgentActivities((prev) => appendRecentActivity(prev, "Finishing the response"));
@@ -213,15 +197,10 @@ export default function NewChatPage() {
             createdAt: now,
             provider: doneProvider,
             model: doneModel,
+            tier: doneTier,
           },
         ];
-        setConversationCache(
-          createdConversationId,
-          finalMessages,
-          selectedProvider ?? undefined,
-          selectedModel ?? undefined,
-          selectedReasoningEffort || undefined
-        );
+        setConversationCache(createdConversationId, finalMessages);
         router.replace(`/chat/${createdConversationId}`);
       }
     } catch (error) {
@@ -270,18 +249,6 @@ export default function NewChatPage() {
             onChange={setInputValue}
             onSend={(content) => { void handleSend(content); }}
             disabled={!user}
-            providers={providers}
-            selectedProvider={selectedProvider}
-            onProviderChange={setSelectedProvider}
-            models={models}
-            selectedModel={selectedModel}
-            onModelChange={setSelectedModel}
-            reasoningEfforts={reasoningEfforts}
-            selectedReasoningEffort={selectedReasoningEffort}
-            onReasoningEffortChange={setSelectedReasoningEffort}
-            loadingModels={loadingModels}
-            isFavorite={isFavorite}
-            onToggleFavorite={(p, m) => void toggleFavorite(p, m)}
           />
         )}
       </div>

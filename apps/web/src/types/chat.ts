@@ -10,6 +10,7 @@ export interface Message {
   attachments?: MessageAttachment[];
   provider?: string;
   model?: string;
+  tier?: string;
   reasoningEffort?: string;
 }
 

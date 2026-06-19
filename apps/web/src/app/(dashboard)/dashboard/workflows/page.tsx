@@ -946,6 +946,7 @@ export default function WorkflowsPage() {
             <WorkflowCard
               key={wf.id}
               workflow={wf}
+              isRunning={runningWorkflowId === wf.id}
               onRun={(w) => handleRun(w)}
               onToggle={(w) => void handleToggle(w)}
               onDelete={(w) => void handleDelete(w)}

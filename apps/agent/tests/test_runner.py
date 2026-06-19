@@ -3,8 +3,8 @@ import json
 
 import pytest
 
-from src import store
 from src.agent import runner
+from src.agent.model_registry import Tier
 from src.agent.schemas import (
     AgentDeps,
     ArtifactPreviewAttachment,
@@ -24,7 +24,10 @@ class FakeResult:
 class FakeAgent:
     async def run(self, _prompt, *, deps, message_history, model_settings, usage_limits):
         assert message_history == []
-        assert model_settings is None
+        assert model_settings == {
+            "anthropic_thinking": {"type": "adaptive"},
+            "anthropic_effort": "medium",
+        }
         await deps.emit_tool_call("create_workflow")
         await deps.emit_attachment(
             WorkflowPreviewAttachment(
@@ -254,6 +257,11 @@ async def test_runner_preserves_sse_contract(monkeypatch):
         saved["args"] = args
         saved["kwargs"] = kwargs
 
+    async def fake_classify(*_args, **_kwargs):
+        return Tier.MEDIUM
+
+    monkeypatch.setattr(runner, "classify_tier", fake_classify)
+    monkeypatch.setattr(runner, "key_for_provider", lambda *_args: "key")
     monkeypatch.setattr(runner, "build_model", lambda *_args: object())
     monkeypatch.setattr(runner, "create_agent", lambda _model: FakeAgent())
     monkeypatch.setattr(runner.store, "add_message", fake_add_message)
@@ -264,7 +272,6 @@ async def test_runner_preserves_sse_contract(monkeypatch):
             "user_1",
             "conv_1",
             [{"role": "user", "content": "create a demo workflow"}],
-            store.LLMSettings(provider="openai", model="gpt-4o-mini", api_key="key"),
         )
         if raw.startswith("event:")
     ]
@@ -287,6 +294,11 @@ async def test_runner_persists_artifact_preview_attachments(monkeypatch):
     async def fake_save_artifact(user_id: str, artifact: dict, *, origin: dict):
         saved_artifacts.append({"user_id": user_id, "artifact": artifact, "origin": origin})
 
+    async def fake_classify(*_args, **_kwargs):
+        return Tier.MEDIUM
+
+    monkeypatch.setattr(runner, "classify_tier", fake_classify)
+    monkeypatch.setattr(runner, "key_for_provider", lambda *_args: "key")
     monkeypatch.setattr(runner, "build_model", lambda *_args: object())
     monkeypatch.setattr(runner, "create_agent", lambda _model: FakeArtifactAgent())
     monkeypatch.setattr(runner.store, "add_message", fake_add_message)
@@ -298,7 +310,6 @@ async def test_runner_persists_artifact_preview_attachments(monkeypatch):
             "user_1",
             "conv_1",
             [{"role": "user", "content": "add a row"}],
-            store.LLMSettings(provider="openai", model="gpt-4o-mini", api_key="key"),
         )
         if raw.startswith("event:")
     ]
@@ -324,14 +335,25 @@ async def test_runner_persists_artifact_preview_attachments(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_runner_reports_unsupported_provider():
+async def test_runner_reports_model_config_error(monkeypatch):
+    from src.agent.provider_factory import UnsupportedProviderError
+
+    async def fake_classify(*_args, **_kwargs):
+        return Tier.MEDIUM
+
+    def boom(*_args):
+        raise UnsupportedProviderError("Unsupported provider: custom")
+
+    monkeypatch.setattr(runner, "classify_tier", fake_classify)
+    monkeypatch.setattr(runner, "key_for_provider", lambda *_args: "key")
+    monkeypatch.setattr(runner, "build_model", boom)
+
     chunks = [
         raw
         async for raw in runner.run(
             "user_1",
             "conv_1",
             [{"role": "user", "content": "hello"}],
-            store.LLMSettings(provider="custom", model="x", api_key="key"),
         )
     ]
 

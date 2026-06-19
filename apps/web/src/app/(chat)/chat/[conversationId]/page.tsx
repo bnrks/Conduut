@@ -11,7 +11,6 @@ import {
   type ClarificationPanelData,
 } from "@/components/chat/clarification-panel";
 import { useAuth } from "@/hooks/use-auth";
-import { useModelSelector } from "@/hooks/use-model-selector";
 import { streamChat } from "@/lib/chat/sse";
 import { popConversationCache } from "@/lib/chat/conversation-cache";
 import { normalizeMessages } from "@/lib/chat/messages";
@@ -58,19 +57,15 @@ export default function ConversationPage() {
   }, [params.conversationId]);
 
   const { user } = useAuth();
-  const cachedData = useMemo(() => popConversationCache(conversationId), [conversationId]);
+  const cachedMessages = useMemo(() => popConversationCache(conversationId), [conversationId]);
   const [messages, setMessages] = useState<Message[]>(() =>
-    normalizeMessages(cachedData?.messages, conversationId)
+    normalizeMessages(cachedMessages ?? undefined, conversationId)
   );
-  const hasCachedMessages = useRef((cachedData?.messages?.length ?? 0) > 0);
-  const [lockedProvider, setLockedProvider] = useState<string | undefined>(cachedData?.provider);
-  const [lockedModel, setLockedModel] = useState<string | undefined>(cachedData?.model);
-  const [lockedReasoningEffort, setLockedReasoningEffort] = useState<string | undefined>(cachedData?.reasoningEffort);
+  const hasCachedMessages = useRef((cachedMessages?.length ?? 0) > 0);
   const [inputValue, setInputValue] = useState("");
   const [isAgentTyping, setIsAgentTyping] = useState(false);
   const [agentActivity, setAgentActivity] = useState<string | undefined>();
   const [agentActivities, setAgentActivities] = useState<string[]>([]);
-  const { providers, isFavorite, toggleFavorite } = useModelSelector();
 
   useEffect(() => {
     const loadConversation = async () => {
@@ -90,9 +85,6 @@ export default function ConversationPage() {
       }
 
       const data = (await response.json()) as ConversationDetailResponse;
-      setLockedProvider(data.provider);
-      setLockedModel(data.model);
-      setLockedReasoningEffort(data.reasoning_effort ?? data.reasoningEffort);
       if (!hasCachedMessages.current) {
         // Use updater to avoid overwriting in-flight streaming messages
         setMessages((prev) =>
@@ -124,6 +116,7 @@ export default function ConversationPage() {
     const assistantCreatedAt = now;
     let doneProvider: string | undefined;
     let doneModel: string | undefined;
+    let doneTier: string | undefined;
     let revealAssistantAttachments = false;
 
     const upsertAssistantMessage = () => {
@@ -140,6 +133,7 @@ export default function ConversationPage() {
                   attachments: visibleAttachments,
                   provider: doneProvider ?? msg.provider,
                   model: doneModel ?? msg.model,
+                  tier: doneTier ?? msg.tier,
                 }
               : msg
           );
@@ -160,6 +154,7 @@ export default function ConversationPage() {
             createdAt: assistantCreatedAt,
             provider: doneProvider,
             model: doneModel,
+            tier: doneTier,
           },
         ];
       });
@@ -176,9 +171,6 @@ export default function ConversationPage() {
         body: {
           content,
           conversation_id: conversationId,
-          provider: lockedProvider,
-          model: lockedModel,
-          reasoning_effort: lockedReasoningEffort,
         },
         onEvent: ({ event, data }) => {
           if (event === "error") {
@@ -191,6 +183,7 @@ export default function ConversationPage() {
           if (event === "done") {
             doneProvider = typeof data.provider === "string" ? data.provider : undefined;
             doneModel = typeof data.model === "string" ? data.model : undefined;
+            doneTier = typeof data.tier === "string" ? data.tier : undefined;
             revealAssistantAttachments = true;
             setAgentActivity("Finishing the response");
             setAgentActivities((prev) => appendRecentActivity(prev, "Finishing the response"));
@@ -271,19 +264,6 @@ export default function ConversationPage() {
             onChange={setInputValue}
             onSend={(content) => { void handleSend(content); }}
             disabled={!user}
-            providers={providers}
-            selectedProvider={lockedProvider ?? null}
-            onProviderChange={() => {}}
-            models={lockedModel ? [{ id: lockedModel, name: lockedModel }] : []}
-            selectedModel={lockedModel ?? null}
-            onModelChange={() => {}}
-            reasoningEfforts={lockedReasoningEffort ? [lockedReasoningEffort] : []}
-            selectedReasoningEffort={lockedReasoningEffort ?? null}
-            onReasoningEffortChange={() => {}}
-            loadingModels={false}
-            lockedModel={true}
-            isFavorite={isFavorite}
-            onToggleFavorite={(p, m) => void toggleFavorite(p, m)}
           />
         )}
       </div>

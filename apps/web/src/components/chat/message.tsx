@@ -190,6 +190,14 @@ export function Message({ message, hideInputRequests = false }: MessageProps) {
           </div>
         )}
 
+        {/* Debug: which tier/model answered (assistant only) */}
+        {!isUser && message.model && (
+          <span className="mt-1 font-mono text-[10px] text-muted-foreground/70">
+            {message.tier ? `${message.tier} · ` : ""}
+            {message.model}
+          </span>
+        )}
+
         {inputRequests.map((attachment, i) => (
           <UserInputSummary key={`input-${i}`} data={attachment.data} />
         ))}

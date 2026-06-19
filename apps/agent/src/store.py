@@ -26,26 +26,6 @@ def _now_iso() -> str:
 
 
 @dataclass
-class LLMSettings:
-    provider: str
-    model: str
-    api_key: str
-    reasoning_effort: str | None = None
-
-
-@dataclass
-class ProviderConnection:
-    provider: str
-    api_key: str
-
-    @property
-    def masked_key(self) -> str:
-        if len(self.api_key) <= 8:
-            return "****"
-        return self.api_key[:4] + "****" + self.api_key[-4:]
-
-
-@dataclass
 class WorkflowCredential:
     id: str
     service: str
@@ -108,6 +88,7 @@ class Message:
     created_at: str
     provider: str | None = None
     model: str | None = None
+    tier: str | None = None
     attachments: list[dict] | None = None
 
 
@@ -166,114 +147,6 @@ def _artifact_ref(user_id: str, artifact_id: str):
 
 async def _run(fn):
     return await asyncio.to_thread(fn)
-
-
-# ---------------------------------------------------------------------------
-# LLM Settings
-# ---------------------------------------------------------------------------
-
-
-async def get_llm_settings(user_id: str) -> LLMSettings | None:
-    doc = await _run(lambda: _user_ref(user_id).collection("settings").document("llm").get())
-    if not doc.exists:
-        return None
-    d = doc.to_dict()
-    return LLMSettings(
-        provider=d["provider"],
-        model=d["model"],
-        api_key=d["api_key"],
-        reasoning_effort=d.get("reasoning_effort"),
-    )
-
-
-async def save_llm_settings(user_id: str, provider: str, model: str, api_key: str) -> LLMSettings:
-    await _run(
-        lambda: (
-            _user_ref(user_id)
-            .collection("settings")
-            .document("llm")
-            .set({"provider": provider, "model": model, "api_key": api_key})
-        )
-    )
-    return LLMSettings(provider=provider, model=model, api_key=api_key)
-
-
-async def delete_llm_settings(user_id: str) -> None:
-    await _run(lambda: _user_ref(user_id).collection("settings").document("llm").delete())
-
-
-# ---------------------------------------------------------------------------
-# Provider Connections
-# ---------------------------------------------------------------------------
-
-
-async def list_providers(user_id: str) -> list[ProviderConnection]:
-    docs = await _run(lambda: list(_user_ref(user_id).collection("providers").stream()))
-    return [ProviderConnection(provider=d.id, api_key=d.to_dict().get("api_key", "")) for d in docs]
-
-
-async def get_provider(user_id: str, provider: str) -> ProviderConnection | None:
-    doc = await _run(lambda: _user_ref(user_id).collection("providers").document(provider).get())
-    if not doc.exists:
-        return None
-    return ProviderConnection(provider=provider, api_key=doc.to_dict().get("api_key", ""))
-
-
-async def save_provider(user_id: str, provider: str, api_key: str) -> list[ProviderConnection]:
-    await _run(
-        lambda: (
-            _user_ref(user_id).collection("providers").document(provider).set({"api_key": api_key})
-        )
-    )  # noqa: E501
-    return await list_providers(user_id)
-
-
-async def get_favorites(user_id: str) -> dict[str, list[str]]:
-    """{ provider: [model_id, ...] }"""
-    doc = await _run(lambda: _user_ref(user_id).collection("settings").document("favorites").get())
-    if not doc.exists:
-        return {}
-    return doc.to_dict() or {}
-
-
-async def add_favorite(user_id: str, provider: str, model: str) -> dict[str, list[str]]:
-    ref = _user_ref(user_id).collection("settings").document("favorites")
-
-    def _update():
-        doc = ref.get()
-        data = doc.to_dict() or {} if doc.exists else {}
-        models = data.get(provider, [])
-        if model not in models:
-            models.append(model)
-        data[provider] = models
-        ref.set(data)
-        return data
-
-    return await _run(_update)
-
-
-async def remove_favorite(user_id: str, provider: str, model: str) -> dict[str, list[str]]:
-    ref = _user_ref(user_id).collection("settings").document("favorites")
-
-    def _update():
-        doc = ref.get()
-        data = doc.to_dict() or {} if doc.exists else {}
-        models = data.get(provider, [])
-        if model in models:
-            models.remove(model)
-        data[provider] = models
-        ref.set(data)
-        return data
-
-    return await _run(_update)
-
-
-async def delete_provider(user_id: str, provider: str) -> list[ProviderConnection] | None:
-    doc = await _run(lambda: _user_ref(user_id).collection("providers").document(provider).get())
-    if not doc.exists:
-        return None
-    await _run(lambda: _user_ref(user_id).collection("providers").document(provider).delete())
-    return await list_providers(user_id)
 
 
 # ---------------------------------------------------------------------------
@@ -746,6 +619,7 @@ async def get_conversation(user_id: str, conv_id: str) -> Conversation | None:
             created_at=m.to_dict()["created_at"],
             provider=m.to_dict().get("provider"),
             model=m.to_dict().get("model"),
+            tier=m.to_dict().get("tier"),
             attachments=m.to_dict().get("attachments"),
         )
         for m in msg_docs
@@ -821,6 +695,7 @@ async def add_message(
     content: str,
     provider: str | None = None,
     model: str | None = None,
+    tier: str | None = None,
     attachments: list[dict] | None = None,
 ) -> Message:
     msg_id = str(uuid4())
@@ -831,6 +706,8 @@ async def add_message(
         data["provider"] = provider
     if model:
         data["model"] = model
+    if tier:
+        data["tier"] = tier
     if attachments:
         data["attachments"] = attachments
 
@@ -856,6 +733,7 @@ async def add_message(
         created_at=now,
         provider=provider,
         model=model,
+        tier=tier,
         attachments=attachments or None,
     )
 
@@ -874,6 +752,7 @@ async def get_conversation_messages(user_id: str, conv_id: str) -> list[Message]
             created_at=d.to_dict()["created_at"],
             provider=d.to_dict().get("provider"),
             model=d.to_dict().get("model"),
+            tier=d.to_dict().get("tier"),
             attachments=d.to_dict().get("attachments"),
         )
         for d in docs

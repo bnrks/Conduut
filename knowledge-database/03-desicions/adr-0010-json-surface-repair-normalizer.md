@@ -48,6 +48,20 @@ reddedilmek yerine deterministik olarak **onarılır**.
    - **Reddet (belirsiz/eksik):** repair dokunmaz; mevcut
      `validate_workflow_payload` emniyet ağı `ModelRetry` ile reddeder (çok-agent
      belirsizliği, trigger yok, bilinmeyen type, boş zorunlu içerik).
+   - **E-posta attribution (2026-06-17 eklendi):** e-posta gönderen node'lar
+     (`gmail` message send/reply, `emailSend`) `options.appendAttribution=false`
+     alır → n8n'in "This email was sent automatically with n8n" footer'ı kapanır.
+     Sadece model açıkça bir değer vermemişse set edilir (açık seçim korunur).
+   - **resourceLocator normalizasyonu (Stage 6, 2026-06-18 eklendi):** bazı
+     node alanları n8n'de `{"__rl": True, "mode", "value"}` nesnesi bekler ama
+     model doğal olarak düz string yazar; n8n bunu value/mode=undefined okur
+     (`Can not get sheet 'undefined' ...` runtime hatası). `_RESOURCE_LOCATOR_FIELDS`
+     tablosuna göre sarılır (`googleSheets` documentId=id, sheetName=name; URL
+     değer → mode=url; zaten `__rl` olan veya string olmayan dokunulmaz). Compiler'lar
+     (`graph_compiler`/`spec_compiler` `_sheet_locator`) bunu hep yapıyordu; IR
+     yüzeyden çıkınca repair miras almamıştı — ilk canlı BTC→Sheets testinde
+     açığa çıktı. **Sınırlama:** şimdilik yalnız googleSheets; Gmail/Drive vb.
+     gerekirse tabloya eklenir (bilinmeyen RL alanı validation'a düşer).
 4. **Few-shot.** `prompt.py`'ye 2-3 kanonik kompakt-JSON worked example eklendi
    (teklif senaryosu: webhook + AI Agent + ai_languageModel + Gmail + runtime
    input; basit lineer). Few-shot = "geçici finetune": hedef formatın prior'ını

@@ -7,6 +7,22 @@ Bu not, repo icinde gorulen bilinen sorunlari ve dikkat noktalarini toplar.
 Kullanicinin yeni fark ettigi ve henuz triage edilmemis sorun/bug notlari icin
 ayri alan: [[issue-backlog]].
 
+## Router HARD kademesini cok zor secyor (2026-06-19)
+
+Yeni 3-kademe router'i (gpt-5-mini, [[adr-0011-conduut-managed-tiered-models]])
+istekleri agirlikli olarak **MEDIUM**'a atiyor; HARD nadiren tetikleniyor. Tek-IF
+dalli "siparis onay" workflow'u (1000 TL ustu/alti -> mail/sheets + tesekkur maili)
+bile MEDIUM siniflandirildi; canli testlerde `gemini-3.1-pro-preview` (HARD primary)
+hic cagrilmadi. Router prompt'u belirsizde MEDIUM'a dusmeyi soyluyor, bu yuzden
+HARD esigi pratikte cok yuksek.
+
+- **Etki:** dusuk; MEDIUM (Sonnet) bu isleri zaten iyi kuruyor. Sadece pahali HARD
+  modeli (Gemini 3 Pro) neredeyse hic kullanilmiyor -> tier ayrimi etkisiz.
+- **Cozum (backlog):** router prompt'unda HARD kriterlerini keskinlestir (ornekler
+  ekle: coklu Switch/dallanma, mevcut workflow debug, belirsiz cok-adimli istek),
+  ya da MEDIUM-default egilimini gevset. Tuning birkac ornek prompt'la denenmeli.
+- **Karar (2026-06-19):** simdilik dokunulmuyor; feature kapatildi, bu sadece not.
+
 ## Duplicated Nested App Paths
 
 Worktree'de nested ve muhtemelen yanlis olusmus klasorler var:

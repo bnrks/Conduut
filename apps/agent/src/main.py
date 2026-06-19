@@ -13,8 +13,6 @@ from src.routes import artifacts as artifacts_router
 from src.routes import chat, conversations
 from src.routes import connections as connections_router
 from src.routes import credentials as credentials_router
-from src.routes import favorites as favorites_router
-from src.routes import settings as settings_router
 from src.routes import workflows as workflows_router
 
 configure_logging()
@@ -80,8 +78,6 @@ async def diagnostic_request_logging(request: Request, call_next):
 app.include_router(chat.router, prefix="/api")
 app.include_router(conversations.router, prefix="/api")
 app.include_router(artifacts_router.router, prefix="/api")
-app.include_router(settings_router.router, prefix="/api")
-app.include_router(favorites_router.router, prefix="/api")
 app.include_router(credentials_router.router, prefix="/api")
 app.include_router(connections_router.router, prefix="/api")
 app.include_router(workflows_router.router, prefix="/api")
