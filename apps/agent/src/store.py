@@ -38,6 +38,24 @@ class WorkflowCredential:
 
 
 @dataclass
+class CustomCredential:
+    """Reusable custom (HTTP) credential the user manages through Conduut.
+
+    The secret lives only in n8n; this record is the non-secret pointer +
+    host hint used for agent host-matching and dashboard listing.
+    """
+
+    id: str
+    label: str
+    credential_type: str
+    host: str
+    n8n_credential_id: str
+    n8n_credential_name: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass
 class WorkflowMetadata:
     workflow_id: str
     input_schema: list[dict]
@@ -201,6 +219,69 @@ async def list_workflow_credentials(user_id: str) -> list[WorkflowCredential]:
             )
         )
     return credentials
+
+
+# ---------------------------------------------------------------------------
+# Custom Credentials (reusable per-user HTTP credential library)
+# ---------------------------------------------------------------------------
+
+
+def _custom_credentials_ref(user_id: str):
+    return _user_ref(user_id).collection("credentials")
+
+
+async def save_custom_credential(
+    user_id: str,
+    *,
+    label: str,
+    credential_type: str,
+    host: str,
+    n8n_credential_id: str,
+    n8n_credential_name: str,
+) -> CustomCredential:
+    credential_id = str(uuid4())
+    now = _now_iso()
+    data = {
+        "label": label,
+        "credential_type": credential_type,
+        "host": host,
+        "n8n_credential_id": n8n_credential_id,
+        "n8n_credential_name": n8n_credential_name,
+        "created_at": now,
+        "updated_at": now,
+    }
+    await _run(lambda: _custom_credentials_ref(user_id).document(credential_id).set(data))
+    return CustomCredential(id=credential_id, **data)
+
+
+def _custom_credential_from_doc(doc) -> CustomCredential:
+    data = doc.to_dict() or {}
+    return CustomCredential(
+        id=doc.id,
+        label=data.get("label", ""),
+        credential_type=data.get("credential_type", ""),
+        host=data.get("host", ""),
+        n8n_credential_id=data.get("n8n_credential_id", ""),
+        n8n_credential_name=data.get("n8n_credential_name", ""),
+        created_at=data.get("created_at", ""),
+        updated_at=data.get("updated_at", ""),
+    )
+
+
+async def list_custom_credentials(user_id: str) -> list[CustomCredential]:
+    docs = await _run(lambda: list(_custom_credentials_ref(user_id).stream()))
+    return [_custom_credential_from_doc(doc) for doc in docs]
+
+
+async def get_custom_credential(user_id: str, credential_id: str) -> CustomCredential | None:
+    doc = await _run(lambda: _custom_credentials_ref(user_id).document(credential_id).get())
+    if not doc.exists:
+        return None
+    return _custom_credential_from_doc(doc)
+
+
+async def delete_custom_credential(user_id: str, credential_id: str) -> None:
+    await _run(lambda: _custom_credentials_ref(user_id).document(credential_id).delete())
 
 
 # ---------------------------------------------------------------------------
