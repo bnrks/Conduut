@@ -1,8 +1,14 @@
-"""Pydantic AI model/provider construction for user-selected LLM settings."""
+"""Pydantic AI model construction for Conduut-managed models.
 
+Conduut holds the provider API keys; the per-tier model + thinking config is
+chosen by ``agent/model_registry.py`` and ``agent/router.py``. ``build_model``
+builds the Pydantic AI model object from a Conduut key; ``build_model_settings``
+turns a tier's :class:`ThinkingSpec` into provider-specific ``model_settings``.
+"""
+
+from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, UsageLimits
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.groq import GroqModel
@@ -19,30 +25,27 @@ class UnsupportedProviderError(ValueError):
     """Raised when the selected provider is not supported by Conduut."""
 
 
-class UnsupportedReasoningEffortError(ValueError):
-    """Raised when the selected model does not support a reasoning effort."""
-
-
 SUPPORTED_PROVIDERS = frozenset({"openai", "anthropic", "google", "groq", "openrouter"})
-ReasoningEffort = str
 
-_GPT5_BASE_EFFORTS = ("minimal", "low", "medium", "high")
-_GPT5_1_EFFORTS = ("none", "low", "medium", "high")
-_GPT5_FRONTIER_EFFORTS = ("none", "low", "medium", "high", "xhigh")
-_GPT5_CODEX_EFFORTS = ("low", "medium", "high", "xhigh")
-_O_SERIES_EFFORTS = ("low", "medium", "high")
 
-_VERIFY_MODELS: dict[str, str] = {
-    "openai": "gpt-4o-mini",
-    "anthropic": "claude-haiku-4-5-20251001",
-    "google": "gemini-2.0-flash",
-    "groq": "llama-3.1-8b-instant",
-    "openrouter": "openai/gpt-4o-mini",
-}
+@dataclass(frozen=True)
+class ThinkingSpec:
+    """Per-tier reasoning/thinking configuration, resolved by the model registry.
+
+    ``enabled`` governs thinking on/off for Anthropic and Google. ``effort`` is
+    the universal depth knob: ``anthropic_effort`` / Google ``thinking_level`` /
+    ``openai_reasoning_effort``. ``budget`` is a Google-only alternative to a
+    level. For OpenAI, ``effort`` is passed through verbatim — the registry sets
+    a valid value per model, including the "off" value (e.g. "minimal"/"none").
+    """
+
+    enabled: bool
+    effort: str | None = None
+    budget: int | None = None
 
 
 def normalize_model_name(provider: str, model: str) -> str:
-    """Remove legacy LiteLLM-style provider prefixes from stored model names."""
+    """Remove legacy LiteLLM-style provider prefixes from model names."""
 
     provider_key = provider.strip().lower()
     model_name = model.strip()
@@ -70,59 +73,47 @@ def normalize_provider(provider: str) -> str:
     return provider_key
 
 
-def reasoning_efforts_for_model(provider: str, model: str) -> tuple[ReasoningEffort, ...]:
-    """Return selectable reasoning efforts for models Conduut knows how to configure."""
+def build_model_settings(provider: str, thinking: ThinkingSpec | None) -> dict[str, Any] | None:
+    """Build provider-specific Pydantic AI ``model_settings`` from a ThinkingSpec.
+
+    Shapes are authored here (and asserted in test_thinking_builder) per the
+    installed pydantic-ai; never derive them from the model name at runtime.
+    """
+
+    if thinking is None:
+        return None
 
     provider_key = normalize_provider(provider)
-    model_name = normalize_model_name(provider_key, model).lower()
-    if provider_key != "openai":
-        return ()
 
-    if model_name.startswith(("gpt-5.2-codex", "gpt-5.3-codex")):
-        return _GPT5_CODEX_EFFORTS
-    if model_name.startswith(("gpt-5.2", "gpt-5.3", "gpt-5.4", "gpt-5.5")):
-        if model_name.startswith("gpt-5.3-chat"):
-            return ()
-        return _GPT5_FRONTIER_EFFORTS
-    if model_name.startswith("gpt-5.1"):
-        return _GPT5_1_EFFORTS
-    if model_name.startswith("gpt-5"):
-        return _GPT5_BASE_EFFORTS
-    if model_name.startswith(("o1", "o3", "o4")):
-        return _O_SERIES_EFFORTS
-    return ()
+    if provider_key == "anthropic":
+        if not thinking.enabled:
+            return {"anthropic_thinking": {"type": "disabled"}}
+        result: dict[str, Any] = {"anthropic_thinking": {"type": "adaptive"}}
+        if thinking.effort:
+            result["anthropic_effort"] = thinking.effort
+        return result
 
+    if provider_key == "google":
+        if not thinking.enabled:
+            return {"google_thinking_config": {"thinking_budget": 0}}
+        config: dict[str, Any] = {"include_thoughts": True}
+        if thinking.effort:
+            config["thinking_level"] = thinking.effort.upper()
+        elif thinking.budget is not None:
+            config["thinking_budget"] = thinking.budget
+        return {"google_thinking_config": config}
 
-def normalize_reasoning_effort(
-    provider: str, model: str, effort: str | None
-) -> ReasoningEffort | None:
-    if effort is None or effort == "":
+    if provider_key == "openai":
+        if thinking.effort:
+            return {"openai_reasoning_effort": thinking.effort}
         return None
 
-    normalized = effort.strip().lower()
-    supported = reasoning_efforts_for_model(provider, model)
-    if normalized not in supported:
-        raise UnsupportedReasoningEffortError(
-            f"Reasoning effort '{effort}' is not supported for {provider}/{model}"
-        )
-    return normalized
-
-
-def build_model_settings(
-    provider: str, model: str, reasoning_effort: str | None
-) -> dict[str, Any] | None:
-    """Build provider-specific model settings for Pydantic AI."""
-
-    effort = normalize_reasoning_effort(provider, model, reasoning_effort)
-    if effort is None:
-        return None
-    if normalize_provider(provider) == "openai":
-        return {"openai_reasoning_effort": effort}
+    # groq / openrouter: no thinking settings
     return None
 
 
 def build_model(provider: str, model: str, api_key: str) -> Any:
-    """Build a Pydantic AI model instance for a user provider connection."""
+    """Build a Pydantic AI model instance from a Conduut-managed API key."""
 
     provider_key = normalize_provider(provider)
     model_name = normalize_model_name(provider_key, model)
@@ -142,19 +133,6 @@ def build_model(provider: str, model: str, api_key: str) -> Any:
             raise UnsupportedProviderError(f"Unsupported provider: {provider}")
 
 
-def verification_model(provider: str) -> str:
-    provider_key = provider.strip().lower()
-    return _VERIFY_MODELS.get(provider_key, "gpt-4o-mini")
-
-
-async def verify_provider_connection(provider: str, api_key: str) -> None:
-    """Run a tiny Pydantic AI request to verify provider credentials."""
-
-    model = build_model(provider, verification_model(provider), api_key)
-    agent = Agent(model, instructions="Reply with exactly: ok")
-    await agent.run("hi", usage_limits=UsageLimits(request_limit=1))
-
-
 def classify_provider_error(exc: Exception) -> str:
     """Map provider SDK errors to stable user-facing messages."""
 
@@ -164,7 +142,7 @@ def classify_provider_error(exc: Exception) -> str:
         status = getattr(response, "status_code", None)
 
     name = exc.__class__.__name__.lower()
-    message = str(exc) or "Provider verification failed"
+    message = str(exc) or "Provider request failed"
     message_lower = message.lower()
 
     if status in (401, 403) or "auth" in name or "unauthorized" in message_lower:

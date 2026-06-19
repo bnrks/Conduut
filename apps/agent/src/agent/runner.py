@@ -17,15 +17,15 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from src import store
+from src.agent.model_registry import resolve
 from src.agent.provider_factory import build_model, build_model_settings, classify_provider_error
+from src.agent.router import classify_tier
 from src.agent.schemas import AgentDeps, AgentEvent
 from src.agent.tools import create_agent
+from src.config import key_for_provider, settings
 from src.logging_config import bind_log_context, clear_log_context
 
 log = structlog.get_logger()
-
-MAX_MODEL_REQUESTS = 12
-MAX_TOOL_CALLS = 32
 
 
 def _sse(event: str, data: dict) -> str:
@@ -244,21 +244,13 @@ async def run(
     user_id: str,
     conv_id: str,
     messages: list[dict],
-    settings: store.LLMSettings,
     *,
     request_id: str | None = None,
 ) -> AsyncIterator[str]:
     """Run the Conduut agent and stream events compatible with the existing frontend."""
 
     clear_log_context()
-    bind_log_context(
-        request_id=request_id,
-        user_id=user_id,
-        conversation_id=conv_id,
-        provider=settings.provider,
-        model=settings.model,
-        reasoning_effort=settings.reasoning_effort,
-    )
+    bind_log_context(request_id=request_id, user_id=user_id, conversation_id=conv_id)
     log.info("agent_run_started", message_count=len(messages))
     event_queue: asyncio.Queue[AgentEvent] = asyncio.Queue()
     deps = AgentDeps(
@@ -270,11 +262,19 @@ async def run(
     )
     user_prompt, message_history = _history_from_store_messages(messages)
 
+    tier = await classify_tier(user_prompt, message_history)
+    choice = resolve(tier)
+    bind_log_context(
+        tier=tier.value,
+        provider=choice.provider,
+        model=choice.model,
+        profile=settings.model_profile,
+    )
+    log.info("agent_tier_selected", tier=tier.value, provider=choice.provider, model=choice.model)
+
     try:
-        model = build_model(settings.provider, settings.model, settings.api_key)
-        model_settings = build_model_settings(
-            settings.provider, settings.model, settings.reasoning_effort
-        )
+        model = build_model(choice.provider, choice.model, key_for_provider(choice.provider))
+        model_settings = build_model_settings(choice.provider, choice.thinking)
     except Exception as exc:
         log.error(
             "agent_model_config_error",
@@ -294,8 +294,8 @@ async def run(
             message_history=message_history,
             model_settings=model_settings,
             usage_limits=UsageLimits(
-                request_limit=MAX_MODEL_REQUESTS,
-                tool_calls_limit=MAX_TOOL_CALLS,
+                request_limit=choice.request_limit,
+                tool_calls_limit=choice.tool_calls_limit,
             ),
         )
 
@@ -380,8 +380,9 @@ async def run(
             conv_id,
             "assistant",
             full_content,
-            provider=settings.provider,
-            model=settings.model,
+            provider=choice.provider,
+            model=choice.model,
+            tier=tier.value,
             attachments=deps.attachments or None,
         )
         log.info("assistant_message_saved", content_length=len(full_content))
@@ -405,9 +406,9 @@ async def run(
         "done",
         {
             "conversation_id": conv_id,
-            "provider": settings.provider,
-            "model": settings.model,
-            "reasoning_effort": settings.reasoning_effort,
+            "provider": choice.provider,
+            "model": choice.model,
+            "tier": tier.value,
         },
     )
     clear_log_context()

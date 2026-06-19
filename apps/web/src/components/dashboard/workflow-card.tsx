@@ -3,6 +3,7 @@
 import { Clock, Play, Trash2, Zap } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Spinner } from "@/components/ui/spinner";
 import type { Workflow, WorkflowStatus } from "@/types/workflow";
 import { cn } from "@/lib/utils";
 
@@ -28,12 +29,19 @@ function statusLabel(status: WorkflowStatus): string {
 
 interface WorkflowCardProps {
   workflow: Workflow;
+  isRunning?: boolean;
   onRun?: (workflow: Workflow) => void;
   onToggle?: (workflow: Workflow) => void;
   onDelete?: (workflow: Workflow) => void;
 }
 
-export function WorkflowCard({ workflow, onRun, onToggle, onDelete }: WorkflowCardProps) {
+export function WorkflowCard({
+  workflow,
+  isRunning,
+  onRun,
+  onToggle,
+  onDelete,
+}: WorkflowCardProps) {
   return (
     <Card interactive className="flex flex-col">
       <CardContent className="flex flex-col gap-3 p-5">
@@ -95,14 +103,18 @@ export function WorkflowCard({ workflow, onRun, onToggle, onDelete }: WorkflowCa
             {onRun && (
               <button
                 type="button"
-                className="flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                disabled={isRunning}
+                className={cn(
+                  "flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  isRunning && "cursor-not-allowed opacity-70 hover:bg-transparent hover:text-muted-foreground"
+                )}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onRun(workflow);
+                  if (!isRunning) onRun(workflow);
                 }}
               >
-                <Play className="h-3.5 w-3.5" />
-                Run
+                {isRunning ? <Spinner size="sm" /> : <Play className="h-3.5 w-3.5" />}
+                {isRunning ? "Running…" : "Run"}
               </button>
             )}
 

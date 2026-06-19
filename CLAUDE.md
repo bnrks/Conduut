@@ -197,6 +197,29 @@ Faz 5 — Production            → Monitoring + Stripe + Marketing sayfası
 
 ---
 
+### Son oturum özeti (2026-06-18b) — Conduut-yönetimli 3-kademe model + routing (ADR-0011)
+
+**Karar/uygulama:** BYO-provider (kullanıcının kendi LLM key'ini bağlaması) **kaldırıldı**; modeller artık Conduut'un kendi anahtarlarıyla merkezi. Router isteği kademeye sınıflandırır; her kademe sabit model + thinking ayarı kullanır. (bkz. [[adr-0011-conduut-managed-tiered-models]])
+
+**Profiller (`CONDUUT_MODEL_PROFILE`=default|gpt):** default → Router/Basit thinking kapalı, Orta=Sonnet adaptive+medium, Zor=Gemini 3 Pro level HIGH; **her kademe 2.tercih=GPT** (native OpenAI). `gpt` profili tüm kademeleri OpenAI yapar (tek-switch). Model id'leri ve thinking dict'leri `model_registry.py`'de model-başına sabit (asla runtime'da model adından türetilmez).
+- Router: `gpt-5-mini` (off; eski `gemini-2.5-flash-lite` router rolünde 429/503 ile güvenilmez çıktı, router patlayınca her şey MEDIUM'a düşüyordu) · Basit: `claude-haiku-4-5-20251001` (off) · Orta: `claude-sonnet-4-6` (adaptive+medium) · Zor: `gemini-3.1-pro-preview` (HIGH). 2.tercihler: `gpt-5-mini`/`gpt-5.4`/`gpt-5.4`. **Model id'leri canlı `/models` ile doğrulandı (2026-06-19): `gemini-3-pro`→`gemini-3.1-pro-preview`, `claude-haiku-4-5`→`claude-haiku-4-5-20251001` düzeltildi.**
+
+**Backend:** yeni `agent/model_registry.py` (Tier/ModelChoice/profiller/resolve), `agent/router.py` (`classify_tier`, hata→MEDIUM). `provider_factory.build_model_settings` provider-aware thinking olarak yeniden yazıldı (`ThinkingSpec`: anthropic_thinking+effort / google_thinking_config level|budget / openai_reasoning_effort); pydantic-ai 1.88.0 anahtarları paketten doğrulandı. `build_model` korundu (Conduut key'iyle). `runner.run` imzasından `settings` çıktı → classify→resolve→build→run + **per-tier UsageLimits** + tier'ı assistant mesajına yazar. `routes/chat.py` `ChatRequest` sadeleşti (`extra=ignore`, eski FE alanlarını yutar). `routes/settings.py`+`favorites.py` ve store BYO fonksiyon/dataclass'ları (LLMSettings, ProviderConnection, get/save_llm_settings, providers, favorites) **silindi**. `config.py`'ye `model_profile`+`*_api_key`+`key_for_provider`. **207 passed, ruff temiz.** (Korundu: OAuth/Gmail/Sheets, auth, crypto, tools/.)
+
+**Frontend:** provider/model seçici UI (chat-input dropdown'ları), `use-model-selector` hook, settings "Assistant Connections" tab'ı, `/api/settings/llm`+`/api/settings/favorites` BFF route'ları **kaldırıldı**; chat artık sadece `{content, conversation_id}` gönderir. **tsc temiz, eslint 0 hata.**
+
+**Escalation (Faz 2, bekliyor):** repair/validate reddi (`UnexpectedModelBehavior`) veya request-limit (`UsageLimitExceeded`) → effort yükselt → GPT 2.tercih → üst tier. Streaming-replay + n8n yan-etki çoğaltması nedeniyle bayrak (`CONDUUT_ENABLE_TIER_ESCALATION`) arkasında, buffered (yalnız ilk başarılı deneme flush) eklenecek.
+
+**Bekleyen:** `.env` anahtarları eklendi + model-id'leri canlı doğrulandı (2026-06-19). Kalan: 5-kademe bake-off (canlı n8n) + `CONDUUT_MODEL_PROFILE=gpt` flip testi + escalation Faz 2. Detay: [[adr-0011-conduut-managed-tiered-models]].
+
+### Son oturum özeti (2026-06-18) — Canlı test: gpt-5 yavaşlığı + Sheets resourceLocator onarımı
+
+**Bağlam:** İlk canlı uçtan-uca test senaryosu çalıştırıldı: "her çalıştırmada BTC/USD fiyatını API'den çek → tarih/saat ile Sheets'e yaz" (agent Sheet'i `run_platform_action` ile kendi oluşturdu). İki ayrı bulgu:
+
+**1. "Aşırı yavaş agent" — kök neden: gpt-5 latency, Conduut değil.** Canlı log analizi (`logs/agent/conduut-agent.jsonl`): tek workflow kurulumunda **OpenAI gpt-5 çağrıları 12 adet, toplam ~716 sn (ort. 60 sn, max 194 sn)**; n8n REST çağrıları toplam 13 sn (<1 sn/çağrı), registry 0.2 sn, Sheets/OAuth <1.5 sn. Yani duvar-saatinin ~%98'i model "düşünmesi". Agent ayrıca basit workflow için ~12 keşif turu atıyor (3× search_n8n_nodes, 3× get_node_schema) → her tur bir gpt-5 çağrısı. Ek olarak hata sonrası `MAX_MODEL_REQUESTS=12` limitine takılıp kendini düzeltemedi. **Aksiyon önerisi (uygulanmadı):** workflow-kurma döngüsünü hızlı modele al (gpt-4o-mini / hızlı Claude); reasoning modelini çok-turlu tool döngüsünde kullanma. (Not: root `.env`'de `CONDUUT_N8N_URL=:5980` latent yanlış; çalışan process default `:6180` kullanıyor — performansla ilgisiz, ayrı temizlik.)
+
+**2. Execution hatası — Sheets resourceLocator (kalıcı fix, TDD).** Üretilen workflow n8n'de `Can not get sheet 'undefined' with a value of 'undefined'` ile patladı. Kök neden: model `googleSheets` node'unun `documentId`/`sheetName`'ini **düz string** yazıyor; n8n v4.7 bunları `{__rl, mode, value}` resourceLocator bekliyor. Compiler'lar (`graph_compiler`/`spec_compiler` `_sheet_locator`) bunu sarıyordu ama ADR-0010 IR'ı yüzeyden çıkarınca **repair bu mantığı miras almamıştı**. → `repair.py`'ye **Stage 6: resourceLocator normalizasyonu** eklendi (`_RESOURCE_LOCATOR_FIELDS` tablosu; googleSheets documentId=id, sheetName=name; URL değer → mode=url; zaten `__rl` olan dokunulmaz). TDD: `test_repair.py`'ye 3 test, **repair suite 19 passed; repair+validation+tools 95 passed; ruff temiz.** **Sınırlama:** sadece googleSheets kapsanıyor; Gmail/Drive vb. diğer RL alanları gerekirse tabloya eklenir. **Canlı uçtan-uca doğrulama bekliyor** (workflow yeniden kurulup execute edilmeli). Detay: [[adr-0010-json-surface-repair-normalizer]], [[known-issues]].
+
 ### Son oturum özeti (2026-06-14) — Tek JSON yüzeyi + onarıcı normalizer (ADR-0010)
 
 **Karar:** 06-13'teki kök-neden bulgusunun (modele girişte native JSON verip çıkışta pretraining'inde olmayan IR ürettirme çatışması) çözümü brainstorm'da seçildi: **A→A** — modele tek ve doğal yüzey ver (kompakt n8n JSON), hataları **reddetmek yerine deterministik onar**. Plan onaylanıp uygulandı.
@@ -301,6 +324,7 @@ python packages/n8n-registry/scripts/fetch_nodes.py
 - Eksik **business** bilgisi için `request_user_input` (tek seferde tek alan, step-by-step); teknik node seçimini sorma. Placeholder/uydurma değer **yasak**
 - Tek seferlik aksiyon → `run_platform_action`; tekrarlayan/zamanlanmış → workflow
 - Workflow üretimi → tek yüzey `create_workflow`/`update_workflow` ile **kompakt n8n JSON** (name/type/parameters; boilerplate ve lineer connections opsiyonel). `agent/repair.py` boilerplate'i doldurur ve klasik hataları onarır (ADR-0010). IR builder'lar (graph/plan/spec) artık model yüzeyinde yok.
+- Trigger seçimi: `scheduleTrigger` **yalnızca** kullanıcı açıkça tekrarlayan/zamanlı çalışma istediğinde ("her sabah", "her saat"); aksi halde (düz "X kur" istekleri) **Webhook trigger** (POST) — Conduut chat'ten çalıştırıp test edebilsin. İstenmeyen schedule **ekleme** (2026-06-19, prompt.py). Çalıştır-yolu schedule trigger'ı test-edemiyor (manual/webhook→webhook'a çevrilir; schedule çevrilmez, zamanlamayı bozar); schedule'lı workflow'u test-çalıştırma ayrı feature (b)
 - CREATE vs UPDATE: yeni için `create_workflow`, mevcut için önce `get_workflow` sonra `update_workflow` (tam yapı)
 - Bilinmeyen node için `search_n8n_nodes` → `get_node_schema`, sonra build
 - Workflow ID'lerini konuşma boyunca takip et
@@ -313,11 +337,13 @@ python packages/n8n-registry/scripts/fetch_nodes.py
 - Template sayısı artırmak için: `python packages/n8n-registry/scripts/fetch_templates.py --limit 200`
 
 ### Önemli dosyalar
-- `apps/agent/src/agent/runner.py` — Pydantic AI runner, SSE stream, geçmiş→ModelMessage dönüşümü, keep-alive
+- `apps/agent/src/agent/runner.py` — Pydantic AI runner, SSE stream, geçmiş→ModelMessage dönüşümü, keep-alive. **`run` artık `settings` almaz**: `classify_tier`→`resolve(tier)`→`build_model`+per-tier `build_model_settings`→per-tier `UsageLimits`; tier'ı assistant mesajına yazar (ADR-0011)
+- `apps/agent/src/agent/model_registry.py` — **Conduut-yönetimli kademe kayıt defteri**: `Tier`/`ModelChoice`/`TierConfig`/`ModelProfile`, `PROFILE_DEFAULT`+`PROFILE_GPT`, `resolve(tier, secondary=)`, `router_choice()`. Model id'leri + `ThinkingSpec` model-başına sabit; `CONDUUT_MODEL_PROFILE` ile seçilir (ADR-0011)
+- `apps/agent/src/agent/router.py` — `classify_tier`: ucuz sınıflandırıcı (Flash-Lite, thinking off) isteği SIMPLE/MEDIUM/HARD'a atar; hata→MEDIUM (ADR-0011)
 - `apps/agent/src/agent/loop.py` — ince kabuk (`runner.run`'a yönlendirir)
 - `apps/agent/src/agent/tools/factory.py` — Pydantic AI tool kayıtları + `create_agent`
 - `apps/agent/src/agent/tools/prompt.py` — system prompt
-- `apps/agent/src/agent/repair.py` — **onarıcı normalizer** (`repair_workflow`): kompakt JSON → boilerplate doldur + lineer wiring + sub-node `ai_*` port + `$json.body`/`{{input.x}}` onarımı (ADR-0010, tek JSON yüzeyinin kalbi)
+- `apps/agent/src/agent/repair.py` — **onarıcı normalizer** (`repair_workflow`): kompakt JSON → boilerplate doldur + lineer wiring + sub-node `ai_*` port + `$json.body`/`{{input.x}}` onarımı + e-posta node'larında `options.appendAttribution=false` (n8n "sent automatically with n8n" footer'ını kapatır) + **resourceLocator normalizasyonu** (googleSheets `documentId`/`sheetName` düz string → `{__rl, mode, value}`; aksi halde n8n value/mode'u undefined okur, "Can not get sheet 'undefined'" hatası) + **webhook `responseMode=lastNode`** (varsayılan "onReceived" anında ack'leyip execution verisi döndürmüyor → "n8n'den cevap gelmedi"; lastNode senkron sonuç döndürür) (ADR-0010, tek JSON yüzeyinin kalbi)
 - `apps/agent/src/agent/tools/graph_compiler.py` — WorkflowGraph → n8n JSON compiler (curated + generic, port çıkarımı, ADR-0009; **artık dahili kütüphane**, model yüzeyinde değil)
 - `apps/agent/src/agent/tools/blocks.py` — declarative `Block`/`ParamRule` registry + `BLOCKS` curated kind kataloğu + `ROLE_PORTS`
 - `apps/agent/src/agent/tools/spec_compiler.py` — WorkflowPlan/Spec → n8n JSON compiler (⚠️ 977 satır, refactor edilecek; graph_compiler helper'ları buradan reuse eder)

@@ -17,6 +17,16 @@ Repairs performed (in order):
                            $('<trigger>').first().json.body.<field> (any later
                            node); fields holding {{ }} get the leading '=' so n8n
                            evaluates them (Code jsCode excluded)
+  5. email attribution   — email-send nodes (Gmail send/reply, Send Email) get
+                           options.appendAttribution=false so n8n stops appending
+                           "This email was sent automatically with n8n" (only when
+                           the model has not made an explicit choice)
+  6. resourceLocators    — bare-string RL params (googleSheets documentId/
+                           sheetName) wrapped into {"__rl", "mode", "value"};
+                           a string n8n reads as value/mode undefined otherwise
+  7. webhook response    — webhook triggers get responseMode=lastNode so a Conduut
+                           run returns the execution result (default "onReceived"
+                           acks immediately -> "no response from n8n")
 
 Every change is appended to a ``repairs`` list (logged, not user-facing) so we
 can measure what fires and, later, build a finetune corpus.
@@ -51,6 +61,14 @@ _SUBNODE_PORT_BY_LOCAL: tuple[tuple[str, str], ...] = (
 # langchain nodes that DO have main I/O and accept ai_* sub-nodes
 _AGENT_LOCALS = ("agent", "chainLlm", "conversationalAgent", "openAiAssistant")
 
+# node type -> {parameter: default resourceLocator mode}. n8n expects these
+# fields as {"__rl": True, "mode", "value"} objects; the model's natural prior is
+# a bare string, which n8n reads as value/mode undefined ("Can not get sheet
+# 'undefined' ...") at runtime. Mirrors the curated compilers' RL handling.
+_RESOURCE_LOCATOR_FIELDS: dict[str, dict[str, str]] = {
+    "n8n-nodes-base.googleSheets": {"documentId": "id", "sheetName": "name"},
+}
+
 _INPUT_EXPR_RE = re.compile(r"\{\{\s*input\.(\w+)\s*\}\}")
 _JSON_DOT_RE = re.compile(r"\$json\.(?!body\.)(\w+)")
 _JSON_BRACKET_RE = re.compile(r"""\$json\[(['"])(\w+)\1\]""")
@@ -82,6 +100,9 @@ def repair_workflow(
     _repair_subnode_ports(nodes, connections, repairs)
     _assign_positions(nodes, connections)
     _repair_expressions(nodes, connections, set(runtime_fields), trigger_name, repairs)
+    _normalize_resource_locators(nodes, repairs)
+    _strip_email_attribution(nodes, repairs)
+    _normalize_webhook_response_mode(nodes, repairs)
 
     if repairs:
         log.info("workflow_repaired", repairs=repairs)
@@ -351,6 +372,99 @@ def _rewrite_strings(value: Any, fn: Any) -> Any:
     if isinstance(value, list):
         return [_rewrite_strings(nested, fn) for nested in value]
     return value
+
+
+# ---------------------------------------------------------------------------
+# Stage 5 — strip n8n email attribution footer
+# ---------------------------------------------------------------------------
+
+# Operations on email-send nodes that append the n8n attribution footer.
+_EMAIL_ATTRIBUTION_OPERATIONS = {"send", "reply"}
+
+
+def _is_email_send_node(node: dict[str, Any]) -> bool:
+    """True for nodes that append "This email was sent automatically with n8n"."""
+
+    node_type = node.get("type")
+    parameters = node.get("parameters")
+    operation = parameters.get("operation") if isinstance(parameters, Mapping) else None
+    if node_type == "n8n-nodes-base.emailSend":
+        # Default operation is send; a missing operation still sends mail.
+        return operation is None or operation in _EMAIL_ATTRIBUTION_OPERATIONS
+    if node_type == "n8n-nodes-base.gmail":
+        resource = parameters.get("resource") if isinstance(parameters, Mapping) else None
+        return resource == "message" and operation in _EMAIL_ATTRIBUTION_OPERATIONS
+    return False
+
+
+def _strip_email_attribution(nodes: list[dict[str, Any]], repairs: list[str]) -> None:
+    for node in nodes:
+        if not _is_email_send_node(node):
+            continue
+        parameters = node.get("parameters")
+        if not isinstance(parameters, dict):
+            parameters = {}
+            node["parameters"] = parameters
+        options = parameters.get("options")
+        if not isinstance(options, dict):
+            options = {}
+            parameters["options"] = options
+        if "appendAttribution" not in options:
+            options["appendAttribution"] = False
+            repairs.append(f"disabled n8n email attribution on '{node.get('name')}'")
+
+
+# ---------------------------------------------------------------------------
+# Stage 6 — resourceLocator normalization
+# ---------------------------------------------------------------------------
+
+
+def _normalize_resource_locators(nodes: list[dict[str, Any]], repairs: list[str]) -> None:
+    """Wrap bare-string resourceLocator params (e.g. googleSheets documentId/
+    sheetName) into n8n ``{"__rl": True, "mode", "value"}`` objects. Values that
+    are already resourceLocator dicts (or non-strings) are left untouched."""
+
+    for node in nodes:
+        fields = _RESOURCE_LOCATOR_FIELDS.get(node.get("type") or "")
+        if not fields:
+            continue
+        parameters = node.get("parameters")
+        if not isinstance(parameters, dict):
+            continue
+        for field_name, default_mode in fields.items():
+            value = parameters.get(field_name)
+            if not isinstance(value, str) or not value:
+                # missing, already an __rl dict, or non-string -> leave for validate
+                continue
+            mode = "url" if value.startswith(("http://", "https://")) else default_mode
+            parameters[field_name] = {"__rl": True, "mode": mode, "value": value}
+            repairs.append(f"wrapped resourceLocator '{field_name}' on '{node.get('name')}'")
+
+
+# ---------------------------------------------------------------------------
+# Stage 7 — webhook responseMode (so Conduut runs return execution data)
+# ---------------------------------------------------------------------------
+
+
+def _normalize_webhook_response_mode(nodes: list[dict[str, Any]], repairs: list[str]) -> None:
+    """Force webhook triggers to respond with the final node's output.
+
+    Without responseMode (or with "onReceived") n8n acks immediately and the run
+    returns no execution data, so Conduut shows "no response from n8n". lastNode
+    makes the webhook return the result synchronously. An explicit responseNode
+    (Respond to Webhook node) is left untouched.
+    """
+
+    for node in nodes:
+        if node.get("type") != "n8n-nodes-base.webhook":
+            continue
+        parameters = node.get("parameters")
+        if not isinstance(parameters, dict):
+            parameters = {}
+            node["parameters"] = parameters
+        if parameters.get("responseMode") in (None, "", "onReceived"):
+            parameters["responseMode"] = "lastNode"
+            repairs.append(f"set webhook responseMode=lastNode on '{node.get('name')}'")
 
 
 # ---------------------------------------------------------------------------

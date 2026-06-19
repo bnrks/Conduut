@@ -34,6 +34,11 @@ SCHEMAS = {
         "typeVersion": 2.1,
         "isTrigger": False,
     },
+    "n8n-nodes-base.emailSend": {
+        "type": "n8n-nodes-base.emailSend",
+        "typeVersion": 2.1,
+        "isTrigger": False,
+    },
     "@n8n/n8n-nodes-langchain.agent": {
         "type": "@n8n/n8n-nodes-langchain.agent",
         "typeVersion": 1.7,
@@ -42,6 +47,11 @@ SCHEMAS = {
     "@n8n/n8n-nodes-langchain.lmChatOpenAi": {
         "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
         "typeVersion": 1,
+        "isTrigger": False,
+    },
+    "n8n-nodes-base.googleSheets": {
+        "type": "n8n-nodes-base.googleSheets",
+        "typeVersion": 4.7,
         "isTrigger": False,
     },
 }
@@ -313,6 +323,197 @@ def test_body_path_idempotent_when_already_body():
     code = next(n for n in repaired if n["name"] == "Code")
     assert code["parameters"]["jsCode"].count("body.company") == 1
     assert "body.body" not in code["parameters"]["jsCode"]
+
+
+# --------------------------------------------------------------------------
+# n8n attribution footer removal
+# --------------------------------------------------------------------------
+
+
+def test_gmail_send_attribution_disabled_by_default():
+    nodes = [
+        _node("Webhook", "n8n-nodes-base.webhook"),
+        _node(
+            "Gmail",
+            "n8n-nodes-base.gmail",
+            parameters={"resource": "message", "operation": "send", "sendTo": "a@b.com"},
+        ),
+    ]
+    connections = {"Webhook": {"main": [[{"node": "Gmail", "type": "main", "index": 0}]]}}
+    repaired, _conns, repairs = repair_workflow(nodes, connections, registry=REGISTRY)
+    gmail = next(n for n in repaired if n["name"] == "Gmail")
+    assert gmail["parameters"]["options"]["appendAttribution"] is False
+    assert any("attribution" in r.lower() for r in repairs)
+
+
+def test_email_send_attribution_disabled_by_default():
+    nodes = [
+        _node("Webhook", "n8n-nodes-base.webhook"),
+        _node("Email", "n8n-nodes-base.emailSend", parameters={"operation": "send"}),
+    ]
+    connections = {"Webhook": {"main": [[{"node": "Email", "type": "main", "index": 0}]]}}
+    repaired, _conns, _ = repair_workflow(nodes, connections, registry=REGISTRY)
+    email = next(n for n in repaired if n["name"] == "Email")
+    assert email["parameters"]["options"]["appendAttribution"] is False
+
+
+def test_attribution_respects_explicit_choice():
+    nodes = [
+        _node(
+            "Gmail",
+            "n8n-nodes-base.gmail",
+            parameters={
+                "resource": "message",
+                "operation": "send",
+                "options": {"appendAttribution": True},
+            },
+        ),
+    ]
+    repaired, _conns, _ = repair_workflow(nodes, None, registry=REGISTRY)
+    gmail = next(n for n in repaired if n["name"] == "Gmail")
+    # An explicit user/model choice must be left untouched.
+    assert gmail["parameters"]["options"]["appendAttribution"] is True
+
+
+def test_attribution_not_applied_to_gmail_read():
+    nodes = [
+        _node(
+            "Gmail",
+            "n8n-nodes-base.gmail",
+            parameters={"resource": "message", "operation": "get"},
+        ),
+    ]
+    repaired, _conns, _ = repair_workflow(nodes, None, registry=REGISTRY)
+    gmail = next(n for n in repaired if n["name"] == "Gmail")
+    assert "appendAttribution" not in gmail["parameters"].get("options", {})
+
+
+# --------------------------------------------------------------------------
+# resourceLocator normalization
+# --------------------------------------------------------------------------
+
+
+def test_google_sheets_plain_string_locators_wrapped():
+    # The model writes documentId/sheetName as plain strings (its natural prior),
+    # but n8n's googleSheets node expects resourceLocator (__rl) objects. Left as
+    # strings, n8n reads .value/.mode as undefined -> "Can not get sheet
+    # 'undefined' with a value of 'undefined'" at runtime.
+    nodes = [
+        _node("Webhook", "n8n-nodes-base.webhook"),
+        _node(
+            "Sheets",
+            "n8n-nodes-base.googleSheets",
+            parameters={
+                "resource": "sheet",
+                "operation": "append",
+                "documentId": "1sNwiUOwJEx2eZS3T1fOyWzxUB6BPQCjVXsPp33h4qvs",
+                "sheetName": "Veriler",
+            },
+        ),
+    ]
+    connections = {"Webhook": {"main": [[{"node": "Sheets", "type": "main", "index": 0}]]}}
+    repaired, _conns, repairs = repair_workflow(nodes, connections, registry=REGISTRY)
+    sheets = next(n for n in repaired if n["name"] == "Sheets")
+    assert sheets["parameters"]["documentId"] == {
+        "__rl": True,
+        "mode": "id",
+        "value": "1sNwiUOwJEx2eZS3T1fOyWzxUB6BPQCjVXsPp33h4qvs",
+    }
+    assert sheets["parameters"]["sheetName"] == {
+        "__rl": True,
+        "mode": "name",
+        "value": "Veriler",
+    }
+    assert any("resourceLocator" in r or "Sheets" in r for r in repairs)
+
+
+def test_google_sheets_url_documentid_uses_url_mode():
+    nodes = [
+        _node(
+            "Sheets",
+            "n8n-nodes-base.googleSheets",
+            parameters={
+                "resource": "sheet",
+                "operation": "append",
+                "documentId": "https://docs.google.com/spreadsheets/d/1abcXYZ/edit",
+                "sheetName": "Sheet1",
+            },
+        ),
+    ]
+    repaired, _conns, _ = repair_workflow(nodes, None, registry=REGISTRY)
+    sheets = next(n for n in repaired if n["name"] == "Sheets")
+    assert sheets["parameters"]["documentId"]["mode"] == "url"
+    assert (
+        sheets["parameters"]["documentId"]["value"]
+        == "https://docs.google.com/spreadsheets/d/1abcXYZ/edit"
+    )
+
+
+def test_google_sheets_locators_left_when_already_rl():
+    already = {"__rl": True, "mode": "id", "value": "abc123"}
+    nodes = [
+        _node(
+            "Sheets",
+            "n8n-nodes-base.googleSheets",
+            parameters={
+                "resource": "sheet",
+                "operation": "append",
+                "documentId": dict(already),
+                "sheetName": {"__rl": True, "mode": "list", "value": "gid=0"},
+            },
+        ),
+    ]
+    repaired, _conns, repairs = repair_workflow(nodes, None, registry=REGISTRY)
+    sheets = next(n for n in repaired if n["name"] == "Sheets")
+    # Already a resourceLocator -> untouched, no spurious repair recorded.
+    assert sheets["parameters"]["documentId"] == already
+    assert sheets["parameters"]["sheetName"] == {"__rl": True, "mode": "list", "value": "gid=0"}
+    assert not any("resourceLocator" in r or "locator" in r.lower() for r in repairs)
+
+
+# --------------------------------------------------------------------------
+# Webhook responseMode normalization
+# --------------------------------------------------------------------------
+
+
+def test_webhook_response_mode_defaulted_to_last_node():
+    # Without responseMode n8n defaults to "onReceived" → the webhook returns
+    # immediately with no execution data, so Conduut can't show a run result
+    # ("n8n'den cevap gelmedi"). Force lastNode so the run returns synchronously.
+    nodes = [
+        _node("Webhook", "n8n-nodes-base.webhook", parameters={"httpMethod": "POST", "path": "x"}),
+        _node("Code", "n8n-nodes-base.code", parameters={"jsCode": "return items;"}),
+    ]
+    repaired, _conns, repairs = repair_workflow(nodes, None, registry=REGISTRY)
+    webhook = next(n for n in repaired if n["name"] == "Webhook")
+    assert webhook["parameters"]["responseMode"] == "lastNode"
+    assert any("responseMode" in r for r in repairs)
+
+
+def test_webhook_response_mode_onreceived_upgraded():
+    nodes = [
+        _node(
+            "Webhook",
+            "n8n-nodes-base.webhook",
+            parameters={"httpMethod": "POST", "path": "x", "responseMode": "onReceived"},
+        ),
+    ]
+    repaired, _conns, _ = repair_workflow(nodes, None, registry=REGISTRY)
+    webhook = next(n for n in repaired if n["name"] == "Webhook")
+    assert webhook["parameters"]["responseMode"] == "lastNode"
+
+
+def test_webhook_explicit_response_node_left_alone():
+    nodes = [
+        _node(
+            "Webhook",
+            "n8n-nodes-base.webhook",
+            parameters={"httpMethod": "POST", "path": "x", "responseMode": "responseNode"},
+        ),
+    ]
+    repaired, _conns, _ = repair_workflow(nodes, None, registry=REGISTRY)
+    webhook = next(n for n in repaired if n["name"] == "Webhook")
+    assert webhook["parameters"]["responseMode"] == "responseNode"
 
 
 # --------------------------------------------------------------------------
