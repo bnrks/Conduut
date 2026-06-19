@@ -69,6 +69,27 @@ host-eslesme bayrakli), `attach_credential`. Yeni route'lar: `POST /credentials`
 (library create + opsiyonel attach), `GET /credentials`, `GET /credentials/types`,
 `DELETE /credentials/{id}`.
 
+## Kullanici Yuzeyi (UX, 2026-06-19b)
+
+Kullanici n8n credential tip adlarini (httpHeaderAuth/Basic/Query/Custom) **hic
+gormez**. Bunun yerine duz-dil "auth method" modeli (frontend'de
+`lib/credential-auth-methods.ts`): "API key / token" (varsayilan), "Username &
+password", + Gelismis ("API key in the URL", "Custom"). Frontend bunlari n8n
+`credential_type` + `data` sekline cevirir (backend degismez). Paylasilan
+`components/credentials/credential-form.tsx` hem chat karti hem dashboard
+formunda kullanilir.
+
+- **Chat (asil yol):** agent semayi kendisi secer (system prompt: API key/token
+  -> httpHeaderAuth; username+password -> httpBasicAuth; emin degilse TEK duz-dil
+  soru). Kart tek yontemle gelir -> kullanici sadece secret'i girer; header adi
+  (varsayilan `Authorization`) + `Bearer` prefiksi "Gelismis" altinda.
+- **Dashboard:** duz-dil yontem secici (varsayilan "API key / token"), host
+  zorunlu. Liste rozetinde `friendlyTypeLabel` ile dostane etiket.
+
+"API key / token" yontemi `{name: <header>, value: "<prefix> <key>"}` uretir
+(varsayilan `Authorization` + `Bearer`); ozel header / prefiks Gelismis'te
+degistirilir. Boylece yaygin durum sifir-friction, nadir durumlar Gelismis ile.
+
 ## Sonuclar
 
 - Secret hic bir zaman Conduut tarafindan loglanmaz/geri dondurulmez/node

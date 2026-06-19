@@ -207,7 +207,9 @@ Faz 5 — Production            → Monitoring + Stripe + Marketing sayfası
 
 **Frontend:** `/dashboard/credentials` sayfası + nav (`navigation.ts`), `credential-request.tsx` (tip seçici + host + Custom JSON), BFF `api/credentials/types` + `api/credentials/[credentialId]` (DELETE). **tsc temiz, eslint 0 hata.**
 
-**Bekleyen:** Canlı uçtan-uca test (n8n + agent + web açık) — plan Task 12 Step 5: dashboard'dan Header Auth ekle → "httpbin.org'a istek at" workflow'u → `credential_suggestions` → onay → `attach_credential` → node'da `genericAuthType`+`credentials` dolu; eşleşmesiz host → tip-seçicili kart. Eski `workflow_credentials` koleksiyonu deprecate (migrasyon yok).
+**UX katmanı (2026-06-19b):** Kullanıcı n8n tip adlarını (httpHeaderAuth vb.) **hiç görmez**. Frontend düz-dil "auth method" modeli (`lib/credential-auth-methods.ts`: "API key / token" varsayılan, "Username & password", + Gelişmiş "URL'de key"/"Custom") → n8n `credential_type`+`data`'ya çevirir (backend değişmez). Paylaşılan `components/credentials/credential-form.tsx` hem chat kartı hem dashboard'da. Chat'te agent şemayı kendisi seçer (prompt: key/token→httpHeaderAuth, user+pass→httpBasicAuth, emin değilse tek düz-dil soru) → kart sadece secret ister; header adı/Bearer "Gelişmiş"te. "API key / token" → `{name:Authorization, value:"Bearer <key>"}` (özel header/prefiks Gelişmiş'te). Detay: [[adr-0012-custom-http-credentials]] "Kullanici Yuzeyi".
+
+**Bekleyen:** Canlı uçtan-uca test (n8n + agent + web açık): dashboard'dan "API key / token" credential ekle (host `httpbin.org`) → "httpbin.org'a istek at" workflow'u → `credential_suggestions` → onay → `attach_credential` → node'da `genericAuthType`+`credentials` dolu; eşleşmesiz host → düz-dil kart. Eski `workflow_credentials` koleksiyonu deprecate (migrasyon yok).
 
 ### Son oturum özeti (2026-06-18b) — Conduut-yönetimli 3-kademe model + routing (ADR-0011)
 
