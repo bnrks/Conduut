@@ -29,10 +29,13 @@ runtime'da patliyor. (Onceki calismada agent **proaktif** `list_credentials`+
 ise, sema credentials listesinden bagimsiz olarak **`[genericAuthType]`**
 donduruluyor (n8n o credential'i zaten sart kosuyor). Canli dogrulandi: gercek
 workflow + kayitli "API Ninjas" credential → `reuse_candidates` uretiliyor.
-Test: `test_readiness.py` (+2). **Not (confirm-first):** dashboard "Run"
-butonu credential'i otomatik iliştirmez; agent build/chat akisinda onay alip
-`attach_credential` cagirinca iliştirilir. Run-once-then-attach sirasi confirm
-gerektirir.
+Test: `test_readiness.py` (+2). **Confirm-first vs explicit Run:** agent'in
+chat build akisi confirm-first kalir (`execute_workflow` reuse_candidate'te
+bloklar, onay sorar). Ama **explicit dashboard "Run"** (ve batch run)
+`workflow_runner._prepare_workflow_for_conduut_run` icinde
+`readiness.attach_unambiguous_reuse_candidates` ile host'u tam eslesen **TEK**
+kayitli credential'i **otomatik iliştirir** → "olustur → Run" sifir-friction
+calisir (kullanici karariyla, 2026-06-21). Coklu eslesme onay icin birakilir.
 
 ## Gmail runtime-input cikarimi sabit degerleri eziyordu (2026-06-20, cozuldu)
 

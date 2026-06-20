@@ -17,7 +17,10 @@ from src.agent.schemas import (
 from src.agent.tools.common import _response_preview
 from src.agent.tools.constants import _MANUAL_TRIGGER_TYPE, _WEBHOOK_TRIGGER_TYPE
 from src.agent.tools.execution import _summarize_execution
-from src.agent.tools.readiness import analyze_workflow_readiness_payload
+from src.agent.tools.readiness import (
+    analyze_workflow_readiness_payload,
+    attach_unambiguous_reuse_candidates,
+)
 from src.agent.tools.runtime_inputs import (
     _validated_workflow_input,
     _workflow_input_schema_from_metadata,
@@ -228,6 +231,11 @@ async def _prepare_workflow_for_conduut_run(
     workflow_id = str(workflow.get("id") or "")
     workflow, converted_trigger = await ensure_conduut_runnable_workflow(workflow)
     readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id)
+    # Explicit run: auto-attach a single deterministic host-matched saved
+    # credential so "create -> Run" works without a separate chat confirmation.
+    await attach_unambiguous_reuse_candidates(
+        workflow_id, user_id, readiness.get("reuse_candidates", [])
+    )
     webhook_nodes = readiness["webhook_nodes"]
     if not webhook_nodes:
         log.warning("workflow_run_not_testable", workflow_id=workflow_id)

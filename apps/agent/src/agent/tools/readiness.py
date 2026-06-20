@@ -549,6 +549,64 @@ async def analyze_workflow_readiness_payload(
     }
 
 
+async def attach_unambiguous_reuse_candidates(
+    workflow_id: str,
+    user_id: str | None,
+    reuse_candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Attach reuse candidates for nodes with exactly one host match.
+
+    Used on an explicit user-initiated run (dashboard Run / batch) so a
+    deterministic single host match is wired without a separate chat
+    confirmation. Nodes with multiple matches are left for chat confirmation.
+    """
+
+    if not user_id or not workflow_id or not reuse_candidates:
+        return []
+    by_node: dict[str, list[dict[str, Any]]] = {}
+    for candidate in reuse_candidates:
+        by_node.setdefault(str(candidate.get("nodeName") or ""), []).append(candidate)
+
+    attached: list[dict[str, Any]] = []
+    for node_name, candidates in by_node.items():
+        if not node_name or len(candidates) != 1:
+            continue
+        candidate = candidates[0]
+        credential = await store.get_custom_credential(user_id, str(candidate.get("credentialId")))
+        if not credential:
+            continue
+        generic = (
+            credential.credential_type
+            if is_supported_http_type(credential.credential_type)
+            else None
+        )
+        try:
+            await n8n_client.attach_credential_to_workflow(
+                workflow_id,
+                node_name,
+                credential.credential_type,
+                credential.n8n_credential_id,
+                credential.n8n_credential_name,
+                generic_auth_type=generic,
+            )
+        except Exception as exc:
+            log.warning(
+                "reuse_candidate_attach_failed",
+                workflow_id=workflow_id,
+                node=node_name,
+                error=str(exc),
+            )
+            continue
+        log.info(
+            "reuse_candidate_auto_attached",
+            workflow_id=workflow_id,
+            node=node_name,
+            credential_id=candidate.get("credentialId"),
+        )
+        attached.append(candidate)
+    return attached
+
+
 async def _emit_missing_credentials(
     ctx: RunContext[AgentDeps], workflow: dict[str, Any]
 ) -> dict[str, Any]:

@@ -219,6 +219,73 @@ async def test_readiness_http_no_match_emits_type_picker_card(monkeypatch):
     assert len(card.data.allowedTypes) == 4
 
 
+async def test_attach_unambiguous_reuse_candidates(monkeypatch):
+    attached: list[dict] = []
+
+    async def fake_get(_uid, cid):
+        return _CustomCred(
+            cid,
+            "API Ninjas",
+            "httpHeaderAuth",
+            "api.api-ninjas.com",
+            n8n_credential_id=f"n8n_{cid}",
+            n8n_credential_name="API Ninjas",
+        )
+
+    async def fake_attach(
+        workflow_id,
+        node_name,
+        credential_type,
+        credential_id,
+        credential_name,
+        *,
+        generic_auth_type=None,
+    ):
+        attached.append(
+            {
+                "node": node_name,
+                "type": credential_type,
+                "id": credential_id,
+                "generic": generic_auth_type,
+            }
+        )
+
+    monkeypatch.setattr(readiness.store, "get_custom_credential", fake_get)
+    monkeypatch.setattr(readiness.n8n_client, "attach_credential_to_workflow", fake_attach)
+
+    candidates = [
+        {
+            "nodeName": "HTTP A",
+            "credentialId": "c1",
+            "label": "API Ninjas",
+            "credentialType": "httpHeaderAuth",
+            "host": "api.api-ninjas.com",
+        },
+        # Two candidates for the same node -> ambiguous, must NOT auto-attach.
+        {
+            "nodeName": "HTTP B",
+            "credentialId": "c2",
+            "label": "X",
+            "credentialType": "httpHeaderAuth",
+            "host": "h",
+        },
+        {
+            "nodeName": "HTTP B",
+            "credentialId": "c3",
+            "label": "Y",
+            "credentialType": "httpHeaderAuth",
+            "host": "h",
+        },
+    ]
+    result = await readiness.attach_unambiguous_reuse_candidates("wf1", "u1", candidates)
+
+    assert [c["nodeName"] for c in result] == ["HTTP A"]
+    assert len(attached) == 1
+    assert attached[0]["node"] == "HTTP A"
+    assert attached[0]["id"] == "n8n_c1"
+    assert attached[0]["generic"] == "httpHeaderAuth"
+
+
 async def test_readiness_http_already_attached_is_ready(monkeypatch):
     monkeypatch.setattr(readiness.registry, "get_node_schema", lambda _t: _HTTP_SCHEMA)
 
