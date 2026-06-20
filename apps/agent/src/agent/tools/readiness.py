@@ -86,7 +86,10 @@ def _required_credential_types_for_node(
             return []
         if authentication == "genericcredentialtype":
             generic = str(parameters.get("genericAuthType") or "").strip()
-            if generic and generic in credential_types:
+            # n8n requires a credential of `generic` type whenever it is set, even
+            # though the node's static schema credentials (e.g. ['httpSslAuth'])
+            # never enumerate the conditional generic auth types.
+            if generic:
                 return [generic]
             return [item for item in credential_types if is_supported_http_type(item)]
         mapped = _AUTH_TO_CREDENTIAL_TYPE.get(authentication)

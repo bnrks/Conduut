@@ -148,6 +148,40 @@ def test_required_types_generic_no_subtype_returns_supported():
     assert set(result) == {"httpHeaderAuth", "httpBasicAuth", "httpQueryAuth", "httpCustomAuth"}
 
 
+def test_required_types_generic_auth_not_in_schema_credentials():
+    # The real registry httpRequest schema only lists ['httpSslAuth']; the generic
+    # auth types are conditional and never enumerated. genericCredentialType +
+    # genericAuthType must still be detected as requiring that credential.
+    schema = {
+        "credentials": ["httpSslAuth"],
+        "keyParameters": [{"name": "authentication", "default": "none"}],
+    }
+    node = _http_node(generic="httpHeaderAuth")
+    assert readiness._required_credential_types_for_node(node, schema) == ["httpHeaderAuth"]
+
+
+async def test_readiness_http_match_with_real_registry_schema(monkeypatch):
+    # End-to-end: real-shaped schema (only httpSslAuth) + a saved api-ninjas
+    # credential -> readiness must surface a reuse candidate, not skip the node.
+    schema = {
+        "credentials": ["httpSslAuth"],
+        "keyParameters": [{"name": "authentication", "default": "none"}],
+    }
+    monkeypatch.setattr(readiness.registry, "get_node_schema", lambda _t: schema)
+
+    async def fake_list(_uid):
+        return [_CustomCred("c9", "API Ninjas", "httpHeaderAuth", "api.api-ninjas.com")]
+
+    monkeypatch.setattr(readiness.store, "list_custom_credentials", fake_list)
+
+    node = _http_node(url="https://api.api-ninjas.com/v1/quotes")
+    workflow = {"id": "wf1", "name": "WF", "nodes": [node]}
+    res = await readiness.analyze_workflow_readiness_payload(workflow, user_id="u1")
+
+    assert res["missing_credentials"] == []
+    assert [c["credentialId"] for c in res["reuse_candidates"]] == ["c9"]
+
+
 async def test_readiness_http_host_match_yields_reuse_candidate(monkeypatch):
     monkeypatch.setattr(readiness.registry, "get_node_schema", lambda _t: _HTTP_SCHEMA)
 
