@@ -806,7 +806,8 @@ def test_compile_workflow_spec_requires_sheet_email_message(monkeypatch):
         )
 
 
-def test_gmail_send_runtime_schema_sets_webhook_expressions():
+def test_gmail_send_runtime_schema_fills_empty_fields():
+    # A bare Gmail send (no recipient/subject/message) becomes a parametric form.
     nodes = [
         {
             "name": "Gmail",
@@ -814,9 +815,6 @@ def test_gmail_send_runtime_schema_sets_webhook_expressions():
             "parameters": {
                 "resource": "message",
                 "operation": "send",
-                "sendTo": "old@example.com",
-                "subject": "Old subject",
-                "message": "Old body",
             },
         }
     ]
@@ -829,6 +827,64 @@ def test_gmail_send_runtime_schema_sets_webhook_expressions():
     assert nodes[0]["parameters"]["subject"] == "={{$json.subject}}"
     assert nodes[0]["parameters"]["message"] == "={{$json.message}}"
     assert nodes[0]["parameters"]["emailType"] == "text"
+
+
+def test_gmail_send_preserves_fixed_recipient_and_upstream_message():
+    # Fixed recipient + content from an upstream node must NOT be turned into
+    # runtime inputs (otherwise the workflow can never run without manual input).
+    nodes = [
+        {"name": "Webhook", "type": "n8n-nodes-base.webhook", "parameters": {}},
+        {
+            "name": "Get Quote",
+            "type": "n8n-nodes-base.httpRequest",
+            "parameters": {"url": "https://api.api-ninjas.com/v1/quotes"},
+        },
+        {
+            "name": "Send Email",
+            "type": "n8n-nodes-base.gmail",
+            "parameters": {
+                "resource": "message",
+                "operation": "send",
+                "sendTo": "burakturan113@gmail.com",
+                "subject": "Günün Sözü",
+                "message": "={{ $('Get Quote').first().json[0].quote }}",
+            },
+        },
+    ]
+
+    input_schema = _infer_runtime_input_schema(nodes)
+    _apply_runtime_inputs_to_nodes(nodes, input_schema)
+
+    assert input_schema == []
+    gmail = nodes[2]["parameters"]
+    assert gmail["sendTo"] == "burakturan113@gmail.com"
+    assert gmail["subject"] == "Günün Sözü"
+    assert gmail["message"] == "={{ $('Get Quote').first().json[0].quote }}"
+
+
+def test_gmail_send_fills_only_empty_fields():
+    # Concrete recipient kept; empty subject/message become runtime inputs.
+    nodes = [
+        {"name": "Webhook", "type": "n8n-nodes-base.webhook", "parameters": {}},
+        {
+            "name": "Send Email",
+            "type": "n8n-nodes-base.gmail",
+            "parameters": {
+                "resource": "message",
+                "operation": "send",
+                "sendTo": "burakturan113@gmail.com",
+            },
+        },
+    ]
+
+    input_schema = _infer_runtime_input_schema(nodes)
+    _apply_runtime_inputs_to_nodes(nodes, input_schema)
+
+    assert [field.name for field in input_schema] == ["subject", "message"]
+    gmail = nodes[1]["parameters"]
+    assert gmail["sendTo"] == "burakturan113@gmail.com"
+    assert gmail["subject"] == "={{$json.body.subject}}"
+    assert gmail["message"] == "={{$json.body.message}}"
 
 
 def test_validated_runtime_workflow_applies_gmail_inputs_before_validation(monkeypatch):
@@ -872,9 +928,6 @@ def test_validated_runtime_workflow_applies_gmail_inputs_before_validation(monke
             parameters={
                 "resource": "message",
                 "operation": "send",
-                "sendTo": "receiver@email.com",
-                "subject": "Example subject",
-                "message": "Example message",
             },
         ),
     ]

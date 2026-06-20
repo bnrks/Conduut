@@ -6,6 +6,8 @@ from src import store
 from src.agent.schemas import WorkflowInputField
 
 _RUNTIME_INPUT_TYPE_VALUES = {"string", "email", "textarea"}
+# Runtime input field name -> the Gmail Send parameter it maps to.
+_GMAIL_FIELD_PARAM = {"to": "sendTo", "subject": "subject", "message": "message"}
 _GMAIL_RUNTIME_INPUT_FIELDS = [
     WorkflowInputField(
         name="to",
@@ -82,9 +84,24 @@ def _normalized_input_schema(
     return fields
 
 
+def _gmail_field_is_empty(parameters: dict[str, Any], field_name: str) -> bool:
+    return not str(parameters.get(_GMAIL_FIELD_PARAM[field_name]) or "").strip()
+
+
 def _infer_runtime_input_schema(nodes: list[dict[str, Any]]) -> list[WorkflowInputField]:
-    if any(_is_gmail_send_node(node) for node in nodes):
-        return list(_GMAIL_RUNTIME_INPUT_FIELDS)
+    """Infer runtime inputs only for Gmail Send fields the agent left empty.
+
+    A fixed recipient or a message sourced from an upstream node (concrete
+    values) is kept as-is; only genuinely empty fields become runtime inputs so
+    the workflow stays runnable without manual input each time.
+    """
+
+    for node in nodes:
+        if not _is_gmail_send_node(node):
+            continue
+        parameters = node.get("parameters") if isinstance(node.get("parameters"), dict) else {}
+        empty = {name for name in _GMAIL_FIELD_PARAM if _gmail_field_is_empty(parameters, name)}
+        return [field for field in _GMAIL_RUNTIME_INPUT_FIELDS if field.name in empty]
     return []
 
 
@@ -105,7 +122,8 @@ def _apply_runtime_inputs_to_nodes(
     input_schema: list[WorkflowInputField],
 ) -> None:
     fields = _field_by_name(input_schema)
-    if not {"to", "subject", "message"}.issubset(fields):
+    runtime_names = [name for name in _GMAIL_FIELD_PARAM if name in fields]
+    if not runtime_names:
         return
 
     from_webhook_body = any(node.get("type") == "n8n-nodes-base.webhook" for node in nodes)
@@ -116,16 +134,14 @@ def _apply_runtime_inputs_to_nodes(
         parameters = node.setdefault("parameters", {})
         parameters["resource"] = "message"
         parameters["operation"] = "send"
-        parameters["sendTo"] = _runtime_expression("to", from_webhook_body=from_webhook_body)
-        parameters["subject"] = _runtime_expression(
-            "subject",
-            from_webhook_body=from_webhook_body,
-        )
-        parameters["message"] = _runtime_expression(
-            "message",
-            from_webhook_body=from_webhook_body,
-        )
-        parameters["emailType"] = "text"
+        for name in runtime_names:
+            # Only fill empty fields — never overwrite a concrete value the agent
+            # set (fixed recipient, subject, or an upstream-sourced message).
+            if _gmail_field_is_empty(parameters, name):
+                parameters[_GMAIL_FIELD_PARAM[name]] = _runtime_expression(
+                    name, from_webhook_body=from_webhook_body
+                )
+        parameters.setdefault("emailType", "text")
 
 
 def _validated_workflow_input(

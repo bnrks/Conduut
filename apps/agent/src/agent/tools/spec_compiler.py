@@ -24,7 +24,7 @@ from src.agent.tools.common import _missing_credentials_instruction, _safe_error
 from src.agent.tools.constants import _WEBHOOK_TRIGGER_TYPE
 from src.agent.tools.readiness import analyze_workflow_readiness_payload
 from src.agent.tools.runtime_inputs import (
-    _infer_runtime_input_schema,
+    _GMAIL_RUNTIME_INPUT_FIELDS,
     _input_schema_payload,
     _normalized_input_schema,
     _runtime_expression,
@@ -696,10 +696,10 @@ def _compile_gmail_on_demand(
         ),
     ]
     connections = {"Webhook": {"main": [[{"node": "Gmail", "type": "main", "index": 0}]]}}
-    node_dicts = dump_workflow_nodes(nodes)
-    runtime_schema = _normalized_input_schema(input_schema) or _infer_runtime_input_schema(
-        node_dicts
-    )
+    # This on-demand Gmail send is parametric by construction (the node already
+    # carries the body expressions above), so declare the schema explicitly
+    # rather than infer it from the now-filled fields.
+    runtime_schema = _normalized_input_schema(input_schema) or list(_GMAIL_RUNTIME_INPUT_FIELDS)
     return CompiledWorkflowSpec(nodes=nodes, connections=connections, input_schema=runtime_schema)
 
 
