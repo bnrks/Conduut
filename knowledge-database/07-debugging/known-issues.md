@@ -7,6 +7,33 @@ Bu not, repo icinde gorulen bilinen sorunlari ve dikkat noktalarini toplar.
 Kullanicinin yeni fark ettigi ve henuz triage edilmemis sorun/bug notlari icin
 ayri alan: [[issue-backlog]].
 
+## HTTP generic credential readiness'te tespit edilmiyordu (2026-06-20, cozuldu)
+
+**Belirti:** API Ninjas workflow'u olusturulup calistirilinca n8n
+`Credentials not found` (500) veriyordu. HTTP node'da
+`authentication=genericCredentialType` + `genericAuthType=httpHeaderAuth` vardi
+ama `credentials` **bos** (cred iliştirilmemis), ve agent build sirasinda
+credential onerisi/karti hic emit etmemisti.
+
+**Kok neden:** Registry'deki `n8n-nodes-base.httpRequest` semasi yalnizca
+`credentials: ['httpSslAuth']` listeliyor — n8n generic auth tiplerini
+(httpHeaderAuth/Basic/Query/Custom) `displayOptions` ile **kosullu** tanimladigi
+icin sema extraction bunlari hic enumere etmiyor. `readiness._required_credential_types_for_node`
+`genericAuthType`'in sema credentials listesinde olmasini sart kosuyordu
+(`generic in credential_types`) → `'httpHeaderAuth' in ['httpSslAuth']` False →
+`[]` donduruyor → readiness node'u atliyor → oneri yok, iliştirme yok → n8n
+runtime'da patliyor. (Onceki calismada agent **proaktif** `list_credentials`+
+`attach_credential` cagirdigi icin denk gelmis calismisti.)
+
+**Cozum:** `authentication=genericCredentialType` iken `genericAuthType` set
+ise, sema credentials listesinden bagimsiz olarak **`[genericAuthType]`**
+donduruluyor (n8n o credential'i zaten sart kosuyor). Canli dogrulandi: gercek
+workflow + kayitli "API Ninjas" credential → `reuse_candidates` uretiliyor.
+Test: `test_readiness.py` (+2). **Not (confirm-first):** dashboard "Run"
+butonu credential'i otomatik iliştirmez; agent build/chat akisinda onay alip
+`attach_credential` cagirinca iliştirilir. Run-once-then-attach sirasi confirm
+gerektirir.
+
 ## Gmail runtime-input cikarimi sabit degerleri eziyordu (2026-06-20, cozuldu)
 
 **Belirti:** "api-ninjas'tan soz cek -> sabit adrese mail at" workflow'unda agent
