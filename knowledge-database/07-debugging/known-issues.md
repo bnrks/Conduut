@@ -7,6 +7,35 @@ Bu not, repo icinde gorulen bilinen sorunlari ve dikkat noktalarini toplar.
 Kullanicinin yeni fark ettigi ve henuz triage edilmemis sorun/bug notlari icin
 ayri alan: [[issue-backlog]].
 
+## Gmail runtime-input cikarimi sabit degerleri eziyordu (2026-06-20, cozuldu)
+
+**Belirti:** "api-ninjas'tan soz cek -> sabit adrese mail at" workflow'unda agent
+her turda `request_user_input` ile alici/konu/mesaj sorup duruyor, workflow hic
+calismiyordu (sonsuz soru dongusu). Canli n8n'de `Send Email` node'u
+`sendTo={{$json.body.to}}`, `subject={{$json.body.subject}}`,
+`message={{$json.body.message}}` idi — agent'in kurdugu sabit alici + Get Quote
+ciktisindan gelen mesaj **ezilmisti**.
+
+**Kok neden:** `agent/tools/runtime_inputs.py` `_infer_runtime_input_schema`
+herhangi bir Gmail-send node'u gorunce (agent acik `input_schema` vermediyse)
+`to/subject/message`'i **zorunlu runtime input** yapiyor, `_apply_runtime_inputs_to_nodes`
+da Gmail parametrelerini **kosulsuz** `$json.body.*` ile eziyordu. Sonra
+`execute_workflow` bu zorunlu input'lari eksik gorup `request_user_input`
+cagiriyordu. Kasitli ama hatali tasarim (iki test bu davranisi dogruluyordu):
+"reusable e-posta" senaryosu icin yapilmis, "sabit alici + yukari-node icerigi"
+senaryosunu kiriyordu. (Credential ozelligi dogru calisti; bu ayri bir bug'di.)
+
+**Cozum (TDD):** Cikarim/uygulama artik yalnizca **bos** Gmail alanlari icin
+runtime input uretir/doldurur; agent'in yazdigi somut degerler (sabit alici,
+yukari-node mesaj expression'i) **korunur**. Placeholder alicilar zaten
+`validation._looks_like_placeholder_email` ile yakalandigi icin "bos birak"
+rescue'suna gerek yok. Spec compiler (`_compile_gmail_on_demand`) parametrik
+semasini artik `_GMAIL_RUNTIME_INPUT_FIELDS` ile **acikca** bildiriyor (dolu
+alanlardan infer etmiyor). Prompt'a da: icerik yukari node'dan geliyorsa
+referansla + sabit aliciyi hardcode et; runtime input sadece kullanici her
+calistirmada deger girecekse. **237 passed, ruff temiz.** Eski bozuk workflow
+(`7F4Dxt0r6LGUS9Ph`) agent yeniden kurunca duzelir.
+
 ## Router HARD kademesini cok zor secyor (2026-06-19)
 
 Yeni 3-kademe router'i (gpt-5-mini, [[adr-0011-conduut-managed-tiered-models]])
