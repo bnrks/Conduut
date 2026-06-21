@@ -26,7 +26,11 @@ from src.agent.tools.common import (
     _safe_error,
     _waiting_for_user_input_result,
 )
-from src.agent.tools.credentials import attach_credential_payload, list_credentials_payload
+from src.agent.tools.credentials import (
+    attach_credential_payload,
+    list_credentials_payload,
+    prepare_api_credential_payload,
+)
 from src.agent.tools.execution import _summarize_execution
 from src.agent.tools.prompt import SYSTEM_PROMPT
 from src.agent.tools.readiness import (
@@ -713,6 +717,40 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         started_at = perf_counter()
         result = await attach_credential_payload(ctx.deps, workflow_id, node_name, credential_id)
         _log_tool_finished("attach_credential", started_at, result)
+        return result
+
+    @agent.tool
+    async def prepare_api_credential(
+        ctx: RunContext[AgentDeps],
+        api_or_url: str,
+        workflow_id: str | None = None,
+        node_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Research how an API authenticates and prepare a credential for the user.
+
+        Call this when an HTTP node needs auth and there is no saved credential, or
+        when the user asks to connect to an API. It researches the auth scheme (web
+        search) and creates a draft credential; the user only enters the secret. The
+        secret never passes through you. Pass workflow_id/node_name to attach on
+        completion. See the result 'status' and 'instruction'.
+        """
+
+        await ctx.deps.emit_tool_call("prepare_api_credential")
+        started_at = perf_counter()
+        try:
+            result = await prepare_api_credential_payload(
+                ctx.deps, api_or_url, workflow_id, node_name
+            )
+        except Exception as exc:
+            log.error("tool_error", tool="prepare_api_credential", error=str(exc))
+            result = {"error": _safe_error(exc)}
+            _log_tool_finished("prepare_api_credential", started_at, result)
+            return result
+        card = result.pop("card", None)
+        if card is not None:
+            await ctx.deps.emit_attachment(card)
+            ctx.deps.awaiting_user_input = True
+        _log_tool_finished("prepare_api_credential", started_at, result)
         return result
 
     return agent

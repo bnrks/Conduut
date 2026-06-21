@@ -41,6 +41,16 @@ def _missing_credentials_instruction() -> str:
     )
 
 
+def _credential_draft_instruction(label: str, source_url: str = "") -> str:
+    source = f" (source: {source_url})" if source_url else ""
+    return (
+        f"I researched and prepared a credential '{label}'{source}. Tell the user, in their "
+        "language, what auth method you set up and that they only need to enter the secret — "
+        "in the card shown here, or later from Dashboard -> Credentials -> Tamamla. Never ask "
+        "for or accept the API key/secret as chat text; you do not see secrets."
+    )
+
+
 def _credential_suggestion_instruction() -> str:
     return (
         "A saved credential matches this API's host (see credential_suggestions). "
