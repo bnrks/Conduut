@@ -436,6 +436,25 @@ Credential route'lari (custom HTTP credential kutuphanesi, [[adr-0012-custom-htt
   alanlar), dashboard ve chat formunu besler.
 - `DELETE /api/credentials/{id}`: Firestore metadata'sini siler + best-effort
   n8n credential'i siler; yoksa 404.
+- `POST /api/credentials/{id}/finalize`: agent-hazirladigi **taslak** credential'i
+  tamamlar (kullanici secret'i girer) → `auth_config`+secret'tan n8n `data` kurar,
+  n8n credential olusturur, `status=ready` yapar, bekleyen workflow node'una baglar
+  ([[adr-0013-agent-managed-credentials]]).
+
+Agent-yonetimli credential ([[adr-0013-agent-managed-credentials]]):
+
+- `agent/research.py` `research_api_auth(host)` sabit, ucuz **Gemini Flash +
+  grounding** alt-agent'i (tier/router'dan bagimsiz, provider-bagimsiz)
+  calistirir; `AuthResearchResult` (scheme/field_name/value_prefix/secret_fields/
+  source_url/confidence) doner. Sonuc paylasimli global `api_auth_cache/{host}`'e
+  yazilir (secret yok, TTL 60g). Grounding cagrisi `_run_grounding_research`
+  arkasinda (cache/map mantigi test edilebilir).
+- `prepare_api_credential(api_or_url, workflow_id?, node_name?)` tool'u: host-eslesen
+  ready/draft varsa kisa devre; yoksa research → secret'siz **taslak** credential
+  (`store.save_draft_credential`, n8n credential YOK) + secret-only `credential_request`
+  karti. Dusuk guven/belirsiz → taslak uydurmaz, duz-dil manuel karta duser; `none`
+  → auth'suz. Secret asla agent'tan gecmez; kullanici chat karti veya dashboard
+  "Tamamla" ile girer.
 
 Custom HTTP credential eslestirme/baglama:
 

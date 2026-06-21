@@ -197,6 +197,18 @@ Faz 5 — Production            → Monitoring + Stripe + Marketing sayfası
 
 ---
 
+### Son oturum özeti (2026-06-21) — Agent-yönetimli credential + web research (ADR-0013)
+
+**Karar/uygulama:** Agent bir API'nin auth şemasını Gemini grounding ile araştırıp **secret'sız taslak credential** oluşturur; kullanıcı secret'ı chat'te veya dashboard'da sonra doldurur; finalize'da n8n credential oluşup node'a bağlanır. Secret asla agent/LLM'den geçmez. (bkz. [[adr-0013-agent-managed-credentials]], [[agent-managed-credentials-design]]) Brainstorm → spec → plan → TDD inline uygulama (11 task).
+
+**Web search spike'ı:** Conduut agent'ının web search'ü yoktu; Pydantic AI 1.88 `WebSearchTool` ile eklenebilir olduğu doğrulandı. **Decoupled Gemini grounding provider-bağımsız** (Claude ana model + Gemini research tool kanıtlandı). Token: Gemini ~75 input vs Anthropic ~16k → research için **sabit Gemini Flash** seçildi.
+
+**Eklenen/değişen (backend):** `agent/research.py` (**yeni**: `AuthResearchResult` + `credential_type_for_scheme` + Gemini grounding agent + `research_api_auth` cache'li), `store.py` (`ApiAuthCache` + global `api_auth_cache/{host}` CRUD; `CustomCredential` draft alanları `status`/`auth_config`/`secret_fields`/`source_url`/`pending_*` + `save_draft_credential` + `finalize_draft_credential`), `config.py` (`research_model`), `tools/credentials.py` (`prepare_api_credential_payload` research→draft→secret-only kart), `tools/factory.py` (`prepare_api_credential` tool), `tools/common.py` (`_credential_draft_instruction`), `routes/credentials.py` (`POST /credentials/{id}/finalize` `_build_n8n_data`+create+attach; GET list `status`), `schemas.py` (`CredentialRequestData.draftId`/`sourceUrl`), `prompt.py` (prepare + Conduut-farkındalık). **256 passed (5 Windows-tmp, alakasız); ruff temiz.**
+
+**Frontend:** BFF `api/credentials/[credentialId]/finalize`, `credential-request.tsx` draft kartı (secret-only + kaynak notu), `credential-form.tsx` `secretOnly` modu, dashboard "Tamamlanmamış" rozeti + "Tamamla". **tsc temiz, eslint 0 hata.**
+
+**Bekleyen (canlı):** Gemini `output_type`+`WebSearchTool` kombinasyonunu canlı doğrula (reddederse `_run_grounding_research` free-text+parse fallback); uçtan-uca: chat "api-ninjas'tan veri çek → mail" → `prepare_api_credential` → secret-only kart → finalize → n8n cred + attach → çalıştır; dashboard "Tamamla"; ikinci kez aynı API → cache hit.
+
 ### Son oturum özeti (2026-06-19) — Custom (HTTP) credential kütüphanesi (ADR-0012)
 
 **Karar/uygulama:** Kullanıcılar OAuth dışındaki "normal" credential'ları (HTTP node auth tipleri) Conduut'ta kaydedip HTTP Request node'larında kullanabilir. Brainstorm → spec → plan → TDD uygulama. (bkz. [[adr-0012-custom-http-credentials]])
@@ -364,6 +376,7 @@ python packages/n8n-registry/scripts/fetch_nodes.py
 - `apps/agent/src/agent/schemas.py` — WorkflowGraph/Plan/Spec/Node IR, attachment ve AgentDeps tipleri
 - `apps/agent/tests/test_graph_compiler.py` — graph compiler golden testleri
 - `apps/agent/tests/test_repair.py` — repair motoru unit testleri (boilerplate, wiring, ai_* port, expression onarımı)
+- `apps/agent/src/agent/research.py` — API auth araştırma motoru: sabit Gemini Flash + grounding (provider-bağımsız), `research_api_auth` (paylaşımlı `api_auth_cache`'li), `AuthResearchResult`, `credential_type_for_scheme`. Grounding `_run_grounding_research` arkasında (testable) (ADR-0013)
 - `apps/agent/src/agent/credential_types.py` — custom HTTP credential V1 tip kataloğu + `normalize_host` + `match_credentials` (host eşleştirme) (ADR-0012)
 - `apps/agent/src/agent/tools/credentials.py` — `list_credentials_payload` (secret yok, host-eşleşme bayraklı) + `attach_credential_payload` (ownership doğrular, generic auth wiring) (ADR-0012)
 - `apps/agent/src/routes/credentials.py` — custom credential kütüphanesi route'ları (POST create/attach, GET, GET `/types`, DELETE `/{id}`) (ADR-0012)

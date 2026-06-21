@@ -68,6 +68,11 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
   Header/Basic/Query/Custom Auth, secret n8n'de + metadata Firestore'da, host'a
   gore deterministik eslestirme, onay-once baglama (`attach_credential`),
   dashboard + chat-ici yonetim. Yeni `credential_types.py` + `tools/credentials.py`.
+- [[adr-0013-agent-managed-credentials]] - Agent API auth'unu Gemini grounding
+  ile arastirir (provider-bagimsiz, decoupled), secret'siz taslak credential
+  olusturur; kullanici secret'i chat/dashboard'da sonra doldurur (finalize → n8n
+  create + attach). Paylasimli `api_auth_cache`. Yeni `research.py` +
+  `prepare_api_credential`. Detay: [[agent-managed-credentials-design]].
 
 ## Kaynak Dokumanlar
 
