@@ -285,6 +285,84 @@ async def delete_custom_credential(user_id: str, credential_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Shared API auth research cache (global, host-keyed; no secrets)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ApiAuthCache:
+    host: str
+    scheme: str
+    credential_type: str
+    field_name: str
+    value_prefix: str
+    secret_fields: list[str]
+    summary: str
+    source_url: str
+    confidence: str
+    researched_at: str
+    model: str
+
+
+def _api_auth_cache_ref(host: str):
+    return db.collection("api_auth_cache").document(host)
+
+
+async def save_api_auth_cache(
+    host: str,
+    *,
+    scheme: str,
+    credential_type: str,
+    field_name: str,
+    value_prefix: str,
+    secret_fields: list[str],
+    summary: str,
+    source_url: str,
+    confidence: str,
+    model: str,
+) -> ApiAuthCache:
+    data = {
+        "host": host,
+        "scheme": scheme,
+        "credential_type": credential_type,
+        "field_name": field_name,
+        "value_prefix": value_prefix,
+        "secret_fields": list(secret_fields),
+        "summary": summary,
+        "source_url": source_url,
+        "confidence": confidence,
+        "researched_at": _now_iso(),
+        "model": model,
+    }
+    await _run(lambda: _api_auth_cache_ref(host).set(data))
+    return ApiAuthCache(**data)
+
+
+async def get_api_auth_cache(host: str) -> ApiAuthCache | None:
+    doc = await _run(lambda: _api_auth_cache_ref(host).get())
+    if not doc.exists:
+        return None
+    data = doc.to_dict() or {}
+    return ApiAuthCache(
+        host=data.get("host", host),
+        scheme=data.get("scheme", ""),
+        credential_type=data.get("credential_type", ""),
+        field_name=data.get("field_name", ""),
+        value_prefix=data.get("value_prefix", ""),
+        secret_fields=list(data.get("secret_fields") or []),
+        summary=data.get("summary", ""),
+        source_url=data.get("source_url", ""),
+        confidence=data.get("confidence", ""),
+        researched_at=data.get("researched_at", ""),
+        model=data.get("model", ""),
+    )
+
+
+async def delete_api_auth_cache(host: str) -> None:
+    await _run(lambda: _api_auth_cache_ref(host).delete())
+
+
+# ---------------------------------------------------------------------------
 # Workflow Metadata
 # ---------------------------------------------------------------------------
 
