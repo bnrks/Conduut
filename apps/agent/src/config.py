@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     # CONDUUT_MODEL_PROFILE selects the tier→model mapping (see agent/model_registry.py).
     model_profile: str = "default"  # "default" | "gpt"
     enable_tier_escalation: bool = True
+    # Fixed, cheap Gemini model used for decoupled web-search research
+    # (API auth discovery). Provider-independent of the conversational tier.
+    research_model: str = "gemini-2.5-flash"
     anthropic_api_key: str = ""
     google_api_key: str = ""
     openai_api_key: str = ""
