@@ -97,3 +97,60 @@ async def test_get_custom_credential_missing_returns_none(monkeypatch):
     monkeypatch.setattr(store, "_user_ref", lambda _u: _FakeUserRef(storage, "credentials"))
 
     assert await store.get_custom_credential("u1", "nope") is None
+
+
+async def test_draft_credential_save_and_finalize(monkeypatch):
+    storage: dict[str, dict] = {}
+
+    async def fake_run(fn):
+        return fn()
+
+    monkeypatch.setattr(store, "_run", fake_run)
+    monkeypatch.setattr(store, "_user_ref", lambda _u: _FakeUserRef(storage, "credentials"))
+    monkeypatch.setattr(store, "_now_iso", lambda: "2026-06-21T00:00:00+00:00")
+
+    draft = await store.save_draft_credential(
+        "u1",
+        label="API Ninjas",
+        credential_type="httpHeaderAuth",
+        host="api.api-ninjas.com",
+        auth_config={"method": "api_key", "field_name": "X-Api-Key", "value_prefix": ""},
+        secret_fields=["key"],
+        source_url="https://api-ninjas.com",
+        confidence="high",
+        pending_workflow_id="wf1",
+        pending_node_name="HTTP",
+    )
+    assert draft.status == "draft"
+    assert draft.n8n_credential_id == ""
+
+    got = await store.get_custom_credential("u1", draft.id)
+    assert got.status == "draft"
+    assert got.auth_config["field_name"] == "X-Api-Key"
+    assert got.secret_fields == ["key"]
+    assert got.pending_workflow_id == "wf1"
+
+    final = await store.finalize_draft_credential(
+        "u1", draft.id, n8n_credential_id="n8n_9", n8n_credential_name="API Ninjas"
+    )
+    assert final is not None
+    assert final.status == "ready"
+    assert final.n8n_credential_id == "n8n_9"
+
+    refetched = await store.get_custom_credential("u1", draft.id)
+    assert refetched.status == "ready"
+    assert refetched.n8n_credential_id == "n8n_9"
+
+    # finalizing again (now ready) or an unknown id returns None
+    assert (
+        await store.finalize_draft_credential(
+            "u1", draft.id, n8n_credential_id="x", n8n_credential_name="y"
+        )
+        is None
+    )
+    assert (
+        await store.finalize_draft_credential(
+            "u1", "nope", n8n_credential_id="x", n8n_credential_name="y"
+        )
+        is None
+    )
