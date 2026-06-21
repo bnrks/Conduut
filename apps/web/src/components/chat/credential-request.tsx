@@ -39,6 +39,8 @@ export interface CredentialRequestData {
   description: string;
   allowedTypes?: CredentialTypeOption[];
   host?: string;
+  draftId?: string;
+  sourceUrl?: string;
 }
 
 // Map the request's offered n8n credential types to plain-language auth methods.
