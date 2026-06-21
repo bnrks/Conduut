@@ -1875,6 +1875,32 @@ def test_summarize_execution_includes_node_output_preview():
     assert result.response is None
 
 
+def test_summarize_execution_surfaces_error_description():
+    # n8n HTTP errors put the actionable detail in `description`; the generic
+    # `message` alone (e.g. "Bad request") is not enough for the user.
+    result = _summarize_execution(
+        {
+            "id": "114",
+            "workflowId": "wf_1",
+            "status": "error",
+            "data": {
+                "resultData": {
+                    "error": {
+                        "node": {"name": "Get Quote"},
+                        "message": "Bad request - please check your parameters",
+                        "description": "category parameter is for premium subscribers only.",
+                    }
+                }
+            },
+        }
+    )
+
+    assert result.failedNode == "Get Quote"
+    assert "Bad request - please check your parameters" in result.error
+    assert "category parameter is for premium subscribers only." in result.error
+    assert "category parameter is for premium subscribers only." in result.summary
+
+
 def test_summarize_execution_hides_webhook_transport_metadata():
     result = _summarize_execution(
         {

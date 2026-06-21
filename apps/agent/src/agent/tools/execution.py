@@ -111,6 +111,31 @@ def _extract_execution_outputs(
     return outputs[-_MAX_OUTPUT_NODES:]
 
 
+_MAX_ERROR_DETAIL = 300
+
+
+def _combined_error_message(error: dict[str, Any]) -> str | None:
+    """Combine n8n's generic `message` with the actionable `description`.
+
+    HTTP node errors put the useful detail (e.g. the API's response text) in
+    `description`; the bare `message` ("Bad request") is not enough to act on.
+    """
+
+    pieces: list[str] = []
+    for key in ("message", "description"):
+        value = error.get(key)
+        if not isinstance(value, str):
+            continue
+        text = value.strip()
+        if not text:
+            continue
+        if len(text) > _MAX_ERROR_DETAIL:
+            text = f"{text[:_MAX_ERROR_DETAIL]}..."
+        if text not in pieces:
+            pieces.append(text)
+    return " — ".join(pieces) or None
+
+
 def _summarize_execution(
     execution: dict[str, Any],
     *,
@@ -138,7 +163,7 @@ def _summarize_execution(
         failed_node = (
             error.get("node", {}).get("name") if isinstance(error.get("node"), dict) else None
         )
-        error_message = error.get("message") or error.get("description")
+        error_message = _combined_error_message(error)
     output_count = sum(int(output.get("itemCount") or 0) for output in outputs)
     summary = "Workflow run completed."
     if output_count:
