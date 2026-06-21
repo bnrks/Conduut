@@ -9,7 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { useAuth } from "@/hooks/use-auth";
-import { AUTH_METHODS, friendlyTypeLabel } from "@/lib/credential-auth-methods";
+import { AUTH_METHODS, friendlyTypeLabel, type AuthMethod } from "@/lib/credential-auth-methods";
 import {
   CredentialForm,
   type CredentialSubmission,
@@ -20,7 +20,35 @@ interface SavedCredential {
   label: string;
   credential_type: string;
   host: string;
+  status?: string;
+  source_url?: string;
+  secret_fields?: string[];
   created_at?: string;
+}
+
+const SECRET_LABELS: Record<string, string> = {
+  key: "API key / token",
+  value: "API key",
+  user: "Username",
+  password: "Password",
+  json: "Auth JSON",
+};
+
+// A secret-only method for completing a draft: the agent already set the header/
+// param config, so the user only provides the secret field values.
+function draftMethod(credential: SavedCredential): AuthMethod {
+  const fields = credential.secret_fields?.length ? credential.secret_fields : ["key"];
+  return {
+    id: credential.credential_type || "credential",
+    credentialType: credential.credential_type,
+    label: friendlyTypeLabel(credential.credential_type),
+    fields: fields.map((name) => ({
+      name,
+      label: SECRET_LABELS[name] ?? name,
+      type: name === "json" ? "json" : "password",
+    })),
+    buildData: (values) => Object.fromEntries(fields.map((name) => [name, values[name] ?? ""])),
+  };
 }
 
 async function getErrorMessage(response: Response, fallback: string): Promise<string> {
@@ -41,6 +69,7 @@ export default function CredentialsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [completingId, setCompletingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!user) {
@@ -123,6 +152,22 @@ export default function CredentialsPage() {
     }
   };
 
+  const finalizeDraft = async (credential: SavedCredential, submission: CredentialSubmission) => {
+    if (!user) throw new Error("Please sign in first.");
+    const token = await user.getIdToken();
+    const response = await fetch(`/api/credentials/${encodeURIComponent(credential.id)}/finalize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ data: submission.data }),
+    });
+    if (!response.ok) {
+      throw new Error(await getErrorMessage(response, "Credential could not be completed."));
+    }
+    toast.success(`${credential.label} connected.`);
+    setCompletingId(null);
+    await load();
+  };
+
   return (
     <div>
       <div className="mb-6 flex items-center justify-between">
@@ -165,40 +210,92 @@ export default function CredentialsPage() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {credentials.map((credential) => (
-            <Card key={credential.id}>
-              <CardContent className="flex items-center gap-3 p-4">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-white">
-                  <KeyRound className="h-4 w-4 text-conduut-500" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="truncate text-[14px] font-medium text-foreground">
-                      {credential.label}
-                    </p>
-                    <Badge variant="default" className="text-[11px]">
-                      {friendlyTypeLabel(credential.credential_type)}
-                    </Badge>
+          {credentials.map((credential) => {
+            const isDraft = credential.status === "draft";
+            const isCompleting = completingId === credential.id;
+            return (
+              <Card key={credential.id}>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-white">
+                      <KeyRound className="h-4 w-4 text-conduut-500" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-[14px] font-medium text-foreground">
+                          {credential.label}
+                        </p>
+                        <Badge variant="default" className="text-[11px]">
+                          {friendlyTypeLabel(credential.credential_type)}
+                        </Badge>
+                        {isDraft && (
+                          <Badge variant="warning" className="text-[11px]">
+                            Tamamlanmamış
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="truncate text-[12px] text-muted-foreground">
+                        {credential.host}
+                      </p>
+                    </div>
+                    {isDraft && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 shrink-0 px-3 text-[12px]"
+                        onClick={() =>
+                          setCompletingId((current) =>
+                            current === credential.id ? null : credential.id
+                          )
+                        }
+                      >
+                        {isCompleting ? "Kapat" : "Tamamla"}
+                      </Button>
+                    )}
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 shrink-0 text-muted-foreground hover:text-error"
+                      onClick={() => void remove(credential)}
+                      disabled={busyId === credential.id}
+                      aria-label={`Delete ${credential.label}`}
+                    >
+                      {busyId === credential.id ? (
+                        <Spinner size="sm" className="text-current" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                    </Button>
                   </div>
-                  <p className="truncate text-[12px] text-muted-foreground">{credential.host}</p>
-                </div>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-8 w-8 shrink-0 text-muted-foreground hover:text-error"
-                  onClick={() => void remove(credential)}
-                  disabled={busyId === credential.id}
-                  aria-label={`Delete ${credential.label}`}
-                >
-                  {busyId === credential.id ? (
-                    <Spinner size="sm" className="text-current" />
-                  ) : (
-                    <Trash2 className="h-4 w-4" />
+
+                  {isDraft && isCompleting && (
+                    <div className="mt-3 border-t border-border pt-3">
+                      {credential.source_url && (
+                        <p className="mb-2 text-[11px] text-muted-foreground">
+                          Auto-detected — enter the secret to finish.{" "}
+                          <a
+                            href={credential.source_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-conduut-500 hover:underline"
+                          >
+                            source
+                          </a>
+                        </p>
+                      )}
+                      <CredentialForm
+                        methods={[draftMethod(credential)]}
+                        requireHost={false}
+                        secretOnly
+                        submitLabel="Save & connect"
+                        onSubmit={(submission) => finalizeDraft(credential, submission)}
+                      />
+                    </div>
                   )}
-                </Button>
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>
