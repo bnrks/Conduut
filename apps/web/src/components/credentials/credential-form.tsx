@@ -28,6 +28,9 @@ export interface CredentialFormProps {
   initialHost?: string;
   initialLabel?: string;
   submitLabel?: string;
+  // Draft finalize: hide the method picker, Name and host inputs — the agent
+  // pre-configured everything and the user only enters the secret.
+  secretOnly?: boolean;
   onSubmit: (submission: CredentialSubmission) => Promise<void>;
 }
 
@@ -37,6 +40,7 @@ export function CredentialForm({
   initialHost,
   initialLabel,
   submitLabel = "Save credential",
+  secretOnly = false,
   onSubmit,
 }: CredentialFormProps) {
   const primaryMethods = useMemo(() => methods.filter((m) => !m.advanced), [methods]);
@@ -56,8 +60,9 @@ export function CredentialForm({
   const [error, setError] = useState("");
 
   const hasAdvanced =
-    advancedMethods.length > 0 || method.fields.some((field) => field.advanced);
-  const showMethodPicker = primaryMethods.length > 1 || advancedMethods.length > 0;
+    !secretOnly &&
+    (advancedMethods.length > 0 || method.fields.some((field) => field.advanced));
+  const showMethodPicker = !secretOnly && (primaryMethods.length > 1 || advancedMethods.length > 0);
 
   const selectMethod = (id: string) => {
     const next = methods.find((m) => m.id === id);
@@ -160,20 +165,22 @@ export function CredentialForm({
         </label>
       )}
 
-      <label className="block">
-        <span className="mb-1 block text-[12px] font-medium text-muted-foreground">
-          Name
-        </span>
-        <Input
-          type="text"
-          value={label}
-          onChange={(event) => setLabel(event.target.value)}
-          placeholder="e.g. Stripe API"
-          className="h-9 text-[13px]"
-        />
-      </label>
+      {!secretOnly && (
+        <label className="block">
+          <span className="mb-1 block text-[12px] font-medium text-muted-foreground">
+            Name
+          </span>
+          <Input
+            type="text"
+            value={label}
+            onChange={(event) => setLabel(event.target.value)}
+            placeholder="e.g. Stripe API"
+            className="h-9 text-[13px]"
+          />
+        </label>
+      )}
 
-      {requireHost && (
+      {!secretOnly && requireHost && (
         <label className="block">
           <span className="mb-1 block text-[12px] font-medium text-muted-foreground">
             Service address

@@ -88,7 +88,8 @@ export function CredentialRequest({
   const { user } = useAuth();
   const [saved, setSaved] = useState(false);
   const methods = useMemo(() => methodsFromRequest(data), [data]);
-  const hasHost = data.host !== undefined && data.host !== null;
+  const isDraft = Boolean(data.draftId);
+  const hasHost = !isDraft && data.host !== undefined && data.host !== null;
 
   const handleSubmit = async (submission: CredentialSubmission) => {
     if (!user) throw new Error("Please sign in first.");
@@ -96,16 +97,20 @@ export function CredentialRequest({
     const response = await fetch(data.submitPath, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        workflow_id: data.workflowId,
-        node_name: data.nodeName,
-        service: data.service,
-        credential_type: submission.credential_type,
-        generic_auth_type: submission.generic_auth_type,
-        credential_name: submission.label,
-        host: submission.host,
-        data: submission.data,
-      }),
+      body: JSON.stringify(
+        isDraft
+          ? { data: submission.data }
+          : {
+              workflow_id: data.workflowId,
+              node_name: data.nodeName,
+              service: data.service,
+              credential_type: submission.credential_type,
+              generic_auth_type: submission.generic_auth_type,
+              credential_name: submission.label,
+              host: submission.host,
+              data: submission.data,
+            }
+      ),
     });
     const payload = (await response.json().catch(() => null)) as {
       message?: string;
@@ -130,6 +135,25 @@ export function CredentialRequest({
         <div className="min-w-0 flex-1">
           <p className="text-[14px] font-medium text-foreground">Connect {data.service}</p>
           <p className="text-[12px] text-muted-foreground">{data.description}</p>
+          {isDraft && (data.host || data.sourceUrl) && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {data.host ? `Host: ${data.host}` : ""}
+              {data.host && data.sourceUrl ? " · " : ""}
+              {data.sourceUrl ? (
+                <>
+                  source:{" "}
+                  <a
+                    href={data.sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-conduut-500 hover:underline"
+                  >
+                    docs
+                  </a>
+                </>
+              ) : null}
+            </p>
+          )}
         </div>
         {saved && <CheckCircle className="h-5 w-5 text-success" />}
       </div>
@@ -144,6 +168,8 @@ export function CredentialRequest({
           requireHost={hasHost}
           initialHost={data.host ?? ""}
           initialLabel={data.credentialName}
+          secretOnly={isDraft}
+          submitLabel={isDraft ? "Save & connect" : "Save credential"}
           onSubmit={handleSubmit}
         />
       )}
