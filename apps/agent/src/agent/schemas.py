@@ -240,6 +240,10 @@ class CredentialRequestData(BaseModel):
     # auth). host is the URL host extracted from the node, prefilled + editable.
     allowedTypes: list[CredentialTypeOption] = Field(default_factory=list)
     host: str | None = None
+    # Draft credential (agent-prepared): the card is secret-only and submits to
+    # the finalize endpoint; sourceUrl is the research provenance shown to the user.
+    draftId: str | None = None
+    sourceUrl: str | None = None
 
 
 class CredentialRequestAttachment(BaseModel):
