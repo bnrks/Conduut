@@ -36,6 +36,31 @@ class CredentialSubmitIn(BaseModel):
     generic_auth_type: str | None = None
 
 
+class CredentialFinalizeIn(BaseModel):
+    data: dict[str, Any]  # the secret field values the user provided
+
+
+def _build_n8n_data(credential: store.CustomCredential, secret: dict[str, Any]) -> dict[str, Any]:
+    """Build the n8n credential `data` from a draft's auth_config + user secret."""
+
+    config = credential.auth_config or {}
+    field_name = str(config.get("field_name") or "")
+    value_prefix = str(config.get("value_prefix") or "")
+    fields = credential.secret_fields or []
+    primary = str(secret.get(fields[0])) if fields else ""
+
+    if credential.credential_type == "httpHeaderAuth":
+        return {"name": field_name or "Authorization", "value": f"{value_prefix}{primary}"}
+    if credential.credential_type == "httpQueryAuth":
+        return {"name": field_name or "api_key", "value": primary}
+    if credential.credential_type == "httpBasicAuth":
+        return {"user": str(secret.get("user", "")), "password": str(secret.get("password", ""))}
+    if credential.credential_type == "httpCustomAuth":
+        return {"json": str(secret.get("json", ""))}
+    # Fallback: pass the provided fields through verbatim.
+    return {key: secret.get(key) for key in fields}
+
+
 @router.get("/credentials")
 async def list_credentials(request: Request):
     user_id = get_user_id(request)
@@ -47,6 +72,9 @@ async def list_credentials(request: Request):
                 "label": item.label,
                 "credential_type": item.credential_type,
                 "host": item.host,
+                "status": item.status,
+                "source_url": item.source_url,
+                "secret_fields": item.secret_fields,
                 "created_at": item.created_at,
             }
             for item in credentials
@@ -139,3 +167,54 @@ async def delete_credential(request: Request, credential_id: str):
             )
     await store.delete_custom_credential(user_id, credential_id)
     return {"deleted": True}
+
+
+@router.post("/credentials/{credential_id}/finalize", status_code=201)
+async def finalize_credential(request: Request, credential_id: str, body: CredentialFinalizeIn):
+    user_id = get_user_id(request)
+    credential = await store.get_custom_credential(user_id, credential_id)
+    if not credential:
+        raise HTTPException(status_code=404, detail={"message": "Credential not found."})
+    if credential.status != "draft":
+        raise HTTPException(status_code=409, detail={"message": "Credential already completed."})
+
+    n8n_data = _build_n8n_data(credential, body.data)
+    try:
+        created = await n8n_client.create_credential(
+            credential.label, credential.credential_type, n8n_data
+        )
+        saved = await store.finalize_draft_credential(
+            user_id,
+            credential_id,
+            n8n_credential_id=created.id,
+            n8n_credential_name=created.name,
+        )
+        if credential.pending_workflow_id and credential.pending_node_name:
+            generic = (
+                credential.credential_type
+                if is_supported_http_type(credential.credential_type)
+                else None
+            )
+            await n8n_client.attach_credential_to_workflow(
+                credential.pending_workflow_id,
+                credential.pending_node_name,
+                credential.credential_type,
+                created.id,
+                created.name,
+                generic_auth_type=generic,
+            )
+    except n8n_client.N8nApiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"message": exc.message}) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
+
+    return {
+        "credential": {
+            "id": (saved or credential).id,
+            "label": (saved or credential).label,
+            "credential_type": credential.credential_type,
+            "host": credential.host,
+            "status": "ready",
+        },
+        "workflow_id": credential.pending_workflow_id or None,
+    }
