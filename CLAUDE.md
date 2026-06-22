@@ -207,7 +207,9 @@ Faz 5 — Production            → Monitoring + Stripe + Marketing sayfası
 
 **Frontend:** BFF `api/credentials/[credentialId]/finalize`, `credential-request.tsx` draft kartı (secret-only + kaynak notu), `credential-form.tsx` `secretOnly` modu, dashboard "Tamamlanmamış" rozeti + "Tamamla". **tsc temiz, eslint 0 hata.**
 
-**Bekleyen (canlı):** Gemini `output_type`+`WebSearchTool` kombinasyonunu canlı doğrula (reddederse `_run_grounding_research` free-text+parse fallback); uçtan-uca: chat "api-ninjas'tan veri çek → mail" → `prepare_api_credential` → secret-only kart → finalize → n8n cred + attach → çalıştır; dashboard "Tamamla"; ikinci kez aynı API → cache hit.
+**Canlı doğrulandı (2026-06-21/22):** Gemini `output_type`+`WebSearchTool` kombinasyonu çalışıyor (api-ninjas → `X-Api-Key`, structured output; free-text fallback gerekmedi). Uçtan-uca: chat "api-ninjas'tan söz çek → mail" → `prepare_api_credential` → secret-only kart → finalize → n8n cred + attach → çalıştır → **mail geldi**. Cache hit doğrulandı. Dashboard "Tamamla" kartı görüldü.
+
+**Test sırasında bulunup düzeltilen 3 entegrasyon bug'ı:** (1) **çift kart** — readiness (ADR-0012 manuel kart) + `prepare_api_credential` (draft kart) aynı node için iki kart açıyordu → readiness artık HTTP Request node'larını prepare akışına devrediyor (`research_candidates`, manuel kart emit etmez); reuse-match yalnız `ready` credential'lara bakar (draft attach edilemez). (2) **boş mail** — n8n HTTP **dizi** cevabını item'lara böldüğü için `$json[0].quote` boş çözülüyordu → `repair.py` Stage 5b `$json[0].field`→`$json.field` (HTTP-fed/HTTP-referenced; Code dizileri dokunulmaz) + prompt kuralı. (3) **prompt çelişkisi** — "email content" örneği bizzat `$json[0]` gösteriyordu (agent oradan öğrenmiş) → `$json.quote` düzeltildi. (bkz. [[known-issues]])
 
 ### Son oturum özeti (2026-06-19) — Custom (HTTP) credential kütüphanesi (ADR-0012)
 

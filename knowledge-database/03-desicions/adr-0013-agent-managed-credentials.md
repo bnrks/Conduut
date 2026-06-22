@@ -65,8 +65,12 @@ rozeti ("Tamamlanmamis") + "Tamamla" (secret formu → finalize).
   Anthropic/OpenAI degil (token maliyeti).
 - Cache cross-user (public auth bilgisi); per-user'a cevrilebilir.
 - Taslak n8n'i kirletmez; finalize'da olusur.
-- **Acik (canli):** Gemini `output_type`+`WebSearchTool` kombinasyonu canli
-  dogrulanmali; reddederse `_run_grounding_research` free-text+parse fallback.
+- **Canli dogrulandi (2026-06-21/22):** Gemini `output_type`+`WebSearchTool`
+  kombinasyonu calisiyor (api-ninjas -> X-Api-Key, structured output; free-text
+  fallback gerekmedi). Uctan-uca: chat -> prepare -> secret-only kart -> finalize
+  -> n8n cred + attach -> calistir -> mail geldi; cache hit dogrulandi. Test
+  sirasinda 3 entegrasyon bug'i bulunup duzeltildi (cift kart, bos mail/$json[0]
+  indexleme, prompt celiskisi). Bkz. [[known-issues]].
 
 ## Ilgili
 
