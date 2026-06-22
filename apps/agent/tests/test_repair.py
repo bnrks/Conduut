@@ -54,6 +54,11 @@ SCHEMAS = {
         "typeVersion": 4.7,
         "isTrigger": False,
     },
+    "n8n-nodes-base.httpRequest": {
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "isTrigger": False,
+    },
 }
 
 REGISTRY = FakeRegistry(SCHEMAS)
@@ -213,6 +218,98 @@ def test_bare_json_field_rewritten_to_body_for_trigger_fed_node():
     code = next(n for n in repaired if n["name"] == "Code")
     assert "$json.body.company" in code["parameters"]["jsCode"]
     assert "$json.company" not in code["parameters"]["jsCode"]
+
+
+def test_http_array_index_rewritten_for_http_fed_node():
+    # n8n's HTTP Request node splits a JSON array response into items, so a node
+    # fed by it reads $json.<field>, not $json[0].<field> (which is empty).
+    nodes = [
+        _node("Webhook", "n8n-nodes-base.webhook"),
+        _node(
+            "Get Quote",
+            "n8n-nodes-base.httpRequest",
+            parameters={"url": "https://api.api-ninjas.com/v1/quotes"},
+        ),
+        _node(
+            "Send Email",
+            "n8n-nodes-base.gmail",
+            parameters={
+                "resource": "message",
+                "operation": "send",
+                "sendTo": "x@y.com",
+                "subject": "s",
+                "message": "=💬 {{ $json[0].quote }}\n— {{ $json[0].author }}",
+                "emailType": "text",
+            },
+        ),
+    ]
+    connections = {
+        "Webhook": {"main": [[{"node": "Get Quote", "type": "main", "index": 0}]]},
+        "Get Quote": {"main": [[{"node": "Send Email", "type": "main", "index": 0}]]},
+    }
+    repaired, _conns, _ = repair_workflow(nodes, connections, registry=REGISTRY)
+    msg = next(n for n in repaired if n["name"] == "Send Email")["parameters"]["message"]
+    assert "$json.quote" in msg
+    assert "$json.author" in msg
+    assert "$json[0]" not in msg
+
+
+def test_http_array_index_rewritten_for_referenced_node():
+    nodes = [
+        _node("Webhook", "n8n-nodes-base.webhook"),
+        _node("Get Quote", "n8n-nodes-base.httpRequest", parameters={"url": "https://x"}),
+        _node("Prep", "n8n-nodes-base.code", parameters={"jsCode": "return $input.all();"}),
+        _node(
+            "Send Email",
+            "n8n-nodes-base.gmail",
+            parameters={
+                "resource": "message",
+                "operation": "send",
+                "sendTo": "x@y.com",
+                "subject": "s",
+                "message": "={{ $('Get Quote').first().json[0].quote }}",
+                "emailType": "text",
+            },
+        ),
+    ]
+    connections = {
+        "Webhook": {"main": [[{"node": "Get Quote", "type": "main", "index": 0}]]},
+        "Get Quote": {"main": [[{"node": "Prep", "type": "main", "index": 0}]]},
+        "Prep": {"main": [[{"node": "Send Email", "type": "main", "index": 0}]]},
+    }
+    repaired, _conns, _ = repair_workflow(nodes, connections, registry=REGISTRY)
+    msg = next(n for n in repaired if n["name"] == "Send Email")["parameters"]["message"]
+    assert "$('Get Quote').first().json.quote" in msg
+    assert "json[0]" not in msg
+
+
+def test_http_array_index_left_alone_for_non_http_fed_node():
+    # A node fed by a Code node (which may genuinely output an array) is untouched.
+    nodes = [
+        _node("Webhook", "n8n-nodes-base.webhook"),
+        _node("Get Quote", "n8n-nodes-base.httpRequest", parameters={"url": "https://x"}),
+        _node("Build", "n8n-nodes-base.code", parameters={"jsCode": "return [{json:[{a:1}]}]"}),
+        _node(
+            "Use",
+            "n8n-nodes-base.gmail",
+            parameters={
+                "resource": "message",
+                "operation": "send",
+                "sendTo": "x@y.com",
+                "subject": "s",
+                "message": "={{ $json[0].a }}",
+                "emailType": "text",
+            },
+        ),
+    ]
+    connections = {
+        "Webhook": {"main": [[{"node": "Get Quote", "type": "main", "index": 0}]]},
+        "Get Quote": {"main": [[{"node": "Build", "type": "main", "index": 0}]]},
+        "Build": {"main": [[{"node": "Use", "type": "main", "index": 0}]]},
+    }
+    repaired, _conns, _ = repair_workflow(nodes, connections, registry=REGISTRY)
+    msg = next(n for n in repaired if n["name"] == "Use")["parameters"]["message"]
+    assert "$json[0].a" in msg  # Build (Code) is not an HTTP node -> left as-is
 
 
 def test_template_field_gets_equals_prefix():

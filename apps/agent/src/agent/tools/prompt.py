@@ -128,6 +128,11 @@ SYSTEM_PROMPT = (
     " refers to the CURRENT node's input, so $json.body.<field> only works in a node fed"
     " DIRECTLY by the webhook; in any later node (e.g. a Gmail after an AI Agent) qualify"
     " it as $('<WebhookName>').first().json.body.<field>.\n"
+    "- An HTTP Request node SPLITS a JSON array response into separate items, so the next"
+    " node's $json is the first OBJECT, not the array. Read fields as $json.<field> (or"
+    " $('HttpNode').first().json.<field> from a later node) — NEVER $json[0].<field> or"
+    ' .json[0]. (An API returning [{ "quote": ..., "author": ... }] becomes one item'
+    " {quote, author}, so use $json.quote, not $json[0].quote.)\n"
     "- A field value that contains {{ }} must START with '=' to be evaluated as an"
     " expression (e.g. \"=Teklif: {{ $json.body.company }}\"); without the '=' n8n sends"
     " the {{ }} literally. (Code node jsCode is plain JavaScript and must NOT start with"

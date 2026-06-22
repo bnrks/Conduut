@@ -100,6 +100,7 @@ def repair_workflow(
     _repair_subnode_ports(nodes, connections, repairs)
     _assign_positions(nodes, connections)
     _repair_expressions(nodes, connections, set(runtime_fields), trigger_name, repairs)
+    _repair_http_array_indexing(nodes, connections, repairs)
     _normalize_resource_locators(nodes, repairs)
     _strip_email_attribution(nodes, repairs)
     _normalize_webhook_response_mode(nodes, repairs)
@@ -372,6 +373,81 @@ def _rewrite_strings(value: Any, fn: Any) -> Any:
     if isinstance(value, list):
         return [_rewrite_strings(nested, fn) for nested in value]
     return value
+
+
+# ---------------------------------------------------------------------------
+# Stage 5b — HTTP array-response indexing
+# ---------------------------------------------------------------------------
+
+_HTTP_REQUEST_TYPE = "n8n-nodes-base.httpRequest"
+# Direct reference on the current item: $json[0].field
+_JSON_INDEX_RE = re.compile(r"\$json\[\d+\]\.")
+
+
+def _repair_http_array_indexing(
+    nodes: list[dict[str, Any]],
+    connections: Mapping[str, Any],
+    repairs: list[str],
+) -> None:
+    """Drop array indexing on HTTP Request output references.
+
+    n8n's HTTP Request node splits a JSON array response into separate items, so
+    the next node's $json is the OBJECT, not the array — $json[0].field resolves
+    to empty. Rewrite $json[0].field -> $json.field for nodes directly fed by an
+    HTTP Request node, and $('Http').first().json[0].field -> ...json.field for
+    any node referencing one. Scoped to HTTP nodes so genuine arrays (e.g. a Code
+    node's output) are left alone.
+    """
+
+    http_names = {
+        node["name"]
+        for node in nodes
+        if isinstance(node, dict) and node.get("type") == _HTTP_REQUEST_TYPE and node.get("name")
+    }
+    if not http_names:
+        return
+
+    http_fed: set[str] = set()
+    for source in http_names:
+        conn = connections.get(source)
+        if not isinstance(conn, Mapping):
+            continue
+        for group in conn.get("main", []) or []:
+            for target in group or []:
+                if isinstance(target, Mapping) and target.get("node"):
+                    http_fed.add(str(target["node"]))
+
+    ref_patterns = [
+        re.compile(r"(\$\((['\"])" + re.escape(name) + r"\2\)[^\[]*?\.json)\[\d+\]\.")
+        for name in http_names
+    ]
+
+    touched: list[str] = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        parameters = node.get("parameters")
+        if not isinstance(parameters, Mapping):
+            continue
+        is_fed = node.get("name") in http_fed
+
+        def fix(text: str, _fed: bool = is_fed) -> str:
+            new = text
+            for pattern in ref_patterns:
+                new = pattern.sub(r"\1.", new)
+            if _fed:
+                new = _JSON_INDEX_RE.sub("$json.", new)
+            return new
+
+        rewritten = _rewrite_strings(parameters, fix)
+        if rewritten != parameters:
+            node["parameters"] = rewritten
+            if node.get("name"):
+                touched.append(str(node["name"]))
+    if touched:
+        repairs.append(
+            "rewrote HTTP array indexing ($json[0] -> $json) for " + ", ".join(sorted(set(touched)))
+        )
 
 
 # ---------------------------------------------------------------------------
