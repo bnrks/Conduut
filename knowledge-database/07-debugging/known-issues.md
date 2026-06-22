@@ -37,6 +37,25 @@ bloklar, onay sorar). Ama **explicit dashboard "Run"** (ve batch run)
 kayitli credential'i **otomatik iliştirir** → "olustur → Run" sifir-friction
 calisir (kullanici karariyla, 2026-06-21). Coklu eslesme onay icin birakilir.
 
+## HTTP dizi cevabinda bos mail ($json[0] indexleme) (2026-06-21, cozuldu)
+
+**Belirti:** "api-ninjas'tan soz cek -> mail" workflow'u calisti, agent chat'te
+soz'u dogru gosterdi, ama gelen **mail bos**'tu. Gmail node ifadesi
+`{{ $json[0].quote }}` idi.
+
+**Kok neden:** n8n HTTP Request node'u bir JSON **dizi** cevabini ayri item'lara
+**boluyor**; sonraki node'un `$json`'i artik dizinin ilk **objesi** (`{quote,
+author}`), dizinin kendisi degil. Yani `$json[0].quote` -> undefined -> bos.
+Execution datasi: Get Quote ciktisi 1 item, `json={quote, author, category}`
+(dict). Agent chat ozetini dogru cikardi (LLM), ama n8n ifadesi yanlisti.
+
+**Cozum:** `repair.py` `_repair_http_array_indexing` (Stage 5b): HTTP Request
+node'una **dogrudan baglanan** node'larda `$json[<n>].field` -> `$json.field`,
+ve herhangi bir node'da `$('Http').first().json[<n>].` -> `...json.` yeniden
+yazimi (yalniz HTTP node'lar kapsaminda; Code-node dizileri dokunulmaz). Prompt
+kurali da eklendi (HTTP dizi cevabi item'lara bolunur -> `$json.field`). Test:
+`test_repair.py` (+3). 260 passed.
+
 ## Gmail runtime-input cikarimi sabit degerleri eziyordu (2026-06-20, cozuldu)
 
 **Belirti:** "api-ninjas'tan soz cek -> sabit adrese mail at" workflow'unda agent
