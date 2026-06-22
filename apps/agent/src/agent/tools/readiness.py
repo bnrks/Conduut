@@ -429,6 +429,7 @@ async def analyze_workflow_readiness_payload(
 ) -> dict[str, Any]:
     missing: list[AgentAttachment] = []
     reuse_candidates: list[dict[str, Any]] = []
+    research_candidates: list[dict[str, Any]] = []
     http_credentials: list[Any] | None = None
     workflow_id = str(workflow.get("id") or "")
     for node in workflow.get("nodes", []):
@@ -473,11 +474,14 @@ async def analyze_workflow_readiness_payload(
             if http_credentials is None:
                 http_credentials = await store.list_custom_credentials(user_id) if user_id else []
             generic = str(node.get("parameters", {}).get("genericAuthType") or "").strip() or None
-            matches = match_credentials(
-                node.get("parameters", {}).get("url"),
-                http_credentials,
-                credential_type=generic,
-            )
+            url = node.get("parameters", {}).get("url")
+            # Only READY credentials can be attached; drafts have no n8n credential.
+            ready_credentials = [
+                credential
+                for credential in http_credentials
+                if getattr(credential, "status", "ready") == "ready"
+            ]
+            matches = match_credentials(url, ready_credentials, credential_type=generic)
             if matches:
                 for credential in matches:
                     reuse_candidates.append(
@@ -490,17 +494,17 @@ async def analyze_workflow_readiness_payload(
                         }
                     )
                 continue
+            # No saved credential: defer to the agent's prepare_api_credential
+            # flow (research -> draft, or a manual fallback card) so the user sees
+            # exactly one credential card, not the manual card AND the draft card.
             log.info(
-                "workflow_missing_credential",
+                "workflow_needs_credential_research",
                 workflow_id=workflow_id,
                 node=node.get("name"),
-                node_type=node.get("type"),
                 credential_type=credential_type,
             )
-            missing.append(
-                await _credential_request_for_node(
-                    workflow.get("id", ""), workflow.get("name"), node, credential_type
-                )
+            research_candidates.append(
+                {"nodeName": str(node.get("name") or ""), "url": str(url or "")}
             )
             continue
 
@@ -540,9 +544,10 @@ async def analyze_workflow_readiness_payload(
     webhook_nodes = _workflow_trigger_nodes(workflow, _WEBHOOK_TRIGGER_TYPE)
     manual_trigger_nodes = _workflow_trigger_nodes(workflow, _MANUAL_TRIGGER_TYPE)
     return {
-        "ready": len(missing) == 0 and len(reuse_candidates) == 0,
+        "ready": len(missing) == 0 and len(reuse_candidates) == 0 and len(research_candidates) == 0,
         "missing_credentials": missing,
         "reuse_candidates": reuse_candidates,
+        "research_candidates": research_candidates,
         "testable": len(webhook_nodes) > 0 or len(manual_trigger_nodes) > 0,
         "webhook_nodes": webhook_nodes,
         "manual_trigger_nodes": manual_trigger_nodes,
@@ -626,6 +631,7 @@ async def _emit_missing_credentials(
     return {
         "missing_count": len(missing),
         "reuse_candidates": readiness.get("reuse_candidates", []),
+        "research_candidates": readiness.get("research_candidates", []),
     }
 
 

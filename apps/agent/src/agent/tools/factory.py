@@ -23,6 +23,7 @@ from src.agent.schemas import (
 from src.agent.tools.common import (
     _credential_suggestion_instruction,
     _missing_credentials_instruction,
+    _research_credential_instruction,
     _safe_error,
     _waiting_for_user_input_result,
 )
@@ -86,11 +87,15 @@ def _workflow_result_with_readiness(workflow: Any, readiness: dict[str, Any]) ->
     base: dict[str, Any] = {"id": workflow.id, "name": workflow.name, "active": workflow.active}
     missing_count = readiness.get("missing_count", 0)
     suggestions = readiness.get("reuse_candidates", [])
-    if not missing_count and not suggestions:
+    research = readiness.get("research_candidates", [])
+    if not missing_count and not suggestions and not research:
         return base
     base["ready"] = False
     base["missing_credentials"] = missing_count
-    if suggestions:
+    if research:
+        base["needs_api_credential"] = research
+        base["instruction"] = _research_credential_instruction()
+    elif suggestions:
         base["credential_suggestions"] = suggestions
         base["instruction"] = _credential_suggestion_instruction()
     else:
@@ -103,14 +108,19 @@ def _readiness_block_result(workflow_id: str, readiness: dict[str, Any]) -> dict
 
     missing_count = readiness.get("missing_count", 0)
     suggestions = readiness.get("reuse_candidates", [])
-    if not missing_count and not suggestions:
+    research = readiness.get("research_candidates", [])
+    if not missing_count and not suggestions and not research:
         return None
     result: dict[str, Any] = {
         "success": False,
         "workflow_id": workflow_id,
         "missing_credentials": missing_count,
     }
-    if suggestions:
+    if research:
+        result["needs_api_credential"] = research
+        result["error"] = "An API in this workflow needs a credential that is not set up yet."
+        result["instruction"] = _research_credential_instruction()
+    elif suggestions:
         result["credential_suggestions"] = suggestions
         result["error"] = "A saved credential matches this workflow but is not attached yet."
         result["instruction"] = _credential_suggestion_instruction()
@@ -599,8 +609,11 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             if readiness["missing_credentials"]:
                 ctx.deps.awaiting_user_input = True
             suggestions = readiness.get("reuse_candidates", [])
+            research = readiness.get("research_candidates", [])
             if readiness["missing_credentials"]:
                 instruction = _missing_credentials_instruction()
+            elif research:
+                instruction = _research_credential_instruction()
             elif suggestions:
                 instruction = _credential_suggestion_instruction()
             else:
@@ -613,6 +626,8 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             }
             if suggestions:
                 result["credential_suggestions"] = suggestions
+            if research:
+                result["needs_api_credential"] = research
             _log_tool_finished("analyze_workflow_readiness", started_at, result)
             return result
         except Exception as exc:

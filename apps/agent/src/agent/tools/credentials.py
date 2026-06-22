@@ -6,6 +6,7 @@ import structlog
 
 from src import n8n_client, store
 from src.agent.credential_types import (
+    credential_type_catalog,
     is_supported_http_type,
     match_credentials,
     normalize_host,
@@ -16,6 +17,7 @@ from src.agent.schemas import (
     CredentialField,
     CredentialRequestAttachment,
     CredentialRequestData,
+    CredentialTypeOption,
 )
 from src.agent.tools.common import _credential_draft_instruction, _safe_error
 
@@ -42,6 +44,36 @@ def _secret_field(name: str) -> CredentialField:
         label=_SECRET_FIELD_LABELS.get(name, name.replace("_", " ").title()),
         type="json" if name == "json" else "password",
         required=True,
+    )
+
+
+def _manual_http_card(
+    host: str | None, workflow_id: str | None, node_name: str | None
+) -> CredentialRequestAttachment:
+    """The ADR-0012 friendly type-picker card, used when research is inconclusive."""
+
+    catalog = credential_type_catalog()
+    primary = catalog[0]
+    return CredentialRequestAttachment(
+        data=CredentialRequestData(
+            workflowId=workflow_id or "",
+            nodeName=node_name or "",
+            service=host or "HTTP API",
+            credentialType=primary["type"],
+            credentialName=f"{host or 'HTTP API'} - Conduut",
+            fields=[CredentialField(**field) for field in primary["fields"]],
+            allowedTypes=[
+                CredentialTypeOption(
+                    type=entry["type"],
+                    label=entry["label"],
+                    fields=[CredentialField(**field) for field in entry["fields"]],
+                )
+                for entry in catalog
+            ],
+            host=host,
+            submitPath="/api/credentials",
+            description="This API call needs authentication. Add or pick a credential below.",
+        )
     )
 
 
@@ -188,10 +220,11 @@ async def prepare_api_credential_payload(
         return {
             "status": "needs_manual",
             "host": host,
+            "card": _manual_http_card(host, workflow_id, node_name),
             "instruction": (
-                "Could not confidently determine the auth scheme. Build the HTTP node "
-                "with authentication=genericCredentialType and let the normal credential "
-                "card ask the user — do not invent values."
+                "Could not confidently determine the auth scheme. A manual credential "
+                "card is shown — ask the user to pick the auth method and enter the "
+                "secret. Do not invent values."
             ),
         }
 

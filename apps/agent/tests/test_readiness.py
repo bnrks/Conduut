@@ -123,6 +123,7 @@ class _CustomCred:
     label: str
     credential_type: str
     host: str
+    status: str = "ready"
     n8n_credential_id: str = "n8n_x"
     n8n_credential_name: str = "X"
 
@@ -200,7 +201,9 @@ async def test_readiness_http_host_match_yields_reuse_candidate(monkeypatch):
     assert res["ready"] is False
 
 
-async def test_readiness_http_no_match_emits_type_picker_card(monkeypatch):
+async def test_readiness_http_no_match_defers_to_research(monkeypatch):
+    # No saved credential -> readiness must NOT emit a manual card; it defers to
+    # the agent's prepare_api_credential flow (single card, no double-prompt).
     monkeypatch.setattr(readiness.registry, "get_node_schema", lambda _t: _HTTP_SCHEMA)
 
     async def fake_list(_uid):
@@ -208,15 +211,30 @@ async def test_readiness_http_no_match_emits_type_picker_card(monkeypatch):
 
     monkeypatch.setattr(readiness.store, "list_custom_credentials", fake_list)
 
-    workflow = {"id": "wf1", "name": "WF", "nodes": [_http_node(generic=None)]}
+    workflow = {"id": "wf1", "name": "WF", "nodes": [_http_node()]}
     res = await readiness.analyze_workflow_readiness_payload(workflow, user_id="u1")
 
     assert res["reuse_candidates"] == []
-    assert len(res["missing_credentials"]) == 1
-    card = res["missing_credentials"][0]
-    assert card.type == "credential_request"
-    assert card.data.host == "api.stripe.com"
-    assert len(card.data.allowedTypes) == 4
+    assert res["missing_credentials"] == []
+    assert [c["nodeName"] for c in res["research_candidates"]] == ["HTTP Request"]
+    assert res["research_candidates"][0]["url"] == "https://api.stripe.com/v1"
+    assert res["ready"] is False
+
+
+async def test_readiness_draft_not_treated_as_reuse(monkeypatch):
+    # A draft (no n8n credential) must not be auto-attached as a reuse candidate.
+    monkeypatch.setattr(readiness.registry, "get_node_schema", lambda _t: _HTTP_SCHEMA)
+
+    async def fake_list(_uid):
+        return [_CustomCred("d1", "Stripe", "httpHeaderAuth", "api.stripe.com", status="draft")]
+
+    monkeypatch.setattr(readiness.store, "list_custom_credentials", fake_list)
+
+    res = await readiness.analyze_workflow_readiness_payload(
+        {"id": "wf1", "nodes": [_http_node()]}, user_id="u1"
+    )
+    assert res["reuse_candidates"] == []
+    assert [c["nodeName"] for c in res["research_candidates"]] == ["HTTP Request"]
 
 
 async def test_attach_unambiguous_reuse_candidates(monkeypatch):

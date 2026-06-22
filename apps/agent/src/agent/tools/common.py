@@ -41,6 +41,16 @@ def _missing_credentials_instruction() -> str:
     )
 
 
+def _research_credential_instruction() -> str:
+    return (
+        "One or more HTTP nodes call an API that needs authentication and has no saved "
+        "credential (see needs_api_credential: nodeName + url). For each, call "
+        "prepare_api_credential(url, workflow_id, node_name) so Conduut researches the "
+        "auth scheme and prepares a draft credential the user completes. Do not also "
+        "build a manual credential card yourself — prepare_api_credential shows it."
+    )
+
+
 def _credential_draft_instruction(label: str, source_url: str = "") -> str:
     source = f" (source: {source_url})" if source_url else ""
     return (
