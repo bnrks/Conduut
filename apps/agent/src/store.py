@@ -499,6 +499,30 @@ async def get_all_workflow_metadata(user_id: str) -> dict[str, WorkflowMetadata]
     return result
 
 
+async def save_workflow_test_status(
+    user_id: str,
+    workflow_id: str,
+    *,
+    status: str,
+    findings: list[str] | None = None,
+) -> None:
+    """Persist the sandbox test outcome inside the workflow metadata resources.
+
+    Stored under ``resources.test_status`` / ``resources.test_findings`` so the
+    dashboard can later surface a badge. Preserves input_schema and other
+    resources.
+    """
+
+    existing = await get_workflow_metadata(user_id, workflow_id)
+    input_schema = existing.input_schema if existing else []
+    resources = dict(existing.resources) if existing else {}
+    resources["test_status"] = status
+    resources["test_findings"] = list(findings or [])
+    await save_workflow_metadata(
+        user_id, workflow_id, input_schema=input_schema, resources=resources
+    )
+
+
 async def delete_workflow_metadata(user_id: str, workflow_id: str) -> None:
     await _run(lambda: _workflow_metadata_ref(user_id, workflow_id).delete())
 
