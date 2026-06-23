@@ -306,6 +306,8 @@ def _build_gmail_send(gnode: GraphNode, params: dict[str, Any], ctx: _Ctx) -> No
     params["subject"] = _graph_value_expression(_required_param(gnode, "subject"), ctx=ctx)
     params["message"] = _graph_value_expression(_required_param(gnode, "message"), ctx=ctx)
     params["emailType"] = "text"
+    # Suppress the "This email was sent automatically with n8n" footer.
+    params["options"] = {"appendAttribution": False}
 
 
 def _build_sheets_read(gnode: GraphNode, params: dict[str, Any], ctx: _Ctx) -> None:
