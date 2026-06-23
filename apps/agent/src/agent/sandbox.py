@@ -9,15 +9,19 @@ unit-test edilebilir; gerçek LLM çağrısı ``_run_judge_llm`` arkasındadır.
 
 import json
 from copy import deepcopy
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
 import structlog
 from pydantic import BaseModel
 
+from src import n8n_client
+from src.agent.sandbox_nodes import neutralize_action_nodes
 from src.agent.schemas import WorkflowInputField
 from src.agent.tools.common import _preview_value
 from src.agent.tools.constants import _MANUAL_TRIGGER_TYPE, _WEBHOOK_TRIGGER_TYPE
+from src.agent.tools.execution import _summarize_execution
 from src.agent.tools.workflow_helpers import _webhook_type_version
 from src.config import settings
 
@@ -238,3 +242,104 @@ def _judge_prompt(intent: str, action_summaries: list[dict[str, Any]]) -> str:
 
 async def _run_judge(intent: str, action_summaries: list[dict[str, Any]]) -> JudgeVerdict:
     return await _run_judge_llm(_judge_prompt(intent, action_summaries))
+
+
+@dataclass
+class SandboxTestResult:
+    passed: bool
+    skipped: bool = False
+    findings: list[str] = field(default_factory=list)
+    failed_node: str | None = None
+    empty_fields: list[str] = field(default_factory=list)
+    judge_issue: str | None = None
+    execution_id: str | None = None
+
+
+async def _evaluate_sandbox_run(
+    detail: dict[str, Any], clone_workflow: dict[str, Any], neutralized: list[str], intent: str
+) -> SandboxTestResult:
+    summary = _summarize_execution(detail, workflow=clone_workflow)
+    if summary.status in {"error", "failed"} or summary.error:
+        return SandboxTestResult(
+            passed=False,
+            findings=[summary.error or "Workflow execution failed."],
+            failed_node=summary.failedNode,
+            execution_id=summary.executionId,
+        )
+
+    empty = _check_empty_outputs(detail, clone_workflow, neutralized)
+    if empty:
+        return SandboxTestResult(
+            passed=False, findings=empty, empty_fields=empty, execution_id=summary.executionId
+        )
+
+    verdict = await _run_judge(intent, _action_summaries(detail, clone_workflow, neutralized))
+    if not verdict.ok:
+        return SandboxTestResult(
+            passed=False,
+            findings=[verdict.issue or "The result may not match the request."],
+            judge_issue=verdict.issue or None,
+            execution_id=summary.executionId,
+        )
+
+    return SandboxTestResult(passed=True, execution_id=summary.executionId)
+
+
+async def run_sandbox_test(
+    workflow: dict[str, Any],
+    *,
+    user_id: str,
+    input_schema: list[WorkflowInputField],
+    intent: str,
+) -> SandboxTestResult:
+    name = str(workflow.get("name") or "Workflow")
+    clone = _build_test_clone(workflow)
+    if clone is None:
+        return SandboxTestResult(
+            passed=False,
+            skipped=True,
+            findings=["No webhook/manual trigger to drive a safe test (e.g. schedule-only)."],
+        )
+
+    clone_nodes, clone_connections, path = clone
+    neutralized = neutralize_action_nodes(clone_nodes)
+    sample = _sample_input_for_schema(input_schema) or {"source": "conduut_test"}
+
+    created = await n8n_client.create_workflow(
+        name=f"[conduut-test] {name}"[:120],
+        nodes=clone_nodes,
+        connections=clone_connections,
+    )
+    clone_workflow = {
+        "id": created.id,
+        "name": created.name,
+        "nodes": clone_nodes,
+        "connections": clone_connections,
+    }
+    detail: dict[str, Any] | None = None
+    try:
+        await n8n_client.activate_workflow(created.id)
+        await n8n_client.call_webhook(path, sample)
+        executions = await n8n_client.list_executions(workflow_id=created.id, limit=1)
+        if executions:
+            detail = await n8n_client.get_execution_detail(executions[0].id)
+    finally:
+        try:
+            await n8n_client.delete_workflow(created.id)
+        except Exception as exc:  # noqa: BLE001 - cleanup must never raise
+            log.warning("sandbox_clone_delete_failed", clone_id=created.id, error=str(exc))
+
+    if detail is None:
+        return SandboxTestResult(
+            passed=False, skipped=True, findings=["The sandbox run produced no execution details."]
+        )
+
+    result = await _evaluate_sandbox_run(detail, clone_workflow, neutralized, intent)
+    log.info(
+        "sandbox_test_finished",
+        workflow_id=str(workflow.get("id") or ""),
+        passed=result.passed,
+        skipped=result.skipped,
+        failed_node=result.failed_node,
+    )
+    return result
