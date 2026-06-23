@@ -96,7 +96,8 @@ async def test_gate_harness_error_never_blocks_build(monkeypatch):
 
 
 def test_should_run_sandbox_test_on_clean_result():
-    assert _should_run_sandbox_test({"id": "x", "name": "n", "active": False}, awaiting=False) is True
+    clean = {"id": "x", "name": "n", "active": False}
+    assert _should_run_sandbox_test(clean, awaiting=False) is True
 
 
 def test_should_skip_when_readiness_blocked():

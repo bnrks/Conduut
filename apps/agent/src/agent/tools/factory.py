@@ -44,7 +44,6 @@ from src.agent.tools.runtime_inputs import (
     _validated_workflow_input,
     _workflow_input_schema_from_metadata,
 )
-from src.agent.tools.sandbox_gate import _test_and_gate
 from src.agent.tools.validation import _validated_runtime_workflow
 from src.agent.tools.workflow_runner import run_workflow_with_input
 from src.platforms.actions import run_platform_action_payload
@@ -427,6 +426,11 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         readiness = await _emit_missing_credentials(ctx, full_workflow)
         result = _workflow_result_with_readiness(workflow, readiness)
         if _should_run_sandbox_test(result, awaiting=ctx.deps.awaiting_user_input):
+            # Lazy import: tools/__init__ imports factory, and sandbox_gate
+            # imports back into the tools package — importing it here (not at
+            # module top) avoids that cycle.
+            from src.agent.tools.sandbox_gate import _test_and_gate
+
             result = await _test_and_gate(ctx, full_workflow, name, result)
         _log_tool_finished("create_workflow", started_at, result)
         return result
@@ -498,6 +502,11 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         readiness = await _emit_missing_credentials(ctx, full_workflow)
         result = _workflow_result_with_readiness(workflow, readiness)
         if _should_run_sandbox_test(result, awaiting=ctx.deps.awaiting_user_input):
+            # Lazy import: tools/__init__ imports factory, and sandbox_gate
+            # imports back into the tools package — importing it here (not at
+            # module top) avoids that cycle.
+            from src.agent.tools.sandbox_gate import _test_and_gate
+
             result = await _test_and_gate(ctx, full_workflow, name, result)
         _log_tool_finished("update_workflow", started_at, result)
         return result

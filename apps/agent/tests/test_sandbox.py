@@ -6,7 +6,6 @@ import pytest
 
 import src.agent.sandbox as sandbox
 import src.n8n_client as n8n_client
-from src.agent.schemas import WorkflowInputField
 from src.agent.sandbox import (
     JudgeVerdict,
     _action_summaries,
@@ -14,6 +13,7 @@ from src.agent.sandbox import (
     _check_empty_outputs,
     _sample_input_for_schema,
 )
+from src.agent.schemas import WorkflowInputField
 
 
 def test_sample_input_is_type_aware():
@@ -60,9 +60,7 @@ def test_build_test_clone_converts_manual_trigger():
     workflow = {
         "id": "real-2",
         "name": "Demo",
-        "nodes": [
-            {"name": "Start", "type": "n8n-nodes-base.manualTrigger", "parameters": {}}
-        ],
+        "nodes": [{"name": "Start", "type": "n8n-nodes-base.manualTrigger", "parameters": {}}],
         "connections": {},
     }
     clone = _build_test_clone(workflow)
@@ -76,9 +74,7 @@ def test_build_test_clone_returns_none_for_schedule_only():
     workflow = {
         "id": "real-3",
         "name": "Demo",
-        "nodes": [
-            {"name": "Cron", "type": "n8n-nodes-base.scheduleTrigger", "parameters": {}}
-        ],
+        "nodes": [{"name": "Cron", "type": "n8n-nodes-base.scheduleTrigger", "parameters": {}}],
         "connections": {},
     }
     assert _build_test_clone(workflow) is None
@@ -96,9 +92,7 @@ def test_check_empty_outputs_flags_empty_upstream():
         ],
         "connections": {"Build": {"main": [[{"node": "Send", "type": "main", "index": 0}]]}},
     }
-    detail = _detail_with_run_data(
-        {"Build": [{"data": {"main": [[{"json": {"text": ""}}]]}}]}
-    )
+    detail = _detail_with_run_data({"Build": [{"data": {"main": [[{"json": {"text": ""}}]]}}]})
     findings = _check_empty_outputs(detail, clone, ["Send"])
     assert findings and "Send" in findings[0]
 
@@ -111,9 +105,7 @@ def test_check_empty_outputs_passes_with_real_data():
         ],
         "connections": {"Build": {"main": [[{"node": "Send", "type": "main", "index": 0}]]}},
     }
-    detail = _detail_with_run_data(
-        {"Build": [{"data": {"main": [[{"json": {"text": "hello"}}]]}}]}
-    )
+    detail = _detail_with_run_data({"Build": [{"data": {"main": [[{"json": {"text": "hello"}}]]}}]})
     assert _check_empty_outputs(detail, clone, ["Send"]) == []
 
 
@@ -135,9 +127,7 @@ def test_action_summaries_collect_would_be_input():
         ],
         "connections": {"Build": {"main": [[{"node": "Send", "type": "main", "index": 0}]]}},
     }
-    detail = _detail_with_run_data(
-        {"Build": [{"data": {"main": [[{"json": {"text": "hello"}}]]}}]}
-    )
+    detail = _detail_with_run_data({"Build": [{"data": {"main": [[{"json": {"text": "hello"}}]]}}]})
     summaries = _action_summaries(detail, clone, ["Send"])
     assert summaries[0]["name"] == "Send"
     assert summaries[0]["type"] == "n8n-nodes-base.gmail"
@@ -162,9 +152,11 @@ def _success_detail():
         "status": "success",
         "finished": True,
         "workflowId": "clone-1",
-        "data": {"resultData": {"runData": {
-            "Build": [{"data": {"main": [[{"json": {"text": "hello"}}]]}}]
-        }}},
+        "data": {
+            "resultData": {
+                "runData": {"Build": [{"data": {"main": [[{"json": {"text": "hello"}}]]}}]}
+            }
+        },
     }
 
 
@@ -258,7 +250,5 @@ async def test_run_sandbox_test_skips_schedule_only(monkeypatch):
         "nodes": [{"name": "Cron", "type": "n8n-nodes-base.scheduleTrigger", "parameters": {}}],
         "connections": {},
     }
-    result = await sandbox.run_sandbox_test(
-        workflow, user_id="u1", input_schema=[], intent="Cron"
-    )
+    result = await sandbox.run_sandbox_test(workflow, user_id="u1", input_schema=[], intent="Cron")
     assert result.skipped is True
