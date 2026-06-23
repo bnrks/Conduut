@@ -72,3 +72,86 @@ def _build_test_clone(
         return nodes, connections, path
 
     return None
+
+
+def _node_output_items(run_data: dict[str, Any], node_name: str) -> list[Any]:
+    runs = run_data.get(node_name)
+    if not isinstance(runs, list) or not runs:
+        return []
+    latest = runs[-1] if isinstance(runs[-1], dict) else {}
+    data = latest.get("data") if isinstance(latest, dict) else None
+    main = data.get("main") if isinstance(data, dict) else None
+    items: list[Any] = []
+    if isinstance(main, list):
+        for output in main:
+            if not isinstance(output, list):
+                continue
+            for item in output:
+                if isinstance(item, dict) and "json" in item:
+                    items.append(item.get("json"))
+                else:
+                    items.append(item)
+    return items
+
+
+def _iter_main_groups(outputs: Any):
+    main = outputs.get("main") if isinstance(outputs, dict) else None
+    if isinstance(main, list):
+        for group in main:
+            if isinstance(group, list):
+                yield group
+
+
+def _upstream_source_names(connections: dict[str, Any], target_name: str) -> list[str]:
+    sources: list[str] = []
+    for source, outputs in (connections or {}).items():
+        for group in _iter_main_groups(outputs):
+            for entry in group:
+                if isinstance(entry, dict) and entry.get("node") == target_name:
+                    sources.append(str(source))
+                    break
+    return sources
+
+
+def _non_blank(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, dict)):
+        return len(value) > 0
+    return True
+
+
+def _items_are_empty(items: list[Any]) -> bool:
+    for item in items:
+        if isinstance(item, dict):
+            if any(_non_blank(value) for value in item.values()):
+                return False
+        elif _non_blank(item):
+            return False
+    return True
+
+
+def _check_empty_outputs(
+    detail: dict[str, Any], clone_workflow: dict[str, Any], neutralized: list[str]
+) -> list[str]:
+    """For each neutralized action node, flag when its upstream produced no data.
+
+    The action node is disabled (skipped), so its intended input is the output of
+    the node(s) wired into it. If all of those produced empty/blank items, the
+    action's result would be blank — the classic "empty mail" failure.
+    """
+
+    run_data = (((detail.get("data") or {}).get("resultData") or {}).get("runData")) or {}
+    connections = clone_workflow.get("connections") or {}
+    findings: list[str] = []
+    for name in neutralized:
+        sources = _upstream_source_names(connections, name)
+        if not sources:
+            continue
+        if all(_items_are_empty(_node_output_items(run_data, src)) for src in sources):
+            findings.append(
+                f"The step '{name}' would receive empty data, so its result would be blank."
+            )
+    return findings
