@@ -244,3 +244,21 @@ select:focus-visible {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--muted-foreground);
 }
+
+/* ── Streaming: kelime kelime fade-in ──
+   Yalnız stream sırasında yeni beliren kelimelere uygulanır; CSS animasyonu
+   span mount'unda bir kez çalışır (mevcut kelimeler tekrar oynamaz). */
+@keyframes conduut-word-in {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+.fade-in-word {
+  animation: conduut-word-in 0.32s ease-out both;
+}

@@ -68,6 +68,7 @@ export default function NewChatPage() {
 
     const assistantMessageId = createId("assistant");
     let assistantContent = "";
+    let assistantThinking = "";
     let assistantAttachments: MessageAttachment[] = [];
     let createdConversationId = "";
     let doneProvider: string | undefined;
@@ -92,6 +93,7 @@ export default function NewChatPage() {
               ? {
                   ...msg,
                   content: assistantContent,
+                  thinking: assistantThinking || undefined,
                   attachments: visibleAttachments,
                   conversationId: createdConversationId || msg.conversationId,
                   provider: doneProvider ?? msg.provider,
@@ -102,7 +104,7 @@ export default function NewChatPage() {
           );
         }
 
-        if (!assistantContent && visibleAttachments.length === 0) {
+        if (!assistantContent && !assistantThinking && visibleAttachments.length === 0) {
           return normalized;
         }
 
@@ -113,6 +115,7 @@ export default function NewChatPage() {
             conversationId: createdConversationId,
             role: "agent",
             content: assistantContent,
+            thinking: assistantThinking || undefined,
             attachments: visibleAttachments,
             createdAt: now,
             provider: doneProvider,
@@ -168,6 +171,10 @@ export default function NewChatPage() {
             const text = typeof data.text === "string" ? data.text : "";
             if (!text) return;
             assistantContent += text;
+          } else if (event === "thinking") {
+            const text = typeof data.text === "string" ? data.text : "";
+            if (!text) return;
+            assistantThinking += text;
           } else if (event === "attachment") {
             assistantAttachments = [
               ...assistantAttachments,

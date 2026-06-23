@@ -12,6 +12,9 @@ export interface Message {
   model?: string;
   tier?: string;
   reasoningEffort?: string;
+  /** Canlı düşünce (thinking) token'ları — yalnız streaming sırasında doldurulur,
+   *  store'a kaydedilmez (ephemeral); reload'da gelmez. */
+  thinking?: string;
 }
 
 export interface MessageAttachment {

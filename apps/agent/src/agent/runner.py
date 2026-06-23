@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 
 import structlog
 from pydantic_ai import (
+    Agent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -15,6 +16,13 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.messages import (
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
+)
 
 from src import store
 from src.agent.model_registry import resolve
@@ -240,6 +248,38 @@ async def _drain_events(queue: asyncio.Queue[AgentEvent]) -> AsyncIterator[str]:
         yield _event_to_sse(queue.get_nowait())
 
 
+async def _emit_stream_event(
+    event: object,
+    event_queue: asyncio.Queue[AgentEvent],
+    conv_id: str,
+    text_chunks: list[str],
+) -> None:
+    """Pydantic AI model-stream event'ini SSE event'ine çevirip queue'ya koyar.
+
+    Görünür metin -> 'token' (persist için text_chunks'a da eklenir).
+    Düşünce       -> 'thinking' (ephemeral; kaydedilmez, text_chunks'a girmez).
+    `PartStartEvent` parçanın ilk içeriğini, `PartDeltaEvent` sonraki delta'ları taşır.
+    """
+    if isinstance(event, PartStartEvent):
+        part = event.part
+        if isinstance(part, TextPart) and part.content:
+            text_chunks.append(part.content)
+            await event_queue.put(("token", {"text": part.content, "conversation_id": conv_id}))
+        elif isinstance(part, ThinkingPart) and part.content:
+            await event_queue.put(("thinking", {"text": part.content, "conversation_id": conv_id}))
+    elif isinstance(event, PartDeltaEvent):
+        delta = event.delta
+        if isinstance(delta, TextPartDelta) and delta.content_delta:
+            text_chunks.append(delta.content_delta)
+            await event_queue.put(
+                ("token", {"text": delta.content_delta, "conversation_id": conv_id})
+            )
+        elif isinstance(delta, ThinkingPartDelta) and delta.content_delta:
+            await event_queue.put(
+                ("thinking", {"text": delta.content_delta, "conversation_id": conv_id})
+            )
+
+
 async def run(
     user_id: str,
     conv_id: str,
@@ -287,8 +327,14 @@ async def run(
 
     agent = create_agent(model)
 
-    async def _agent_run():
-        return await agent.run(
+    # Akan görünür metni persist için biriktir (düşünce kaydedilmez).
+    text_chunks: list[str] = []
+
+    async def _agent_stream():
+        # agent.iter() graph'ı node-node sürer; model-request node'larında cevabı
+        # gerçek zamanlı akıtırız. token/thinking event'leri tool'ların kullandığı
+        # AYNI event_queue'ya gider -> sıralama, keep-alive ve drain korunur.
+        async with agent.iter(
             user_prompt,
             deps=deps,
             message_history=message_history,
@@ -297,9 +343,15 @@ async def run(
                 request_limit=choice.request_limit,
                 tool_calls_limit=choice.tool_calls_limit,
             ),
-        )
+        ) as agent_run:
+            async for node in agent_run:
+                if Agent.is_model_request_node(node):
+                    async with node.stream(agent_run.ctx) as request_stream:
+                        async for event in request_stream:
+                            await _emit_stream_event(event, event_queue, conv_id, text_chunks)
+            return agent_run.result
 
-    task = asyncio.create_task(_agent_run())
+    task = asyncio.create_task(_agent_stream())
 
     while not task.done():
         try:
@@ -355,7 +407,9 @@ async def run(
         clear_log_context()
         return
 
-    text = result.output or ""
+    # Görünür metin run sırasında queue üzerinden zaten token-token akıtıldı;
+    # burada tekrar GÖNDERME. Sadece persist için biriktirilen metni kullan.
+    full_content = "".join(text_chunks) or (result.output or "")
     attachment_types = [
         str(attachment.get("type"))
         for attachment in deps.attachments
@@ -363,15 +417,9 @@ async def run(
     ]
     log.info(
         "agent_run_finished",
-        output_chars=len(text),
+        output_chars=len(full_content),
         attachment_types=attachment_types,
     )
-    full_content = ""
-    chunk_size = 10
-    for i in range(0, len(text), chunk_size):
-        chunk = text[i : i + chunk_size]
-        full_content += chunk
-        yield _sse("token", {"text": chunk, "conversation_id": conv_id})
 
     assistant_saved = False
     try:

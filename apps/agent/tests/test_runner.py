@@ -2,6 +2,14 @@ import asyncio
 import json
 
 import pytest
+from pydantic_ai.messages import (
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
+)
 
 from src.agent import runner
 from src.agent.model_registry import Tier
@@ -21,44 +29,110 @@ class FakeResult:
     output = "Workflow created."
 
 
-class FakeAgent:
-    async def run(self, _prompt, *, deps, message_history, model_settings, usage_limits):
+class _FakeModelRequestNode:
+    """agent.iter() model-request node taklidi: .stream(ctx) ile delta'lar akıtır."""
+
+    def __init__(self, events):
+        self._events = events
+
+    def stream(self, _ctx):
+        events = self._events
+
+        class _Stream:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_a):
+                return False
+
+            async def __aiter__(self):
+                for ev in events:
+                    yield ev
+
+        return _Stream()
+
+
+class _FakeRun:
+    """agent.iter() AgentRun + async context manager taklidi."""
+
+    def __init__(self, deps, emit, events):
+        self._deps = deps
+        self._emit = emit
+        self._events = events
+        self.ctx = object()
+        self.result = FakeResult()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_a):
+        return False
+
+    async def __aiter__(self):
+        # Tool fazını taklit et (tool_call/attachment event'leri), sonra modelin
+        # nihai cevabını akıtan model-request node'unu ver.
+        if self._emit is not None:
+            await self._emit(self._deps)
+        yield _FakeModelRequestNode(self._events)
+
+
+class FakeStreamingAgent:
+    """create_agent yerine: agent.iter() ile thinking+text delta'ları akıtır."""
+
+    def __init__(self, events, *, emit=None, expect_settings=None):
+        self._events = events
+        self._emit = emit
+        self._expect_settings = expect_settings
+
+    def iter(self, _prompt, *, deps, message_history, model_settings, usage_limits):
         assert message_history == []
-        assert model_settings == {
-            "anthropic_thinking": {"type": "adaptive"},
-            "anthropic_effort": "medium",
-        }
-        await deps.emit_tool_call("create_workflow")
-        await deps.emit_attachment(
-            WorkflowPreviewAttachment(
-                data=WorkflowPreviewData(
-                    id="wf_1",
-                    name="Demo",
-                    nodeCount=2,
-                    status="inactive",
-                )
-            )
-        )
-        return FakeResult()
+        if self._expect_settings is not None:
+            assert model_settings == self._expect_settings
+        return _FakeRun(deps, self._emit, self._events)
 
 
-class FakeArtifactAgent:
-    async def run(self, _prompt, *, deps, message_history, model_settings, usage_limits):
-        await deps.emit_attachment(
-            ArtifactPreviewAttachment(
-                data=ArtifactPreviewData(
-                    service="google_sheets",
-                    title="Google Sheets row added",
-                    url="https://sheet.test",
-                    source={"spreadsheetId": "sheet_1", "range": "Log!A1"},
-                    table=ArtifactPreviewTable(
-                        columns=["Email"],
-                        rows=[{"Email": "person@example.com"}],
-                    ),
-                )
+def _recognize_fake_model_node(monkeypatch):
+    monkeypatch.setattr(
+        runner.Agent,
+        "is_model_request_node",
+        staticmethod(lambda node: isinstance(node, _FakeModelRequestNode)),
+    )
+
+
+async def _emit_workflow_tool_and_attachment(deps):
+    await deps.emit_tool_call("create_workflow")
+    await deps.emit_attachment(
+        WorkflowPreviewAttachment(
+            data=WorkflowPreviewData(id="wf_1", name="Demo", nodeCount=2, status="inactive")
+        )
+    )
+
+
+async def _emit_sheets_artifact(deps):
+    await deps.emit_attachment(
+        ArtifactPreviewAttachment(
+            data=ArtifactPreviewData(
+                service="google_sheets",
+                title="Google Sheets row added",
+                url="https://sheet.test",
+                source={"spreadsheetId": "sheet_1", "range": "Log!A1"},
+                table=ArtifactPreviewTable(
+                    columns=["Email"],
+                    rows=[{"Email": "person@example.com"}],
+                ),
             )
         )
-        return FakeResult()
+    )
+
+
+def _thinking_then_text_events():
+    """Düşünce delta'ları + 'Workflow created.' görünür metin delta'ları."""
+    return [
+        PartStartEvent(index=0, part=ThinkingPart(content="planning")),
+        PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=" steps")),
+        PartStartEvent(index=1, part=TextPart(content="Workflow ")),
+        PartDeltaEvent(index=1, delta=TextPartDelta(content_delta="created.")),
+    ]
 
 
 def _parse_sse(raw: str):
@@ -250,7 +324,7 @@ def test_history_from_store_messages_marks_prior_user_answer_to_clarification():
 
 
 @pytest.mark.asyncio
-async def test_runner_preserves_sse_contract(monkeypatch):
+async def test_runner_streams_tokens_thinking_and_preserves_sse_contract(monkeypatch):
     saved = {}
 
     async def fake_add_message(*args, **kwargs):
@@ -260,11 +334,21 @@ async def test_runner_preserves_sse_contract(monkeypatch):
     async def fake_classify(*_args, **_kwargs):
         return Tier.MEDIUM
 
+    fake_agent = FakeStreamingAgent(
+        _thinking_then_text_events(),
+        emit=_emit_workflow_tool_and_attachment,
+        expect_settings={
+            "anthropic_thinking": {"type": "adaptive"},
+            "anthropic_effort": "medium",
+        },
+    )
+
     monkeypatch.setattr(runner, "classify_tier", fake_classify)
     monkeypatch.setattr(runner, "key_for_provider", lambda *_args: "key")
     monkeypatch.setattr(runner, "build_model", lambda *_args: object())
-    monkeypatch.setattr(runner, "create_agent", lambda _model: FakeAgent())
+    monkeypatch.setattr(runner, "create_agent", lambda _model: fake_agent)
     monkeypatch.setattr(runner.store, "add_message", fake_add_message)
+    _recognize_fake_model_node(monkeypatch)
 
     events = [
         _parse_sse(raw)
@@ -278,9 +362,20 @@ async def test_runner_preserves_sse_contract(monkeypatch):
 
     event_names = [event for event, _data in events]
     assert event_names[:2] == ["tool_call", "attachment"]
+    assert "thinking" in event_names
     assert "token" in event_names
     assert event_names[-1] == "done"
+
+    # Düşünce ayrı kanaldan akar; görünür metin token'larda gelir.
+    thinking_text = "".join(d["text"] for e, d in events if e == "thinking")
+    token_text = "".join(d["text"] for e, d in events if e == "token")
+    assert thinking_text == "planning steps"
+    assert token_text == "Workflow created."
+
+    # Persist edilen içerik akan görünür metin; düşünce KAYDEDİLMEZ.
     assert saved["args"][2] == "assistant"
+    assert saved["args"][3] == "Workflow created."
+    assert "planning" not in saved["args"][3]
     assert saved["kwargs"]["attachments"][0]["type"] == "workflow_preview"
 
 
@@ -297,12 +392,18 @@ async def test_runner_persists_artifact_preview_attachments(monkeypatch):
     async def fake_classify(*_args, **_kwargs):
         return Tier.MEDIUM
 
+    fake_agent = FakeStreamingAgent(
+        [PartStartEvent(index=0, part=TextPart(content="Workflow created."))],
+        emit=_emit_sheets_artifact,
+    )
+
     monkeypatch.setattr(runner, "classify_tier", fake_classify)
     monkeypatch.setattr(runner, "key_for_provider", lambda *_args: "key")
     monkeypatch.setattr(runner, "build_model", lambda *_args: object())
-    monkeypatch.setattr(runner, "create_agent", lambda _model: FakeArtifactAgent())
+    monkeypatch.setattr(runner, "create_agent", lambda _model: fake_agent)
     monkeypatch.setattr(runner.store, "add_message", fake_add_message)
     monkeypatch.setattr(runner.store, "save_artifact", fake_save_artifact)
+    _recognize_fake_model_node(monkeypatch)
 
     events = [
         _parse_sse(raw)

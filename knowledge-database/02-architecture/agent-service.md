@@ -108,9 +108,31 @@ kutuphaneler JSONL dosyasina duz metin satirlari karistirabilir.
 7. `src/agent/runner.py` SSE stream olarak calistirilir.
 
 Agent runner Pydantic AI tool calling kullanir. Tool'lar event queue uzerinden
-`tool_call` ve `attachment` SSE event'lerini uretir; final text cevabi mevcut
-frontend sozlesmesi icin `token` event'leriyle parca parca gonderilir. Tool
-execution uzunsa keep-alive ping yollanir.
+`tool_call` ve `attachment` SSE event'lerini uretir. Tool execution uzunsa
+keep-alive ping yollanir.
+
+**Gercek token streaming + thinking (2026-06-23):** Eskiden runner `agent.run()`
+ile tum cevabi sona kadar hesaplayip metni 10 karakterlik sahte parcalara bolup
+art arda (sleep'siz) gonderiyordu → cevap "tek balon" gibi aninda beliriyordu.
+Artik `agent.iter()` ile graph node-node surulur; `Agent.is_model_request_node`
+olan node'da `node.stream(run.ctx)` ile model cevabi **gercek zamanli** akar.
+`_emit_stream_event` helper'i: `TextPartDelta`/`TextPart` -> `token` (gorunur
+metin, persist icin `text_chunks`'a da eklenir), `ThinkingPartDelta`/`ThinkingPart`
+-> **yeni `thinking` SSE event'i** (ChatGPT/Claude tarzi canli dusunce; ephemeral,
+store'a kaydedilmez). token/thinking, tool'larin kullandigi AYNI `event_queue`'ya
+gider → siralama, keep-alive ve drain mimarisi degismeden korunur. Persist edilen
+icerik akan token'larin birlesimi (`"".join(text_chunks)`), bos ise
+`run.result.output`'a duser. Dusunce yalnizca Orta/Zor tier'da uretilir
+(ADR-0011: Sonnet adaptive / Gemini HIGH); saglayici farki: Anthropic ham dusunce,
+Gemini ozet, OpenAI cogu zaman bos → frontend icerik geldiyse panel gosterir.
+Frontend: `thinking` event'i ephemeral `Message.thinking`'e birikir, acilir-kapanir
+`ThinkingPanel` (cevap baslayinca otomatik kapanir). UX rotuslari (2026-06-23):
+(1) "Conduut is thinking" gostergesi artik balon degil **duz metin** ve cevap
+metni akmaya baslayinca **gizlenir** (`message-list.tsx` `showTypingIndicator`);
+(2) stream sirasinda paragraf/liste metni **kelime kelime fade-in** olur
+(`message.tsx` `FadeWords` + `globals.css` `conduut-word-in`; yalniz `streaming`
+prop'u true iken, canli markdown korunur, index-key ile sadece yeni kelimeler
+animasyon alir). Detay: [[chat-workflow-generation]].
 
 Conversation history modele aktarilirken assistant attachment'lari da korunur.
 `workflow_preview` workflow id baglamini, `workflow_run_result` execution

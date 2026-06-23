@@ -112,6 +112,7 @@ export default function ConversationPage() {
 
     const assistantMessageId = createId("assistant");
     let assistantContent = "";
+    let assistantThinking = "";
     let assistantAttachments: MessageAttachment[] = [];
     const assistantCreatedAt = now;
     let doneProvider: string | undefined;
@@ -130,6 +131,7 @@ export default function ConversationPage() {
               ? {
                   ...msg,
                   content: assistantContent,
+                  thinking: assistantThinking || undefined,
                   attachments: visibleAttachments,
                   provider: doneProvider ?? msg.provider,
                   model: doneModel ?? msg.model,
@@ -139,7 +141,7 @@ export default function ConversationPage() {
           );
         }
 
-        if (!assistantContent && visibleAttachments.length === 0) {
+        if (!assistantContent && !assistantThinking && visibleAttachments.length === 0) {
           return prev;
         }
 
@@ -150,6 +152,7 @@ export default function ConversationPage() {
             conversationId,
             role: "agent",
             content: assistantContent,
+            thinking: assistantThinking || undefined,
             attachments: visibleAttachments,
             createdAt: assistantCreatedAt,
             provider: doneProvider,
@@ -202,6 +205,10 @@ export default function ConversationPage() {
             const text = typeof data.text === "string" ? data.text : "";
             if (!text) return;
             assistantContent += text;
+          } else if (event === "thinking") {
+            const text = typeof data.text === "string" ? data.text : "";
+            if (!text) return;
+            assistantThinking += text;
           } else if (event === "attachment") {
             assistantAttachments = [
               ...assistantAttachments,

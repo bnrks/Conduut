@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -12,6 +12,7 @@ import { ArtifactPreview } from "@/components/artifacts/artifact-preview";
 import { WorkflowPreview, type WorkflowPreviewData } from "./workflow-preview";
 import { OAuthPrompt, type OAuthPromptData } from "./oauth-prompt";
 import { CredentialRequest, type CredentialRequestData } from "./credential-request";
+import { ThinkingPanel } from "./thinking-panel";
 import { cn } from "@/lib/utils";
 import type { Message as MessageType } from "@/types/chat";
 import type { ArtifactPreviewData } from "@/types/artifact";
@@ -19,6 +20,9 @@ import type { ArtifactPreviewData } from "@/types/artifact";
 export interface MessageProps {
   message: MessageType;
   hideInputRequests?: boolean;
+  /** Bu mesaj şu an stream ediliyor mu? Streaming sırasında syntax-highlight
+   *  ertelenir (her token'da tüm metni yeniden boyamamak için). */
+  isStreaming?: boolean;
 }
 
 function formatTime(dateStr: string) {
@@ -52,13 +56,45 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-/* ── Markdown renderer (agent only) ── */
-function MarkdownContent({ content }: { content: string }) {
+/* ── Kelime kelime fade-in (yalnız streaming) ──
+   String içeriği boşlukları koruyarak kelimelere böler, her kelimeyi tek bir
+   fade-in span'ine sarar. index key append-only stream'de stabil olduğundan
+   sadece YENİ eklenen kelime mount olup animasyon alır; mevcutlar tekrar oynamaz.
+   String olmayan (inline markdown'lı) içerik olduğu gibi render edilir. */
+function FadeWords({ children }: { children: React.ReactNode }) {
+  if (typeof children !== "string") return <>{children}</>;
+  return (
+    <>
+      {children.split(/(\s+)/).map((part, i) =>
+        part === "" || /^\s+$/.test(part) ? (
+          part
+        ) : (
+          <span key={i} className="fade-in-word">
+            {part}
+          </span>
+        )
+      )}
+    </>
+  );
+}
+
+/* ── Markdown renderer (agent only) ──
+   memo: içerik değişmedikçe (ör. hover/timestamp re-render'ı) yeniden parse
+   etme. streaming: aktif token akışı sırasında rehypeHighlight'ı (highlight.js,
+   her render'da tüm metni yeniden boyar → mesaj uzadıkça O(N²)) atla; mesaj
+   tamamlanınca bir kez highlight'la. */
+const MarkdownContent = memo(function MarkdownContent({
+  content,
+  streaming = false,
+}: {
+  content: string;
+  streaming?: boolean;
+}) {
   return (
     <div className="markdown">
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeHighlight]}
+      rehypePlugins={streaming ? [] : [rehypeHighlight]}
       components={{
         // Code blocks with header + copy button
         pre({ children, ...props }) {
@@ -94,13 +130,29 @@ function MarkdownContent({ content }: { content: string }) {
           }
           return <code className={className} {...props}>{children}</code>;
         },
+        // Stream sırasında paragraf/liste metnini kelime kelime fade-in yap
+        // (canlı markdown korunur; kod blokları yukarıdaki pre/code'da kalır).
+        ...(streaming
+          ? {
+              p: ({ children }: { children?: React.ReactNode }) => (
+                <p>
+                  <FadeWords>{children}</FadeWords>
+                </p>
+              ),
+              li: ({ children }: { children?: React.ReactNode }) => (
+                <li>
+                  <FadeWords>{children}</FadeWords>
+                </li>
+              ),
+            }
+          : {}),
       }}
     >
       {content}
     </ReactMarkdown>
     </div>
   );
-}
+});
 
 function UserInputSummary({ data }: { data: Record<string, unknown> }) {
   const question = typeof data.question === "string" ? data.question : "Conduut asked a question";
@@ -128,7 +180,7 @@ function UserInputSummary({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-export function Message({ message, hideInputRequests = false }: MessageProps) {
+function MessageBase({ message, hideInputRequests = false, isStreaming = false }: MessageProps) {
   const [showTimestamp, setShowTimestamp] = useState(false);
   const isUser = message.role === "user";
   const inputRequestAttachments =
@@ -137,8 +189,9 @@ export function Message({ message, hideInputRequests = false }: MessageProps) {
     message.attachments?.filter((attachment) => attachment.type !== "user_input_request") ?? [];
   const inputRequests = hideInputRequests ? [] : inputRequestAttachments;
   const hasText = message.content.trim().length > 0 && inputRequestAttachments.length === 0;
+  const hasThinking = !isUser && !!message.thinking;
 
-  if (!hasText && inputRequests.length === 0 && visibleAttachments.length === 0) {
+  if (!hasText && !hasThinking && inputRequests.length === 0 && visibleAttachments.length === 0) {
     return null;
   }
 
@@ -162,6 +215,9 @@ export function Message({ message, hideInputRequests = false }: MessageProps) {
 
       {/* Bubble + attachments */}
       <div className={cn("flex flex-col max-w-[75%]", isUser ? "items-end" : "items-start")}>
+        {hasThinking && (
+          <ThinkingPanel content={message.thinking ?? ""} answerStarted={hasText} />
+        )}
         {hasText && (
           <div className="relative">
             <div
@@ -172,7 +228,11 @@ export function Message({ message, hideInputRequests = false }: MessageProps) {
                   : "bg-card border border-border text-foreground rounded-2xl rounded-bl-md"
               )}
             >
-              {isUser ? message.content : <MarkdownContent content={message.content} />}
+              {isUser ? (
+                message.content
+              ) : (
+                <MarkdownContent content={message.content} streaming={isStreaming} />
+              )}
             </div>
 
             {/* Timestamp on hover */}
@@ -246,3 +306,9 @@ export function Message({ message, hideInputRequests = false }: MessageProps) {
     </motion.div>
   );
 }
+
+/* memo: MessageList her token'da yeni bir messages dizisi set ediyor, ama
+   upsertAssistantMessage değişmeyen mesajları aynı referansla döndürüyor →
+   memo sayesinde sadece stream edilen (referansı değişen) mesaj yeniden render
+   olur; geçmiş mesajların markdown'ı her token'da yeniden parse edilmez. */
+export const Message = memo(MessageBase);
