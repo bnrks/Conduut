@@ -52,10 +52,26 @@ export function ConversationSidebar() {
   const [search, setSearch] = useState("");
   const pathname = usePathname();
 
-  useEffect(() => {
-    const loadConversations = async () => {
-      if (!user) return;
+  const currentConversationId = useMemo(() => {
+    const match = pathname?.match(/^\/chat\/([^/?#]+)/);
+    return match ? match[1] : null;
+  }, [pathname]);
 
+  useEffect(() => {
+    if (!user) return;
+
+    // Perf: her gezinmede tüm konuşma listesini yeniden çekme. Liste zaten
+    // yüklüyse ve açılan konuşma listede varsa (eski bir chat'e geçiş) atla.
+    // Sadece ilk yüklemede veya listede olmayan yeni bir konuşma id'si
+    // açıldığında çek. getState() reaktif değil → conversations'ı dep'e koyup
+    // sonsuz fetch döngüsüne girmeyiz (id bulunamasa bile tekrar denemez).
+    const { conversations: loaded } = useChatStore.getState();
+    const alreadyLoaded = loaded.length > 0;
+    const currentKnown =
+      !currentConversationId || loaded.some((c) => c.id === currentConversationId);
+    if (alreadyLoaded && currentKnown) return;
+
+    const loadConversations = async () => {
       const token = await user.getIdToken();
       const response = await fetch("/api/conversations", {
         method: "GET",
@@ -71,7 +87,7 @@ export function ConversationSidebar() {
     };
 
     void loadConversations();
-  }, [setConversations, user, pathname]);
+  }, [setConversations, user, currentConversationId]);
 
   const filtered = useMemo(
     () =>

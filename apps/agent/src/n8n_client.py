@@ -116,6 +116,10 @@ class N8nWorkflow:
     active: bool
     created_at: str
     updated_at: str
+    # n8n list cevabı her workflow'un node'larını da döndürür; node sayısını
+    # buradan türetip listede her workflow için ayrı get_workflow (N+1) atmaktan
+    # kaçınırız. create/update yollarında set edilmez (0).
+    node_count: int = 0
 
 
 @dataclass
@@ -133,10 +137,17 @@ class N8nExecution:
 # ---------------------------------------------------------------------------
 
 
-async def list_workflows() -> list[N8nWorkflow]:
+async def list_workflows_raw() -> list[dict]:
+    """Ham n8n list cevabı (her workflow'un `nodes`'u dahil). Credential reuse
+    taraması gibi node detayı gereken yerler per-workflow get_workflow (N+1)
+    yerine bunu kullanır."""
     r = await _request("GET", "/workflows")
     _raise_for_status(r)
-    items = r.json().get("data", [])
+    return list(r.json().get("data", []))
+
+
+async def list_workflows() -> list[N8nWorkflow]:
+    items = await list_workflows_raw()
     return [
         N8nWorkflow(
             id=w["id"],
@@ -144,6 +155,7 @@ async def list_workflows() -> list[N8nWorkflow]:
             active=w.get("active", False),
             created_at=w.get("createdAt", ""),
             updated_at=w.get("updatedAt", ""),
+            node_count=len(w.get("nodes") or []),
         )
         for w in items
     ]

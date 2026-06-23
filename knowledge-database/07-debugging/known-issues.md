@@ -7,6 +7,109 @@ Bu not, repo icinde gorulen bilinen sorunlari ve dikkat noktalarini toplar.
 Kullanicinin yeni fark ettigi ve henuz triage edilmemis sorun/bug notlari icin
 ayri alan: [[issue-backlog]].
 
+## `/api/workflows` N+1 ile ~4sn (2026-06-22, cozuldu — canli dogrulama bekliyor)
+
+**Belirti:** Dashboard workflows sayfasi acilirken uzun suruyordu. Kullanici
+bunu "frontend/Turbopack yavas" sandi; gercek neden backend veri cekme.
+
+**Kanit (agent log `logs/agent/conduut-agent.jsonl`):** `GET /api/workflows`
+**duration_ms: 4062** (baska ornek 2797). Icinde n8n'e N+1 fan-out:
+`GET /workflows` (list) 866ms + her workflow icin ayri `GET /workflows/{id}`
+(2380/1892/1369/836ms). Karsilastirma: `/api/conversations` ~205ms,
+`/api/conversations/{id}` ~236ms (saglikli; N+1 yok).
+
+**Kok neden:** `routes/workflows.py:list_workflows` her workflow icin
+`n8n_client.get_workflow(w.id)` ile **tum workflow JSON'unu** cekiyordu —
+sadece `node_count = len(detail["nodes"])` icin. `asyncio.gather` ile paralel
+ama n8n basina 0.8-2.4sn oldugundan en yavasi + list cagrisi toplami ~4sn.
+
+**Cozum (TDD):** n8n list cevabi her workflow'un `nodes`'unu zaten dondurur →
+`N8nWorkflow.node_count` alani eklendi, `list_workflows()` bunu list cevabindan
+doldurur, route artik per-workflow `get_workflow` ATMAZ (sadece input_schema
+icin Firestore metadata'ya paralel gider). Beklenen: 4sn → ~1sn. Test:
+`test_list_workflows_does_not_fetch_each_workflow` (get_workflow cagirilirsa
+AssertionError). **261 passed (5 Windows-tmp hata, alakasiz); ruff temiz.**
+
+**BEKLEYEN canli dogrulama:** Varsayim — n8n public API `GET /api/v1/workflows`
+list cevabi her item'da `nodes` dizisini icerir (standart n8n davranisi). n8n
+kapaliyken test edilemedi. n8n acilinca dogrula:
+`curl -H "X-N8N-API-KEY: <key>" http://localhost:6180/api/v1/workflows?limit=1`
+→ ilk item'da `nodes` var mi? Yoksa nodeCount 0 gosterir (kozmetik regresyon,
+crash degil) → o durumda list'e nodes dahil etme yolu eklenir.
+
+**Ek optimizasyonlar (2026-06-22, uygulandi):**
+- **Firestore metadata batch:** `store.get_all_workflow_metadata(user_id)` (tek
+  `workflow_metadata` koleksiyon `.stream()`) eklendi; route artik per-workflow
+  `get_workflow_metadata` (N+1) yerine bunu kullaniyor. `/api/workflows` artik
+  **workflow sayisindan bagimsiz duz 2 cagri**: n8n list + tek Firestore sorgusu.
+  `asyncio.gather` kaldirildi. Test: `metadata_calls == ["user_1"]`.
+- **Sidebar refetch:** `conversation-sidebar.tsx` artik her gezinmede tum
+  konusma listesini cekmiyor. `pathname`'den `currentConversationId` turetilir;
+  liste yukluyse ve acilan konusma store'da varsa (eski chat'e gecis) fetch
+  ATLANIR. Sadece ilk yuklemede veya store'da olmayan yeni konusma id'sinde cek
+  (`useChatStore.getState()` ile loop-safe; yeni chat akisi store'u
+  guncellemedigi icin `pathname` dep'i load-bearing'di, bu yuzden tamamen
+  kaldirilmadi). Eski chat'e gecis: fazladan list fetch + hop yok.
+- **xlsx lazy-load:** `workflows/page.tsx` top-level `import * as XLSX` kaldirildi;
+  sadece dosya yuklenince `await import("xlsx")` (handler zaten async). Route'un
+  ilk bundle/derlemesi hafifledi.
+- **Chat streaming render O(N²) (frontend):** `message.tsx` her SSE token'inda
+  tum mesaj listesini yeniden render edip, stream edilen mesajin TUM markdown'ini
+  yeniden parse + `rehypeHighlight` (highlight.js, otomatik dil tespiti) ediyordu
+  → uzun cevaplarda O(N²) CPU/jank, ayrica gecmis mesajlar da her token'da
+  yeniden parse. Cozum (sadece render katmani, SSE state machine'e dokunulmadan):
+  (1) `Message` artik `React.memo` — `upsertAssistantMessage` degismeyen mesajlari
+  ayni referansla dondurdugu icin sadece stream edilen mesaj re-render olur;
+  (2) `MarkdownContent` memoize + `streaming` prop'u → stream sirasinda
+  `rehypeHighlight` ATLANIR (plain markdown), mesaj bitince (`isAgentTyping` false)
+  bir kez highlight; (3) `message-list.tsx` son agent mesajini `isAgentTyping`
+  iken `isStreaming` isaretler (her iki chat sayfasi da MessageList kullandigi
+  icin ikisine de uygular). tsc temiz, eslint 0. Kullanici "yavas yukleme" olarak
+  hissetmemisti (asil dert page-load'di) ama uzun yanitlarda gercek kazanc.
+- **Credential reuse N+1 (readiness):** `readiness._discover_existing_credential`
+  her workflow icin `get_workflow` (~934ms) atip node'larda credential ariyordu
+  (activate/run + agent credential-reuse yolunda). n8n list cevabi node'lari
+  (credentials dahil) zaten dondurdugu icin (canli dogrulandi: httpHeaderAuth,
+  gmailOAuth2 list'te var) yeni `n8n_client.list_workflows_raw()` ile tek
+  cagriya indirildi; `list_workflows()` de bunu kullanir (DRY). Test:
+  `test_readiness` mock'u `list_workflows_raw` doner + `get_workflow` cagrilirsa
+  AssertionError. **261 passed, ruff temiz.**
+
+**Dogrulama:** agent 261 passed (5 Windows-tmp, alakasiz), ruff temiz; web tsc
+temiz, eslint 0. Workflows N+1 canli dogrulamasi (n8n list `nodes` iceriyor mu)
+hala bekliyor (yukaridaki curl).
+
+## Dev server yavas: `--webpack` Turbopack'i devre disi birakmis (2026-06-22, cozuldu)
+
+**Belirti:** Proje buyudukce `apps/web` dev sunucusunda "Compiling..." asamalari
+uzadi, frontend agir hissettiriyordu. Kullanici bunu "Turbopack yavasligi" sandi.
+
+**Kok neden:** `apps/web/package.json` dev script'i `next dev --webpack` idi —
+yani Turbopack **bilerek devre disi birakilmis** ve yavas Webpack bundler'i
+kullaniliyordu. `--webpack` flag'i 55de643 (alakasiz bir Gmail preview feature
+commit'i) icinde, **hicbir gerekce yazilmadan** eklenmisti. `next.config.ts`
+**bos** (hicbir `webpack()` ozellestirmesi yok) → Webpack'e gercek bir bagimlilik
+yoktu. Proje aslinda kucuk (101 ts/tsx dosyasi, ~10k satir), yani darbogaz
+**boyut degil bundler**.
+
+**Kanit (ayni makine, cold compile, sadece bundler farkli; Next 16.2.1):**
+| Route | Webpack | Turbopack | Hizlanma |
+|---|---|---|---|
+| `/` | 13.24s | 6.86s | 1.9x |
+| `/chat` (markdown+highlight+motion) | 6.80s | 2.04s | 3.3x |
+| `/dashboard/workflows` (xlsx) | 1.95s | 1.32s | 1.5x |
+
+Turbopack **sifir hata/uyari** ile calisti → `--webpack` hic load-bearing degildi.
+
+**Cozum:** `package.json` → `"dev": "next dev"` (flag kaldirildi; Next 16'da
+Turbopack varsayilan). Iteratif compile 1.9–3.3x hizlandi.
+
+**Ikincil notlar (uygulanmadi, opsiyonel):** (1) `workflows/page.tsx` `import * as
+XLSX from "xlsx"` (buyuk CJS lib) sayfa tepesinde eager — kullanildigi handler'da
+`await import("xlsx")` ile lazy yapilabilir. (2) Windows Defender real-time
+scanning `node_modules`/`.next` klasorlerini taradigindan dev'i yavaslatabilir;
+proje klasorunu exclusion'a eklemek Windows'ta ek hizlanma saglar.
+
 ## HTTP generic credential readiness'te tespit edilmiyordu (2026-06-20, cozuldu)
 
 **Belirti:** API Ninjas workflow'u olusturulup calistirilinca n8n

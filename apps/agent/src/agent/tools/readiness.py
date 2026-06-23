@@ -245,16 +245,14 @@ async def _discover_existing_credential(
     agent-built AI workflows run without manual credential binding.
     """
 
+    # n8n list cevabı her workflow'un node'larını (credentials dahil) zaten
+    # döndürür → tek çağrıyla tara, per-workflow get_workflow (N+1) atma.
     try:
-        workflows = await n8n_client.list_workflows()
+        workflows = await n8n_client.list_workflows_raw()
     except Exception:
         return None
-    for summary in workflows:
-        if summary.id == skip_workflow_id:
-            continue
-        try:
-            full = await n8n_client.get_workflow(summary.id)
-        except Exception:
+    for full in workflows:
+        if not isinstance(full, dict) or full.get("id") == skip_workflow_id:
             continue
         for other in full.get("nodes", []):
             credentials = other.get("credentials") if isinstance(other, dict) else None

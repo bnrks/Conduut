@@ -1,6 +1,5 @@
 """Workflows router — n8n workflow'larını listeler ve yönetir."""
 
-import asyncio
 import json
 from typing import Any, Literal
 
@@ -111,30 +110,27 @@ async def list_workflows(request: Request):
     # Per-user container izolasyonu gelince user_id ile filtreleme eklenecek.
     user_id = get_user_id(request)
 
+    # Düz 2 çağrı (workflow sayısından bağımsız): n8n list + tek Firestore
+    # metadata sorgusu. nodeCount n8n list cevabından (N8nWorkflow.node_count)
+    # gelir — listede ayrı get_workflow (N+1, ~1-2.4sn/çağrı) ATMAYIZ; metadata
+    # da workflow-başına değil tek sorguda toplanır.
     workflows = await n8n_client.list_workflows()
+    metadata_by_id = await store.get_all_workflow_metadata(user_id)
 
-    # Her workflow için node sayısını paralel olarak çek
-    async def _enrich(w: n8n_client.N8nWorkflow) -> dict:
-        try:
-            detail = await n8n_client.get_workflow(w.id)
-            node_count = len(detail.get("nodes", []))
-        except Exception:
-            node_count = 0
-        metadata = await store.get_workflow_metadata(user_id, w.id)
-        input_schema = _workflow_input_schema_from_metadata(metadata)
+    def _serialize(w: n8n_client.N8nWorkflow) -> dict:
+        input_schema = _workflow_input_schema_from_metadata(metadata_by_id.get(w.id))
         return {
             "id": w.id,
             "name": w.name,
             "status": "active" if w.active else "inactive",
-            "nodeCount": node_count,
+            "nodeCount": w.node_count,
             "createdAt": w.created_at,
             "updatedAt": w.updated_at,
             "executionCount": 0,
             "inputSchema": _input_schema_payload(input_schema),
         }
 
-    enriched = await asyncio.gather(*[_enrich(w) for w in workflows])
-    return {"workflows": list(enriched)}
+    return {"workflows": [_serialize(w) for w in workflows]}
 
 
 @router.patch("/workflows/{workflow_id}/activate")

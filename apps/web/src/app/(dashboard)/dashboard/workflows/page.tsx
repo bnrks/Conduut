@@ -13,7 +13,6 @@ import {
   Workflow as WorkflowIcon,
   XCircle,
 } from "lucide-react";
-import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { ArtifactPreview } from "@/components/artifacts/artifact-preview";
 import { Button } from "@/components/ui/button";
@@ -440,6 +439,9 @@ export default function WorkflowsPage() {
     const file = event.target.files?.[0];
     if (!file || !runWorkflow) return;
     try {
+      // Lazy-load: xlsx büyük bir CJS kütüphanesi; sadece kullanıcı dosya
+      // yüklediğinde indir, route'un ilk bundle/derlemesini şişirmesin.
+      const XLSX = await import("xlsx");
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
       const sheetNames = workbook.SheetNames;

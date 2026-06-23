@@ -30,6 +30,61 @@ async def _stream_events(response):
 
 
 @pytest.mark.asyncio
+async def test_list_workflows_does_not_fetch_each_workflow(monkeypatch):
+    """Listeleme N+1 yapmamalı: nodeCount n8n list cevabından gelmeli,
+    her workflow için ayrı get_workflow çağrısı yapılmamalı (perf)."""
+    monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
+
+    async def fake_list_workflows():
+        return [
+            workflows_route.n8n_client.N8nWorkflow(
+                id="wf_1",
+                name="Alpha",
+                active=True,
+                created_at="2026-01-01",
+                updated_at="2026-01-02",
+                node_count=3,
+            ),
+            workflows_route.n8n_client.N8nWorkflow(
+                id="wf_2",
+                name="Beta",
+                active=False,
+                created_at="2026-01-03",
+                updated_at="2026-01-04",
+                node_count=7,
+            ),
+        ]
+
+    async def fail_get_workflow(_workflow_id: str):
+        raise AssertionError("list_workflows must not fetch each workflow individually")
+
+    async def fail_per_workflow_metadata(_user_id: str, _workflow_id: str):
+        raise AssertionError("list must not fetch workflow metadata per-workflow")
+
+    metadata_calls: list[str] = []
+
+    async def fake_all_metadata(user_id: str):
+        metadata_calls.append(user_id)
+        return {}
+
+    monkeypatch.setattr(workflows_route.n8n_client, "list_workflows", fake_list_workflows)
+    monkeypatch.setattr(workflows_route.n8n_client, "get_workflow", fail_get_workflow)
+    monkeypatch.setattr(workflows_route.store, "get_workflow_metadata", fail_per_workflow_metadata)
+    monkeypatch.setattr(workflows_route.store, "get_all_workflow_metadata", fake_all_metadata)
+    monkeypatch.setattr(workflows_route, "_workflow_input_schema_from_metadata", lambda _m: None)
+    monkeypatch.setattr(workflows_route, "_input_schema_payload", lambda _s: None)
+
+    response = await workflows_route.list_workflows(object())
+
+    workflows = response["workflows"]
+    assert [w["id"] for w in workflows] == ["wf_1", "wf_2"]
+    assert [w["nodeCount"] for w in workflows] == [3, 7]
+    assert [w["status"] for w in workflows] == ["active", "inactive"]
+    # Metadata tek sorguda (batch) çekilmeli — workflow başına değil.
+    assert metadata_calls == ["user_1"]
+
+
+@pytest.mark.asyncio
 async def test_run_workflow_persists_returned_artifacts(monkeypatch):
     monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
 

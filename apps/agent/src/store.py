@@ -480,6 +480,25 @@ async def get_workflow_metadata(user_id: str, workflow_id: str) -> WorkflowMetad
     )
 
 
+async def get_all_workflow_metadata(user_id: str) -> dict[str, WorkflowMetadata]:
+    """Kullanıcının tüm workflow metadata'sını TEK sorguda çek (listeleme N+1
+    yerine). workflow_id -> WorkflowMetadata sözlüğü döner."""
+    docs = await _run(
+        lambda: list(_user_ref(user_id).collection("workflow_metadata").stream())
+    )
+    result: dict[str, WorkflowMetadata] = {}
+    for doc in docs:
+        data = doc.to_dict() or {}
+        result[doc.id] = WorkflowMetadata(
+            workflow_id=doc.id,
+            input_schema=list(data.get("input_schema") or []),
+            created_at=data.get("created_at", ""),
+            updated_at=data.get("updated_at", ""),
+            resources=dict(data.get("resources") or {}),
+        )
+    return result
+
+
 async def delete_workflow_metadata(user_id: str, workflow_id: str) -> None:
     await _run(lambda: _workflow_metadata_ref(user_id, workflow_id).delete())
 

@@ -11,11 +11,16 @@ class FakeSummary:
 
 
 def _patch_n8n(monkeypatch, *, workflows, full_by_id, attached):
-    async def _list_workflows():
-        return workflows
+    # Credential reuse taraması artık tek list_workflows_raw çağrısıyla node'ları
+    # okur (per-workflow get_workflow N+1 yok). Mock, summary+full'ü tek ham
+    # item'da birleştirir; get_workflow çağrılırsa test patlar.
+    raw_items = [{"id": s.id, **full_by_id.get(s.id, {})} for s in workflows]
 
-    async def _get_workflow(wid):
-        return full_by_id[wid]
+    async def _list_workflows_raw():
+        return raw_items
+
+    async def _fail_get_workflow(wid):
+        raise AssertionError("credential reuse must not fetch each workflow (N+1)")
 
     async def _attach(workflow_id, node_name, credential_type, credential_id, credential_name):
         attached.append(
@@ -29,8 +34,8 @@ def _patch_n8n(monkeypatch, *, workflows, full_by_id, attached):
         )
         return {}
 
-    monkeypatch.setattr(readiness.n8n_client, "list_workflows", _list_workflows)
-    monkeypatch.setattr(readiness.n8n_client, "get_workflow", _get_workflow)
+    monkeypatch.setattr(readiness.n8n_client, "list_workflows_raw", _list_workflows_raw)
+    monkeypatch.setattr(readiness.n8n_client, "get_workflow", _fail_get_workflow)
     monkeypatch.setattr(readiness.n8n_client, "attach_credential_to_workflow", _attach)
 
 
