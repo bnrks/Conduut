@@ -8,6 +8,7 @@ from pydantic_ai import ModelRetry
 
 import src.agent.tools.sandbox_gate as gate
 from src.agent.sandbox import SandboxTestResult
+from src.agent.tools.factory import _should_run_sandbox_test
 
 
 def _ctx():
@@ -92,3 +93,17 @@ async def test_gate_harness_error_never_blocks_build(monkeypatch):
     monkeypatch.setattr(gate, "run_sandbox_test", boom)
     result = await gate._test_and_gate(_ctx(), _WF, "Demo", dict(_BASE))
     assert result == _BASE
+
+
+def test_should_run_sandbox_test_on_clean_result():
+    assert _should_run_sandbox_test({"id": "x", "name": "n", "active": False}, awaiting=False) is True
+
+
+def test_should_skip_when_readiness_blocked():
+    blocked = {"id": "x", "name": "n", "active": False, "ready": False, "missing_credentials": 1}
+    assert _should_run_sandbox_test(blocked, awaiting=False) is False
+
+
+def test_should_skip_when_awaiting_user_input():
+    clean = {"id": "x", "name": "n", "active": False}
+    assert _should_run_sandbox_test(clean, awaiting=True) is False

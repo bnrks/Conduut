@@ -44,6 +44,7 @@ from src.agent.tools.runtime_inputs import (
     _validated_workflow_input,
     _workflow_input_schema_from_metadata,
 )
+from src.agent.tools.sandbox_gate import _test_and_gate
 from src.agent.tools.validation import _validated_runtime_workflow
 from src.agent.tools.workflow_runner import run_workflow_with_input
 from src.platforms.actions import run_platform_action_payload
@@ -101,6 +102,15 @@ def _workflow_result_with_readiness(workflow: Any, readiness: dict[str, Any]) ->
     else:
         base["instruction"] = _missing_credentials_instruction()
     return base
+
+
+def _should_run_sandbox_test(result: dict[str, Any], *, awaiting: bool) -> bool:
+    """Sandbox-test only genuinely-complete builds (credential-ready, not waiting)."""
+
+    if awaiting:
+        return False
+    # _workflow_result_with_readiness adds ready=False only when blocked.
+    return "ready" not in result
 
 
 def _readiness_block_result(workflow_id: str, readiness: dict[str, Any]) -> dict[str, Any] | None:
@@ -167,7 +177,9 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         deps_type=AgentDeps,
         output_type=str,
         instructions=SYSTEM_PROMPT,
-        retries=2,
+        # Headroom: validation ModelRetry + the bounded sandbox test ModelRetry
+        # (real bound: workflow_test_attempts, max 2) must not trip this limit.
+        retries=4,
         tool_timeout=60.0,
     )
 
@@ -414,6 +426,8 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         full_workflow = await n8n_client.get_workflow(workflow.id)
         readiness = await _emit_missing_credentials(ctx, full_workflow)
         result = _workflow_result_with_readiness(workflow, readiness)
+        if _should_run_sandbox_test(result, awaiting=ctx.deps.awaiting_user_input):
+            result = await _test_and_gate(ctx, full_workflow, name, result)
         _log_tool_finished("create_workflow", started_at, result)
         return result
 
@@ -483,6 +497,8 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         full_workflow = await n8n_client.get_workflow(workflow.id)
         readiness = await _emit_missing_credentials(ctx, full_workflow)
         result = _workflow_result_with_readiness(workflow, readiness)
+        if _should_run_sandbox_test(result, awaiting=ctx.deps.awaiting_user_input):
+            result = await _test_and_gate(ctx, full_workflow, name, result)
         _log_tool_finished("update_workflow", started_at, result)
         return result
 
