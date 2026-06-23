@@ -73,6 +73,11 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
   olusturur; kullanici secret'i chat/dashboard'da sonra doldurur (finalize → n8n
   create + attach). Paylasimli `api_auth_cache`. Yeni `research.py` +
   `prepare_api_credential`. Detay: [[agent-managed-credentials-design]].
+- [[adr-0014-workflow-sandbox-test]] - Build sonrasi yan-etkisiz sandbox test
+  (aksiyon node'larini nötralize et / disabled) + 3 katmanli gecme kriteri
+  (hata / bos cikti / LLM yargisi) + 2 denemeye kadar self-repair (ModelRetry
+  dongusu); basarisizsa workflow "needs_attention". Yeni `sandbox.py` +
+  `sandbox_nodes.py` + `tools/sandbox_gate.py`.
 
 ## Kaynak Dokumanlar
 

@@ -96,7 +96,7 @@ conduut/
 
 ---
 
-## Geliştirme durumu (son güncelleme: 2026-06-11)
+## Geliştirme durumu (son güncelleme: 2026-06-23)
 
 ### Çalışan servisler (docker compose up)
 - `conduut-agent` — FastAPI agent servisi, port 8000
@@ -194,6 +194,16 @@ Faz 5 — Production            → Monitoring + Stripe + Marketing sayfası
 - `agent/workflow_intent/` **boş** — typed intent engine (ADR-0008) park edildi, aktif yol WorkflowPlan compiler.
 
 **Tespit edilen darboğaz (2026-06-08):** Compiler sadece Gmail + Sheets + filter action'larını destekliyordu. Yoğun kullanılan node'lar (HTTP Request, AI Agent, Code, Edit Fields/Set, IF, Merge) ham JSON fallback'e düşüyor, agent uzun JSON yazarken `MAX_MODEL_REQUESTS` limitine takılıp çöküyordu. → **2026-06-10'da çözüldü (aşağıya bakın).**
+
+---
+
+### Son oturum özeti (2026-06-23) — Workflow sandbox test + self-repair (ADR-0014)
+
+**Soru → karar:** Agent workflow oluşturduktan sonra execution hatası alırsa kendini düzeltmiyordu (build-zamanı sadece yapısal `repair.py`+validate vardı; runtime self-healing yoktu). Kullanıcı tespiti: hatayı görmek için çalıştırmak gerek ama çalıştırmak gerçek yan etki üretir (mail gider). Brainstorm → spec → plan → TDD inline uygulama (9 task). (bkz. [[adr-0014-workflow-sandbox-test]])
+
+**Çözüm:** Build'in son adımında **yan-etkisiz sandbox test** — aksiyon node'ları (`disabled=true` ile nötralize, n8n atlar) hariç gerçek veri yolu klon bir workflow'da çalışır, **her durumda silinir**. 3 katmanlı geçme: (a) node hatası, (b) nötralize node'a giden üst-çıktı boş mu (deterministik), (c) **LLM yargısı** (sabit Gemini Flash, `research.py` deseni). Başarısız + bütçe içinde → **`ModelRetry`** ile model `update_workflow` ile düzeltir (en fazla 2 deneme, `ctx.deps.workflow_test_attempts`); bütçe dolunca `test_status="needs_attention"`, agent dürüstçe bildirir. Otomatik tetikleme `create_workflow`/`update_workflow` sonunda (readiness temiz + not-awaiting). Harness hatası build'i bloklamaz.
+
+**Eklenen/değişen:** `agent/sandbox.py` (**yeni**: `run_sandbox_test`, `SandboxTestResult`, örnek girdi, test-klonu, boş-çıktı, `_run_judge_llm` izole), `agent/sandbox_nodes.py` (**yeni**: sınıflandırıcı + `neutralize_action_nodes`), `agent/tools/sandbox_gate.py` (**yeni**: `_test_and_gate`), `store.save_workflow_test_status`, `schemas.AgentDeps.workflow_test_attempts`, `tools/factory.py` (`_should_run_sandbox_test`+wiring, `retries=2→4`), `tools/prompt.py` (kural). **292 passed (5 Windows-tmp hatası alakasız); ruff temiz.** Spec/plan yerel (`docs/superpowers/`, gitignored). **Bekleyen:** canlı uçtan-uca (boş-mail senaryosu yakalanıp onarılmalı); frontend `test_status` rozeti ayrı follow-up.
 
 ---
 
@@ -379,6 +389,9 @@ python packages/n8n-registry/scripts/fetch_nodes.py
 - `apps/agent/tests/test_graph_compiler.py` — graph compiler golden testleri
 - `apps/agent/tests/test_repair.py` — repair motoru unit testleri (boilerplate, wiring, ai_* port, expression onarımı)
 - `apps/agent/src/agent/research.py` — API auth araştırma motoru: sabit Gemini Flash + grounding (provider-bağımsız), `research_api_auth` (paylaşımlı `api_auth_cache`'li), `AuthResearchResult`, `credential_type_for_scheme`. Grounding `_run_grounding_research` arkasında (testable) (ADR-0013)
+- `apps/agent/src/agent/sandbox.py` — **sandbox test motoru** (ADR-0014): `run_sandbox_test` (klonla→nötralize→çalıştır→değerlendir→sil), `SandboxTestResult`, örnek-girdi, test-klonu, boş-çıktı kontrolü, LLM yargısı (`_run_judge_llm` izole, sabit Gemini Flash). Build'in son adımında yan-etkisiz test
+- `apps/agent/src/agent/sandbox_nodes.py` — aksiyon-node sınıflandırıcı (`is_side_effect_node`: gmail send/sheets write/slack/HTTP non-GET...) + `neutralize_action_nodes` (`disabled=true`) (ADR-0014)
+- `apps/agent/src/agent/tools/sandbox_gate.py` — `_test_and_gate`: test'i koşar, başarısızsa `ModelRetry` ile self-repair (en fazla 2 deneme, `workflow_test_attempts` bütçesi), bütçe dolunca `needs_attention`; harness hatası build'i bloklamaz (ADR-0014)
 - `apps/agent/src/agent/credential_types.py` — custom HTTP credential V1 tip kataloğu + `normalize_host` + `match_credentials` (host eşleştirme) (ADR-0012)
 - `apps/agent/src/agent/tools/credentials.py` — `list_credentials_payload` (secret yok, host-eşleşme bayraklı) + `attach_credential_payload` (ownership doğrular, generic auth wiring) (ADR-0012)
 - `apps/agent/src/routes/credentials.py` — custom credential kütüphanesi route'ları (POST create/attach, GET, GET `/types`, DELETE `/{id}`) (ADR-0012)
