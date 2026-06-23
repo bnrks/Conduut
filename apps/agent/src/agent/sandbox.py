@@ -7,13 +7,21 @@ nötralize eder, klonu webhook ile çalıştırır, 3 katmanlı değerlendirir
 unit-test edilebilir; gerçek LLM çağrısı ``_run_judge_llm`` arkasındadır.
 """
 
+import json
 from copy import deepcopy
 from typing import Any
 from uuid import uuid4
 
+import structlog
+from pydantic import BaseModel
+
 from src.agent.schemas import WorkflowInputField
+from src.agent.tools.common import _preview_value
 from src.agent.tools.constants import _MANUAL_TRIGGER_TYPE, _WEBHOOK_TRIGGER_TYPE
 from src.agent.tools.workflow_helpers import _webhook_type_version
+from src.config import settings
+
+log = structlog.get_logger()
 
 _SAMPLE_BY_TYPE = {
     "email": "test@example.com",
@@ -155,3 +163,78 @@ def _check_empty_outputs(
                 f"The step '{name}' would receive empty data, so its result would be blank."
             )
     return findings
+
+
+class JudgeVerdict(BaseModel):
+    ok: bool = True
+    issue: str = ""
+
+
+_JUDGE_INSTRUCTIONS = (
+    "You judge whether an automation would produce a meaningful, non-empty, "
+    "correct-looking result. You are given the automation's purpose and the action "
+    "steps that would run (their config and the data that would feed them). Set "
+    "ok=false with a short issue when a key value would be empty, an expression "
+    "clearly did not resolve, or the data shape is wrong (e.g. an array where a "
+    "single value is expected). Otherwise ok=true with an empty issue."
+)
+
+_judge_agent = None
+
+
+def _build_judge_agent():
+    from pydantic_ai import Agent
+
+    from src.agent.provider_factory import build_model
+    from src.config import key_for_provider
+
+    model = build_model("google", settings.research_model, key_for_provider("google"))
+    return Agent(model, output_type=JudgeVerdict, instructions=_JUDGE_INSTRUCTIONS)
+
+
+async def _run_judge_llm(prompt: str) -> JudgeVerdict:
+    global _judge_agent
+    if _judge_agent is None:
+        _judge_agent = _build_judge_agent()
+    result = await _judge_agent.run(prompt)
+    return result.output
+
+
+def _action_summaries(
+    detail: dict[str, Any], clone_workflow: dict[str, Any], neutralized: list[str]
+) -> list[dict[str, Any]]:
+    run_data = (((detail.get("data") or {}).get("resultData") or {}).get("runData")) or {}
+    connections = clone_workflow.get("connections") or {}
+    nodes_by_name = {
+        str(node.get("name")): node
+        for node in clone_workflow.get("nodes") or []
+        if isinstance(node, dict)
+    }
+    summaries: list[dict[str, Any]] = []
+    for name in neutralized:
+        node = nodes_by_name.get(name, {})
+        would_be: list[Any] = []
+        for src in _upstream_source_names(connections, name):
+            would_be.extend(_node_output_items(run_data, src))
+        summaries.append(
+            {
+                "name": name,
+                "type": str(node.get("type") or ""),
+                "params": _preview_value(node.get("parameters") or {}),
+                "would_be_input": _preview_value(would_be[:3]),
+            }
+        )
+    return summaries
+
+
+def _judge_prompt(intent: str, action_summaries: list[dict[str, Any]]) -> str:
+    payload = json.dumps(action_summaries, ensure_ascii=False, default=str)[:4000]
+    return (
+        f"Automation purpose: {intent or 'unknown'}\n\n"
+        "Action steps that would run (config + data that would feed them):\n"
+        f"{payload}"
+    )
+
+
+async def _run_judge(intent: str, action_summaries: list[dict[str, Any]]) -> JudgeVerdict:
+    return await _run_judge_llm(_judge_prompt(intent, action_summaries))

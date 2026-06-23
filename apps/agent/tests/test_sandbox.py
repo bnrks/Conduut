@@ -1,7 +1,12 @@
 """Tests for the sandbox workflow test engine (agent.sandbox)."""
 
+import pytest
+
+import src.agent.sandbox as sandbox
 from src.agent.schemas import WorkflowInputField
 from src.agent.sandbox import (
+    JudgeVerdict,
+    _action_summaries,
     _build_test_clone,
     _check_empty_outputs,
     _sample_input_for_schema,
@@ -113,3 +118,36 @@ def test_check_empty_outputs_ignores_nodes_without_upstream():
     clone = {"nodes": [{"name": "Send", "type": "n8n-nodes-base.gmail"}], "connections": {}}
     detail = _detail_with_run_data({})
     assert _check_empty_outputs(detail, clone, ["Send"]) == []
+
+
+def test_action_summaries_collect_would_be_input():
+    clone = {
+        "nodes": [
+            {"name": "Build", "type": "n8n-nodes-base.code"},
+            {
+                "name": "Send",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"subject": "Hi", "message": "={{$json.text}}"},
+            },
+        ],
+        "connections": {"Build": {"main": [[{"node": "Send", "type": "main", "index": 0}]]}},
+    }
+    detail = _detail_with_run_data(
+        {"Build": [{"data": {"main": [[{"json": {"text": "hello"}}]]}}]}
+    )
+    summaries = _action_summaries(detail, clone, ["Send"])
+    assert summaries[0]["name"] == "Send"
+    assert summaries[0]["type"] == "n8n-nodes-base.gmail"
+    assert summaries[0]["would_be_input"] == [{"text": "hello"}]
+
+
+@pytest.mark.asyncio
+async def test_run_judge_uses_llm(monkeypatch):
+    async def fake_llm(prompt):
+        assert "Automation purpose" in prompt
+        return JudgeVerdict(ok=False, issue="body empty")
+
+    monkeypatch.setattr(sandbox, "_run_judge_llm", fake_llm)
+    verdict = await sandbox._run_judge("send email", [{"name": "Send"}])
+    assert verdict.ok is False
+    assert verdict.issue == "body empty"
