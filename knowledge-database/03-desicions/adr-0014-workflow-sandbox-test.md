@@ -59,6 +59,16 @@ dürüstçe bildirilir.
    (eksik credential yok) ve `awaiting_user_input=false` ise otomatik koşar
    (`_should_run_sandbox_test` + `_test_and_gate`). Eksik credential varsa test'e
    hiç gelinmez (mevcut readiness gate önce çalışır).
+   **Test-before-execute (2026-06-23 eklendi):** `execute_workflow` de gerçek
+   çalıştırmadan önce, workflow daha önce test geçmemişse (`test_status != "passed"`,
+   `_needs_pretest`) sandbox testini koşar. Bu, **kapsama boşluğunu** kapatır:
+   create credential-blocked olunca test atlanıyordu, credential eklenince agent
+   `update_workflow` yerine doğrudan `execute_workflow` çağırıp testi tamamen
+   baypas ediyordu (canlı logda iki ardışık çalışmada gözlendi, 2026-06-23).
+   Pretest başarısızsa `_test_and_gate` ile ModelRetry/self-repair; bütçe
+   tükenirse gerçek execution **bloklanır** (needs_attention, çalıştırılmaz).
+   `ModelRetry` execute_workflow'un generic `except`'i tarafından yutulmasın diye
+   `except ModelRetry: raise` ile yeniden fırlatılır.
 6. **Test harness'ı build'i bloklamaz.** Sandbox içindeki herhangi bir exception
    yakalanır, build normal sonucuyla döner.
 
@@ -94,11 +104,26 @@ muhakemesini kapatır.
   ModelRetry döngüsü + needs_attention/repair talimatları.
 - `apps/agent/src/store.py` — `save_workflow_test_status` (metadata resources).
 - `apps/agent/src/agent/tools/factory.py` — create/update entegrasyonu,
-  `_should_run_sandbox_test`, `retries=4`.
+  `_should_run_sandbox_test`, `retries=4`, **`_needs_pretest` + execute_workflow
+  test-before-execute wiring + `except ModelRetry: raise`**.
 - Testler: `test_sandbox_nodes.py`, `test_sandbox.py`, `test_sandbox_gate.py`,
   `test_store_test_status.py`. **292 passed (5 Windows-tmp hatası alakasız); ruff temiz.**
 
+## Canlı doğrulama (2026-06-23)
+
+- **Sandbox motoru + n8n entegrasyonu:** `run_sandbox_test` gerçek n8n'e (:6180)
+  karşı doğrudan çalıştırıldı. Boş senaryo → `passed=False` + boş-çıktı bulgusu;
+  sağlıklı senaryo → `passed=True` (gerçek Gemini judge OK). HTTP node klonda
+  `disabled:True` (dışarı çağrı yok), klonlar silindi, artık kalmadı. ✅
+- **Canlı chat akışında bulunan kapsama boşluğu:** Kullanıcı iki ardışık görev
+  çalıştırdı; ikisinde de workflow credential-blocked create → attach → doğrudan
+  execute oldu. Sandbox testi **hiç tetiklenmedi** (logda 0 sandbox olayı). →
+  **test-before-execute** eklendi (yukarı, Karar #5). Ayrıca her iki görevdeki
+  asıl hata **Gmail OAuth refresh token süresi dolmuş** idi — sandbox'ın disable
+  ettiği node'un auth hatası, yani V1 non-goal; sandbox bunu yakalamaz.
+
 ## Bekleyen
 
-Canlı uçtan-uca doğrulama (n8n + agent açık): kasıtlı boş-mail senaryosu → test
-yakalar → agent onarır → ikinci tur geçer; yalnız-schedule → skip.
+test-before-execute'in canlı doğrulaması: credential-ready / data-transform bir
+workflow'da kasıtlı yapısal hata (boş gövde) → execute öncesi sandbox yakalar →
+agent onarır. (Gmail auth hataları kapsam dışı kalmaya devam eder.)
