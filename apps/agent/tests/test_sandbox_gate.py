@@ -8,7 +8,15 @@ from pydantic_ai import ModelRetry
 
 import src.agent.tools.sandbox_gate as gate
 from src.agent.sandbox import SandboxTestResult
-from src.agent.tools.factory import _should_run_sandbox_test
+from src.agent.tools.factory import _needs_pretest, _should_run_sandbox_test
+from src.store import WorkflowMetadata
+
+
+def _meta(test_status):
+    resources = {"test_status": test_status} if test_status else {}
+    return WorkflowMetadata(
+        workflow_id="w", input_schema=[], created_at="", updated_at="", resources=resources
+    )
 
 
 def _ctx():
@@ -108,3 +116,14 @@ def test_should_skip_when_readiness_blocked():
 def test_should_skip_when_awaiting_user_input():
     clean = {"id": "x", "name": "n", "active": False}
     assert _should_run_sandbox_test(clean, awaiting=True) is False
+
+
+def test_needs_pretest_skips_when_already_passed():
+    assert _needs_pretest(_meta("passed")) is False
+
+
+def test_needs_pretest_runs_when_absent_or_not_passed():
+    assert _needs_pretest(None) is True
+    assert _needs_pretest(_meta(None)) is True
+    assert _needs_pretest(_meta("skipped")) is True
+    assert _needs_pretest(_meta("needs_attention")) is True

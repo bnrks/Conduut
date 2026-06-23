@@ -4,7 +4,7 @@ from time import perf_counter
 from typing import Any
 
 import structlog
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRetry, RunContext
 
 from src import n8n_client, store
 from src.agent.schemas import (
@@ -110,6 +110,18 @@ def _should_run_sandbox_test(result: dict[str, Any], *, awaiting: bool) -> bool:
         return False
     # _workflow_result_with_readiness adds ready=False only when blocked.
     return "ready" not in result
+
+
+def _needs_pretest(metadata: store.WorkflowMetadata | None) -> bool:
+    """Whether a workflow should be sandbox-tested before its first real run.
+
+    Workflows that were credential-blocked at build time never got tested, so the
+    structure is unverified. Run the test once before executing for real; skip it
+    when a prior test already passed (test_status='passed').
+    """
+
+    status = metadata.resources.get("test_status") if metadata else None
+    return status != "passed"
 
 
 def _readiness_block_result(workflow_id: str, readiness: dict[str, Any]) -> dict[str, Any] | None:
@@ -598,6 +610,21 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                 _log_tool_finished("execute_workflow", started_at, result)
                 return result
 
+            # Test-before-execute: a workflow that was credential-blocked at build
+            # time never got sandbox-tested. Run the test now (once) before the
+            # real run; a structural failure drives a fix (ModelRetry) or blocks
+            # the real execution rather than producing a bad side effect.
+            if _needs_pretest(metadata):
+                from src.agent.tools.sandbox_gate import _test_and_gate
+
+                name = str(workflow.get("name") or "Workflow")
+                gate = await _test_and_gate(ctx, workflow, name, {})
+                if gate.get("test_status") == "needs_attention":
+                    gate["success"] = False
+                    gate["workflow_id"] = workflow_id
+                    _log_tool_finished("execute_workflow", started_at, gate)
+                    return gate
+
             result = await run_workflow_with_input(
                 workflow,
                 user_id=ctx.deps.user_id,
@@ -608,6 +635,10 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             payload = result.model_dump(exclude_none=True)
             _log_tool_finished("execute_workflow", started_at, payload)
             return payload
+        except ModelRetry:
+            # Let the sandbox self-repair feedback reach the model — must not be
+            # swallowed by the generic handlers below.
+            raise
         except ValueError as exc:
             result = {"success": False, "workflow_id": workflow_id, "error": str(exc)}
             _log_tool_finished("execute_workflow", started_at, result)
