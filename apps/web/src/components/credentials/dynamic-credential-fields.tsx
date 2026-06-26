@@ -34,7 +34,13 @@ export interface DynamicCredentialFieldsProps {
 function initialValues(fields: CredentialFieldSpec[]): Record<string, unknown> {
   const values: Record<string, unknown> = {};
   for (const field of fields) {
-    values[field.name] = field.default ?? (field.type === "boolean" ? false : "");
+    if (field.type === "boolean") {
+      values[field.name] = field.default ?? false;
+    } else if (field.type === "options") {
+      values[field.name] = field.default ?? field.options?.[0]?.value ?? "";
+    } else {
+      values[field.name] = field.default ?? "";
+    }
   }
   return values;
 }
@@ -67,13 +73,15 @@ export function DynamicCredentialFields({
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError("");
-    for (const field of fields) {
-      if (field.required && isVisible(field, values) && !String(values[field.name] ?? "").trim()) {
+    for (const field of visible) {
+      if (field.required && !String(values[field.name] ?? "").trim()) {
         setError(`${field.label} is required.`);
         return;
       }
     }
-    // Only submit fields that are currently visible (respect conditional hiding).
+    // Include every non-showWhen-hidden field (incl. collapsed advanced) so their
+    // defaults (e.g. Base URL) are submitted, matching n8n. Only conditionally
+    // (showWhen) hidden fields are dropped.
     const data: Record<string, unknown> = {};
     for (const field of fields) {
       if (isVisible(field, values)) data[field.name] = values[field.name];
@@ -141,18 +149,21 @@ export function DynamicCredentialFields({
 
   return (
     <form onSubmit={submit} className="space-y-2">
-      {visible.map((field) => (
-        <label key={field.name} className="block">
-          <span className="mb-1 block text-[12px] font-medium text-muted-foreground">
-            {field.label}
-            {field.required && <span className="ml-0.5 text-error">*</span>}
-          </span>
-          {renderControl(field)}
-          {field.description && field.type !== "boolean" && (
-            <span className="mt-1 block text-[11px] text-muted-foreground">{field.description}</span>
-          )}
-        </label>
-      ))}
+      {visible.map((field) => {
+        const Wrapper = field.type === "boolean" ? "div" : "label";
+        return (
+          <Wrapper key={field.name} className="block">
+            <span className="mb-1 block text-[12px] font-medium text-muted-foreground">
+              {field.label}
+              {field.required && <span className="ml-0.5 text-error">*</span>}
+            </span>
+            {renderControl(field)}
+            {field.description && field.type !== "boolean" && (
+              <span className="mt-1 block text-[11px] text-muted-foreground">{field.description}</span>
+            )}
+          </Wrapper>
+        );
+      })}
 
       {hasAdvanced && (
         <button
