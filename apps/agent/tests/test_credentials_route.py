@@ -166,3 +166,89 @@ async def test_delete_credential_not_found(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         await credentials_route.delete_credential(object(), "missing")
     assert exc.value.status_code == 404
+
+
+async def test_credential_catalog_excludes_oauth(monkeypatch):
+    _patch_user(monkeypatch)
+    monkeypatch.setattr(
+        credentials_route.registry,
+        "list_credential_types",
+        lambda: [
+            {"type": "openAiApi", "nodes": ["OpenAI"]},
+            {"type": "slackOAuth2Api", "nodes": ["Slack"]},
+        ],
+    )
+    result = await credentials_route.credential_catalog_list(object(), q=None)
+    assert [c["type"] for c in result["catalog"]] == ["openAiApi"]
+
+
+async def test_credential_catalog_schema_returns_fields(monkeypatch):
+    _patch_user(monkeypatch)
+
+    async def fake_schema(credential_type):
+        assert credential_type == "openAiApi"
+        return {
+            "properties": {"apiKey": {"type": "string", "displayName": "API Key"}},
+            "required": ["apiKey"],
+        }
+
+    monkeypatch.setattr(credentials_route.n8n_client, "get_credential_schema", fake_schema)
+    result = await credentials_route.credential_catalog_schema(object(), "openAiApi")
+    assert result["credentialType"] == "openAiApi"
+    assert result["fields"][0]["name"] == "apiKey"
+    assert result["fields"][0]["type"] == "password"
+
+
+async def test_credential_catalog_schema_rejects_oauth_by_name(monkeypatch):
+    _patch_user(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        await credentials_route.credential_catalog_schema(object(), "slackOAuth2Api")
+    assert exc.value.status_code == 422
+
+
+async def test_submit_type_matched_credential_no_host(monkeypatch):
+    _patch_user(monkeypatch)
+    calls: dict = {"attach": False}
+
+    async def fake_create(name, credential_type, data):
+        return n8n_client.N8nCredential(id="n8n_9", name=name, type=credential_type)
+
+    async def fake_save(user_id, **kwargs):
+        calls["save"] = kwargs
+        return _custom_credential(
+            id="cred_t", label=kwargs["label"], credential_type="openAiApi", host=""
+        )
+
+    async def fake_attach(*args, **kwargs):
+        calls["attach"] = kwargs
+        return {}
+
+    monkeypatch.setattr(credentials_route.n8n_client, "create_credential", fake_create)
+    monkeypatch.setattr(credentials_route.store, "save_custom_credential", fake_save)
+    monkeypatch.setattr(credentials_route.n8n_client, "attach_credential_to_workflow", fake_attach)
+
+    body = CredentialSubmitIn(
+        credential_type="openAiApi",
+        data={"apiKey": "sk-x"},
+        label="OpenAI",
+        match_kind="type",
+        workflow_id="wf1",
+        node_name="OpenAI Chat Model",
+    )
+    result = await credentials_route.submit_credential(object(), body)
+    assert calls["save"]["match_kind"] == "type"
+    assert calls["save"]["host"] == ""
+    # Predefined type-matched: do NOT wire generic HTTP auth.
+    assert calls["attach"]["generic_auth_type"] is None
+    assert result["credential"]["credential_type"] == "openAiApi"
+
+
+async def test_list_credentials_includes_match_kind(monkeypatch):
+    _patch_user(monkeypatch)
+
+    async def fake_list(user_id):
+        return [_custom_credential(credential_type="openAiApi", host="", match_kind="type")]
+
+    monkeypatch.setattr(credentials_route.store, "list_custom_credentials", fake_list)
+    result = await credentials_route.list_credentials(object())
+    assert result["credentials"][0]["match_kind"] == "type"
