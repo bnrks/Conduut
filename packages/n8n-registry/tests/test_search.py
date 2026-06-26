@@ -1,6 +1,6 @@
 from n8n_registry.models import NodeInfo
 from n8n_registry.registry import NodeRegistry
-from n8n_registry.search import build_schema_response
+from n8n_registry.search import build_schema_response, collect_credential_types
 
 
 def _node(index: int) -> NodeInfo:
@@ -66,9 +66,6 @@ def test_set_node_schema_uses_assignments_example():
         }
     ]
     assert schema["usageHints"]
-
-
-from n8n_registry.search import collect_credential_types
 
 
 def _cred_node(type_name, display_name, creds):
