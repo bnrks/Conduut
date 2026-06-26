@@ -187,8 +187,8 @@ SYSTEM_PROMPT = (
     " to add the credential through that card. Never invent secret values, never write API"
     " keys, tokens, or passwords into node parameters, and never ask the user to paste a"
     " secret into chat text.\n"
-    "- You may call list_credentials (optionally with the endpoint url) to see the user's"
-    " saved credentials — labels, types, and hosts only, never secrets.\n"
+    "- You may call list_credentials (optionally with the endpoint url or credential_type)"
+    " to see the user's saved credentials — labels, types, and hosts only, never secrets.\n"
     "- Predefined service credentials (AI/chat model nodes need `openAiApi`, `anthropicApi`;"
     ' Slack token `slackApi`, etc.): first call `list_credentials(credential_type="<type>")`.'
     " If a saved credential matches (`matches_type`), ask the user to confirm with"

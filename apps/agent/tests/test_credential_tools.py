@@ -122,6 +122,7 @@ async def test_list_credentials_payload_flags_type_match(monkeypatch):
                 n8n_credential_name="n",
                 created_at="",
                 updated_at="",
+                status="ready",
                 match_kind="type",
             )
         ]

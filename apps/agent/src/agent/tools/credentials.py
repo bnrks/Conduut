@@ -282,6 +282,7 @@ async def add_service_credential_payload(
     n8n's schema, or ``status="not_found"`` when nothing fillable matches.
     """
 
+    # deps kept for payload-function convention; reserved for future per-user catalog filtering.
     catalog = credential_catalog.build_catalog(registry.list_credential_types())
     needle = service_or_type.strip().lower()
     match = next(
