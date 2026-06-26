@@ -100,7 +100,12 @@ async def credential_icon(path: str):
     """Public proxy for n8n-served credential icons (public SVG assets; <img> can't
     send a bearer token). Strictly limited to n8n's ``icons/`` path to prevent SSRF.
     """
-    safe_path = unquote(path)
+    safe_path = path
+    for _ in range(5):
+        decoded = unquote(safe_path)
+        if decoded == safe_path:
+            break
+        safe_path = decoded
     if not safe_path.startswith("icons/") or ".." in safe_path:
         raise HTTPException(status_code=400, detail={"message": "Invalid icon path."})
     url = f"{settings.n8n_url.rstrip('/')}/{safe_path}"

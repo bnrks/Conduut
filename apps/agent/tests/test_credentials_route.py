@@ -320,6 +320,12 @@ async def test_credential_icon_rejects_non_icon_path():
     assert exc.value.status_code == 400
 
 
+async def test_credential_icon_rejects_triple_encoded_traversal():
+    with pytest.raises(HTTPException) as exc:
+        await credentials_route.credential_icon(path="icons/%25252e%25252e/api/v1/credentials")
+    assert exc.value.status_code == 400
+
+
 async def test_credential_icon_rejects_double_encoded_traversal():
     with pytest.raises(HTTPException) as exc:
         await credentials_route.credential_icon(path="icons/%2e%2e/api/v1/credentials")

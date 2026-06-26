@@ -8,7 +8,6 @@ matching. The catalog-building / label-friendly logic has been superseded by
 
 from n8n_registry.models import CredentialTypeInfo
 
-from src import n8n_client
 from src.agent.schemas import CredentialField, CredentialFieldCondition, CredentialFieldOption
 
 # Field names that signal an OAuth2 credential (second-line defense after the
@@ -80,13 +79,6 @@ def parse_schema_fields(schema: dict) -> list[CredentialField]:
     return fields or [
         CredentialField(name="apiKey", label="API Key", type="password", required=True)
     ]
-
-
-async def fetch_credential_fields(credential_type: str) -> list[CredentialField]:
-    """Fetch + parse the fillable fields for a credential type from n8n."""
-
-    schema = await n8n_client.get_credential_schema(credential_type)
-    return parse_schema_fields(schema)
 
 
 # n8n property types that are display-only / not user-fillable.

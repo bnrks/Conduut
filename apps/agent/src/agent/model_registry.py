@@ -160,9 +160,7 @@ PROFILE_DEEPSEEK = ModelProfile(
             secondary=ModelChoice("deepseek", _DS_PRO, _DS_ON),
         ),
         Tier.HARD: TierConfig(
-            primary=ModelChoice(
-                "deepseek", _DS_PRO, _DS_ON, request_limit=24, tool_calls_limit=56
-            ),
+            primary=ModelChoice("deepseek", _DS_PRO, _DS_ON, request_limit=24, tool_calls_limit=56),
             secondary=ModelChoice(
                 "deepseek", _DS_PRO, _DS_ON, request_limit=24, tool_calls_limit=56
             ),

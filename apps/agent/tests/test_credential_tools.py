@@ -136,13 +136,23 @@ async def test_add_service_credential_known_type_returns_card(monkeypatch):
     from n8n_registry.models import CredentialTypeInfo
 
     monkeypatch.setattr(
-        cred_tools.registry, "list_credential_catalog",
+        cred_tools.registry,
+        "list_credential_catalog",
         lambda q=None: [{"type": "anthropicApi", "label": "Anthropic", "icon_url": "icons/a.svg"}],
     )
     definition = CredentialTypeInfo(
-        name="anthropicApi", display_name="Anthropic", icon_url="icons/a.svg",
-        properties=[{"displayName": "API Key", "name": "apiKey", "type": "string",
-                     "typeOptions": {"password": True}, "required": True}],
+        name="anthropicApi",
+        display_name="Anthropic",
+        icon_url="icons/a.svg",
+        properties=[
+            {
+                "displayName": "API Key",
+                "name": "apiKey",
+                "type": "string",
+                "typeOptions": {"password": True},
+                "required": True,
+            }
+        ],
     )
     monkeypatch.setattr(cred_tools.registry, "get_credential_definition", lambda t: definition)
     result = await cred_tools.add_service_credential_payload(_deps(), "Anthropic")
@@ -163,11 +173,13 @@ async def test_add_service_credential_oauth_rejected(monkeypatch):
     from n8n_registry.models import CredentialTypeInfo
 
     monkeypatch.setattr(
-        cred_tools.registry, "list_credential_catalog",
+        cred_tools.registry,
+        "list_credential_catalog",
         lambda q=None: [{"type": "slackOAuth2Api", "label": "Slack", "icon_url": ""}],
     )
     monkeypatch.setattr(
-        cred_tools.registry, "get_credential_definition",
+        cred_tools.registry,
+        "get_credential_definition",
         lambda t: CredentialTypeInfo(name="slackOAuth2Api", display_name="Slack", is_oauth=True),
     )
     result = await cred_tools.add_service_credential_payload(_deps(), "Slack")

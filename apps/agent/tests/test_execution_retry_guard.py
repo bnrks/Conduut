@@ -9,9 +9,7 @@ def _ok() -> WorkflowRunResultData:
 
 
 def _failed() -> WorkflowRunResultData:
-    return WorkflowRunResultData(
-        workflowId="w1", status="error", summary="failed", error="boom"
-    )
+    return WorkflowRunResultData(workflowId="w1", status="error", summary="failed", error="boom")
 
 
 def test_success_returns_none_and_resets_counter():
