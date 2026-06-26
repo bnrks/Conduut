@@ -213,6 +213,24 @@ Faz 5 — Production            → Monitoring + Stripe + Marketing sayfası
 
 ---
 
+### Son oturum özeti (2026-06-26b) — Şema-güdümlü credential formu + ikon proxy
+
+**Bağlam (Faz 2, branch `feature/predefined-credentials`):** ADR-0015 Faz 1'de katalog + type-matched reuse kurulmuştu. Faz 2, credential formunu n8n'in kendi `credentials.json` şemasından türeterek n8n formunu birebir yansıtacak hale getirdi.
+
+**Veri kaynağı:** `credentials.json` (415 tip, tam `INodeProperties`) `n8n-registry` paketine eklendi; yeni `scripts/fetch_credentials.py` (docker cp). `data/credentials.json` **gitignored** — Docker build öncesi `fetch_credentials.py` çalıştırılmalı (aynı `nodes.json` sözleşmesi). Yeni `CredentialTypeInfo` modeli + `registry.list_credential_catalog(query)` + `registry.get_credential_definition(type)`. OAuth/generic ayıklama yükleme anında hesaplanıyor (`is_oauth`, `generic_auth`).
+
+**Zengin alan modeli:** `CredentialField` `default`/`placeholder`/`description`/`advanced`/`options`/`showWhen` kazandı; `credential_fields_from_definition` n8n özelliklerini eşler (şifre→typeOptions, boolean→toggle, options→dropdown, `displayOptions.show` tek-anahtar→`showWhen`, zorunlu-olmayan→advanced). Katalog + tip alanları registry'den sunuluyor; eski `build_catalog`/`fetch_credential_fields` + `n8n_client` bağımlılığı kaldırıldı.
+
+**Frontend:** `components/credentials/dynamic-credential-fields.tsx` (**yeni**): defaults ön-dolu, `*` zorunlu, boolean toggle, dropdown, `showWhen` koşullu görünürlük, gelişmiş seçenekler daraltılabilir. Submit daraltılmış alanların defaultlarını içeriyor; yalnızca `showWhen`-gizli alanlar düşürülüyor.
+
+**Servis ikonları:** `GET /credentials/icon?path=icons/...` (PUBLIC, SSRF korumalı: `icons/` öneki + `..` yasağı) agent'ta n8n ikon SVG'lerini proxy'liyor; web BFF binary route önünde.
+
+**Deploy sözleşmesi:** `data/credentials.json` gitignored → agent Docker build öncesi `fetch_credentials.py` çalıştırılmazsa katalog boş gelir (aynı `nodes.json` adımı gibi).
+
+**Test:** 345 agent unit testi passed (5 bilinen Windows-tmp), n8n-registry suite yeşil, frontend tsc+lint temiz, ruff temiz. Tüm-branch review (opus): Critical/Important yok. Canlı uçtan-uca doğrulama BEKLIYOR (manuel). (bkz. [[adr-0015-predefined-credential-library]] §Güncelleme 2026-06-26b)
+
+---
+
 ### Son oturum özeti (2026-06-24) — DeepSeek tier bake-off branch + ucuz model araştırması
 
 **Bağlam:** İsteklerin çoğu MEDIUM tier'a (Claude Sonnet 4.6, $3/$15) düşüyor → maliyet yüksek. Kullanıcı ucuz alternatif istedi. **deep-research harness** ile DeepSeek V4 / Qwen 3.6 / 3.7 araştırıldı (23 kaynak, 25 adversarial doğrulama). Sonuç: en güçlü ucuz aday **DeepSeek V4 Pro** (first-party OpenAI-uyumlu API, tool calls + JSON, ~7x/17x ucuz, OpenRouter dışı). Risk: tool-call reliability kanıtı zayıf (tekil GitHub issue #1244 ~%11 plain-text-tool-call), bağımsız benchmark yok → canlı bake-off şart. Tüm bulgular: [[model-cost-research-2026-06]].
@@ -435,7 +453,8 @@ python packages/n8n-registry/scripts/fetch_nodes.py
 - `apps/agent/src/agent/credential_catalog.py` — predefined credential katalog motoru: `build_catalog` (OAuth ayıklama + friendly_label), `match_credentials_by_type`, `parse_schema_fields`, `fetch_credential_fields`; n8n registry + schema endpoint üzerinden çalışır (ADR-0015)
 - `apps/agent/src/agent/credential_types.py` — custom HTTP credential V1 tip kataloğu + `normalize_host` + `match_credentials` (host eşleştirme) (ADR-0012)
 - `apps/agent/src/agent/tools/credentials.py` — `list_credentials_payload` (secret yok, host-eşleşme bayraklı) + `attach_credential_payload` (ownership doğrular, generic auth wiring) (ADR-0012)
-- `apps/agent/src/routes/credentials.py` — custom credential kütüphanesi route'ları (POST create/attach, GET, GET `/types`, DELETE `/{id}`) (ADR-0012)
+- `apps/agent/src/routes/credentials.py` — custom credential kütüphanesi route'ları (POST create/attach, GET, GET `/types`, DELETE `/{id}`, `GET /catalog`, `GET /catalog/{type}/schema`) + PUBLIC `GET /credentials/icon?path=icons/...` (SSRF korumalı n8n ikon proxy, ADR-0015 Faz 2) (ADR-0012)
+- `apps/web/src/components/credentials/dynamic-credential-fields.tsx` — şema-güdümlü credential form bileşeni: `credentials.json`'dan defaults/toggle/dropdown/showWhen/advanced render'ı; dashboard servis seçici + chat kartı tarafından kullanılır (ADR-0015 Faz 2)
 - `apps/web/src/app/(dashboard)/dashboard/credentials/page.tsx` — credential yönetim sayfası (ekle/sil, tip seçici + host)
 - `apps/agent/src/agent/tools/validation.py` + `agent/validation.py` — node/connection normalize + validate + ModelRetry
 - `apps/agent/src/agent/tools/runtime_inputs.py` — runtime input şeması + webhook expression
@@ -448,6 +467,7 @@ python packages/n8n-registry/scripts/fetch_nodes.py
 - `packages/n8n-registry/src/n8n_registry/loader.py` — nodes.json + templates.json parse
 - `packages/n8n-registry/src/n8n_registry/search.py` — keyword search + schema extraction
 - `packages/n8n-registry/scripts/fetch_nodes.py` — n8n'den node şemalarını çeker
+- `packages/n8n-registry/scripts/fetch_credentials.py` — n8n'den credential tip şemalarını çeker (`data/credentials.json`, gitignored; Docker build öncesi çalıştırılmalı) (ADR-0015 Faz 2)
 - `packages/n8n-registry/scripts/fetch_templates.py` — n8n.io'dan template'leri indirir
 - `apps/web/src/app/(chat)/chat/[conversationId]/page.tsx` — konuşma sayfası (SSE fix burada)
 - `apps/web/src/lib/chat/sse.ts` — SSE stream parser
