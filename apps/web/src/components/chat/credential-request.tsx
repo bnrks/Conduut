@@ -41,6 +41,7 @@ export interface CredentialRequestData {
   host?: string;
   draftId?: string;
   sourceUrl?: string;
+  matchKind?: string;
 }
 
 // Map the request's offered n8n credential types to plain-language auth methods.
@@ -108,6 +109,7 @@ export function CredentialRequest({
               generic_auth_type: submission.generic_auth_type,
               credential_name: submission.label,
               host: submission.host,
+              match_kind: data.matchKind,
               data: submission.data,
             }
       ),
