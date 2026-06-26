@@ -14,12 +14,14 @@ import {
   CredentialForm,
   type CredentialSubmission,
 } from "@/components/credentials/credential-form";
+import { ServiceCredentialPicker } from "@/components/credentials/service-credential-picker";
 
 interface SavedCredential {
   id: string;
   label: string;
   credential_type: string;
   host: string;
+  match_kind?: string;
   status?: string;
   source_url?: string;
   secret_fields?: string[];
@@ -68,6 +70,7 @@ export default function CredentialsPage() {
   const [credentials, setCredentials] = useState<SavedCredential[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [addMode, setAddMode] = useState<"service" | "http">("service");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [completingId, setCompletingId] = useState<string | null>(null);
 
@@ -112,6 +115,31 @@ export default function CredentialsPage() {
         label: submission.label,
         host: submission.host,
         data: submission.data,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(await getErrorMessage(response, "Credential could not be saved."));
+    }
+    toast.success("Credential saved.");
+    setShowForm(false);
+    await load();
+  };
+
+  const handleServiceSubmit = async (
+    credentialType: string,
+    label: string,
+    data: Record<string, unknown>
+  ) => {
+    if (!user) throw new Error("Please sign in first.");
+    const token = await user.getIdToken();
+    const response = await fetch("/api/credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        credential_type: credentialType,
+        match_kind: "type",
+        label,
+        data,
       }),
     });
     if (!response.ok) {
@@ -187,7 +215,29 @@ export default function CredentialsPage() {
       {showForm && (
         <Card className="mb-6">
           <CardContent className="p-4">
-            <CredentialForm methods={AUTH_METHODS} requireHost onSubmit={handleSubmit} />
+            <div className="mb-3 flex gap-2">
+              <Button
+                size="sm"
+                variant={addMode === "service" ? "default" : "outline"}
+                className="h-7 px-3 text-[12px]"
+                onClick={() => setAddMode("service")}
+              >
+                Service
+              </Button>
+              <Button
+                size="sm"
+                variant={addMode === "http" ? "default" : "outline"}
+                className="h-7 px-3 text-[12px]"
+                onClick={() => setAddMode("http")}
+              >
+                Custom HTTP
+              </Button>
+            </div>
+            {addMode === "service" ? (
+              <ServiceCredentialPicker onSubmit={handleServiceSubmit} />
+            ) : (
+              <CredentialForm methods={AUTH_METHODS} requireHost onSubmit={handleSubmit} />
+            )}
           </CardContent>
         </Card>
       )}
@@ -235,7 +285,9 @@ export default function CredentialsPage() {
                         )}
                       </div>
                       <p className="truncate text-[12px] text-muted-foreground">
-                        {credential.host}
+                        {credential.match_kind === "type"
+                          ? friendlyTypeLabel(credential.credential_type)
+                          : credential.host}
                       </p>
                     </div>
                     {isDraft && (
