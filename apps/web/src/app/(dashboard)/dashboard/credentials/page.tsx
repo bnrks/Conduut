@@ -22,10 +22,32 @@ interface SavedCredential {
   credential_type: string;
   host: string;
   match_kind?: string;
+  icon_url?: string;
   status?: string;
   source_url?: string;
   secret_fields?: string[];
   created_at?: string;
+}
+
+// Service credentials show their n8n service logo (via the icon proxy), falling
+// back to a generic key icon when there's no icon or it fails to load.
+function CredentialAvatar({ iconUrl }: { iconUrl?: string }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-white">
+      {iconUrl && !failed ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={`/api/credentials/icon?path=${encodeURIComponent(iconUrl)}`}
+          alt=""
+          className="h-5 w-5 object-contain"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <KeyRound className="h-4 w-4 text-conduut-500" />
+      )}
+    </div>
+  );
 }
 
 const SECRET_LABELS: Record<string, string> = {
@@ -268,28 +290,28 @@ export default function CredentialsPage() {
               <Card key={credential.id}>
                 <CardContent className="p-4">
                   <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-white">
-                      <KeyRound className="h-4 w-4 text-conduut-500" />
-                    </div>
+                    <CredentialAvatar iconUrl={credential.icon_url} />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="truncate text-[14px] font-medium text-foreground">
                           {credential.label}
                         </p>
-                        <Badge variant="default" className="text-[11px]">
-                          {friendlyTypeLabel(credential.credential_type)}
-                        </Badge>
+                        {friendlyTypeLabel(credential.credential_type) !== credential.label && (
+                          <Badge variant="default" className="text-[11px]">
+                            {friendlyTypeLabel(credential.credential_type)}
+                          </Badge>
+                        )}
                         {isDraft && (
                           <Badge variant="warning" className="text-[11px]">
                             Tamamlanmamış
                           </Badge>
                         )}
                       </div>
-                      <p className="truncate text-[12px] text-muted-foreground">
-                        {credential.match_kind === "type"
-                          ? friendlyTypeLabel(credential.credential_type)
-                          : credential.host}
-                      </p>
+                      {credential.match_kind !== "type" && credential.host && (
+                        <p className="truncate text-[12px] text-muted-foreground">
+                          {credential.host}
+                        </p>
+                      )}
                     </div>
                     {isDraft && (
                       <Button

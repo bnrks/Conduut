@@ -67,6 +67,14 @@ def _build_n8n_data(credential: store.CustomCredential, secret: dict[str, Any]) 
     return {key: secret.get(key) for key in fields}
 
 
+def _credential_icon_url(credential: store.CustomCredential) -> str:
+    """Service (type-matched) credentials carry their n8n service icon; others none."""
+    if credential.match_kind != "type":
+        return ""
+    definition = registry.get_credential_definition(credential.credential_type)
+    return definition.icon_url if definition else ""
+
+
 @router.get("/credentials")
 async def list_credentials(request: Request):
     user_id = get_user_id(request)
@@ -80,6 +88,7 @@ async def list_credentials(request: Request):
                 "host": item.host,
                 "status": item.status,
                 "match_kind": item.match_kind,
+                "icon_url": _credential_icon_url(item),
                 "source_url": item.source_url,
                 "secret_fields": item.secret_fields,
                 "created_at": item.created_at,

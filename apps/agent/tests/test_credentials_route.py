@@ -252,6 +252,28 @@ async def test_list_credentials_includes_match_kind(monkeypatch):
     assert result["credentials"][0]["match_kind"] == "type"
 
 
+async def test_list_credentials_includes_icon_url(monkeypatch):
+    _patch_user(monkeypatch)
+    from n8n_registry.models import CredentialTypeInfo
+
+    async def fake_list(user_id):
+        return [
+            _custom_credential(credential_type="anthropicApi", host="", match_kind="type"),
+            _custom_credential(id="cred_h", credential_type="httpHeaderAuth", match_kind="host"),
+        ]
+
+    monkeypatch.setattr(credentials_route.store, "list_custom_credentials", fake_list)
+    monkeypatch.setattr(
+        credentials_route.registry,
+        "get_credential_definition",
+        lambda t: CredentialTypeInfo(name=t, display_name="Anthropic", icon_url="icons/a.svg"),
+    )
+    result = await credentials_route.list_credentials(object())
+    by_id = {c["id"]: c for c in result["credentials"]}
+    assert by_id["cred_1"]["icon_url"] == "icons/a.svg"  # type-matched -> service icon
+    assert by_id["cred_h"]["icon_url"] == ""  # host-matched -> no service icon
+
+
 async def test_credential_catalog_schema_rejects_oauth_by_signature(monkeypatch):
     _patch_user(monkeypatch)
 
