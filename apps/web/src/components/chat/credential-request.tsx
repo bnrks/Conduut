@@ -145,7 +145,7 @@ export function CredentialRequest({
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-conduut-50">
           {data.iconUrl ? (
             <img
-              src={data.iconUrl}
+              src={`/api/credentials/icon?path=${encodeURIComponent(data.iconUrl)}`}
               alt=""
               className="h-5 w-5 object-contain"
               onError={(event) => {

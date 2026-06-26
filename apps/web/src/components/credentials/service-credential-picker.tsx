@@ -110,7 +110,7 @@ export function ServiceCredentialPicker({ onSubmit }: ServiceCredentialPickerPro
         <div className="flex items-center gap-2">
           {iconUrl && (
             <img
-              src={iconUrl}
+              src={`/api/credentials/icon?path=${encodeURIComponent(iconUrl)}`}
               className="h-4 w-4"
               alt=""
               onError={(event) => {
@@ -167,7 +167,7 @@ export function ServiceCredentialPicker({ onSubmit }: ServiceCredentialPickerPro
               <span className="flex items-center gap-2">
                 {entry.icon_url && (
                   <img
-                    src={entry.icon_url}
+                    src={`/api/credentials/icon?path=${encodeURIComponent(entry.icon_url)}`}
                     className="h-4 w-4"
                     alt=""
                     onError={(event) => {
