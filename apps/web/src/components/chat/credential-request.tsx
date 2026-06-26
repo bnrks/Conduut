@@ -13,12 +13,22 @@ import {
   CredentialForm,
   type CredentialSubmission,
 } from "@/components/credentials/credential-form";
+import {
+  DynamicCredentialFields,
+  type CredentialFieldSpec,
+} from "@/components/credentials/dynamic-credential-fields";
 
 export interface CredentialField {
   name: string;
   label: string;
   type?: string;
   required?: boolean;
+  default?: unknown;
+  placeholder?: string;
+  description?: string;
+  advanced?: boolean;
+  options?: { label: string; value: string }[];
+  showWhen?: { field: string; values: unknown[] };
 }
 
 export interface CredentialTypeOption {
@@ -42,6 +52,7 @@ export interface CredentialRequestData {
   draftId?: string;
   sourceUrl?: string;
   matchKind?: string;
+  iconUrl?: string;
 }
 
 // Map the request's offered n8n credential types to plain-language auth methods.
@@ -132,7 +143,18 @@ export function CredentialRequest({
     <div className={cn("mt-2 w-full rounded-lg border border-border bg-card p-3", className)}>
       <div className="mb-3 flex items-start gap-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-conduut-50">
-          <KeyRound className="h-4 w-4 text-conduut-500" />
+          {data.iconUrl ? (
+            <img
+              src={data.iconUrl}
+              alt=""
+              className="h-5 w-5 object-contain"
+              onError={(event) => {
+                (event.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+          ) : (
+            <KeyRound className="h-4 w-4 text-conduut-500" />
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-[14px] font-medium text-foreground">Connect {data.service}</p>
@@ -164,6 +186,19 @@ export function CredentialRequest({
         <p className="text-[12px] text-muted-foreground">
           Credential saved and attached. Ask the agent to run the workflow again.
         </p>
+      ) : data.matchKind === "type" && !isDraft ? (
+        <DynamicCredentialFields
+          fields={data.fields as CredentialFieldSpec[]}
+          submitLabel="Save credential"
+          onSubmit={(formData) =>
+            handleSubmit({
+              credential_type: data.credentialType,
+              generic_auth_type: "",
+              label: data.credentialName,
+              data: formData,
+            } as CredentialSubmission)
+          }
+        />
       ) : (
         <CredentialForm
           methods={methods}
