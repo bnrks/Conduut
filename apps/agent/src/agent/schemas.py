@@ -345,6 +345,12 @@ class AgentDeps:
     conversation_workflows: dict[str, str] = field(default_factory=dict)
     # Sandbox test repair attempts per workflow id (bounds the self-repair loop).
     workflow_test_attempts: dict[str, int] = field(default_factory=dict)
+    # Real-execution failures per workflow id (bounds the execute retry loop so a
+    # workflow that keeps failing surfaces to the user instead of thrashing budget).
+    workflow_execution_failures: dict[str, int] = field(default_factory=dict)
+    # True once a real external action (workflow execution / platform action) has
+    # run this attempt — the reliability guard must not retry from scratch then.
+    real_action_executed: bool = False
 
     async def emit_tool_call(self, tool: str) -> None:
         log.info(

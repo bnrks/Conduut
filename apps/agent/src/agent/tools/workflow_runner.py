@@ -35,7 +35,52 @@ log = structlog.get_logger()
 
 _FAILED_RUN_STATUSES = {"error", "failed"}
 _MAX_BATCH_ROWS = 50
+# Stop the real-execution retry loop after this many failures for one workflow,
+# so a workflow that keeps failing is surfaced to the user instead of thrashing
+# the request budget (and breaking itself in the process).
+_MAX_EXECUTION_FAILURES = 2
 BatchProgressPayload = dict[str, Any] | WorkflowBatchRowResultData | WorkflowBatchRunResultData
+
+
+def execution_retry_guard(
+    failures: dict[str, int],
+    workflow_id: str,
+    result: WorkflowRunResultData,
+) -> dict[str, Any] | None:
+    """Bound repeated real-execution failures so the agent stops thrashing.
+
+    Tracks consecutive failures per workflow in ``failures`` (mutated in place).
+    Returns ``None`` to let the agent proceed — including one fix-and-retry on the
+    first failure — and resets the counter on success. Once a workflow has failed
+    ``_MAX_EXECUTION_FAILURES`` times, returns a stop payload telling the agent to
+    surface the error to the user instead of retrying or rebuilding.
+    """
+
+    failed = result.status in _FAILED_RUN_STATUSES or bool(result.error)
+    if not failed:
+        failures.pop(workflow_id, None)
+        return None
+
+    count = failures.get(workflow_id, 0) + 1
+    failures[workflow_id] = count
+    if count < _MAX_EXECUTION_FAILURES:
+        return None
+
+    return {
+        "success": False,
+        "workflow_id": workflow_id,
+        "status": result.status,
+        "error": result.error,
+        "stop_retrying": True,
+        "instruction": (
+            f"This workflow has now failed to execute {count} times "
+            f"({result.error or 'unknown error'}). Do NOT call execute_workflow again "
+            "and do NOT rebuild the workflow. Tell the user plainly, in their language "
+            "and without jargon, what went wrong and ask how they want to proceed "
+            "(for example: connect the required credential, or change the target). "
+            "Keep the existing trigger node intact."
+        ),
+    }
 
 
 async def run_workflow_with_input(

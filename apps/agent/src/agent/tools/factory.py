@@ -45,7 +45,7 @@ from src.agent.tools.runtime_inputs import (
     _workflow_input_schema_from_metadata,
 )
 from src.agent.tools.validation import _validated_runtime_workflow
-from src.agent.tools.workflow_runner import run_workflow_with_input
+from src.agent.tools.workflow_runner import execution_retry_guard, run_workflow_with_input
 from src.platforms.actions import run_platform_action_payload
 from src.registry import registry
 
@@ -255,6 +255,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         await ctx.deps.emit_tool_call("run_platform_action")
         started_at = perf_counter()
         result = await run_platform_action_payload(ctx.deps, plan)
+        ctx.deps.real_action_executed = True
         payload = result.model_dump(exclude_none=True)
         _log_tool_finished("run_platform_action", started_at, payload)
         return payload
@@ -625,11 +626,19 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                     _log_tool_finished("execute_workflow", started_at, gate)
                     return gate
 
+            ctx.deps.real_action_executed = True
             result = await run_workflow_with_input(
                 workflow,
                 user_id=ctx.deps.user_id,
                 input_payload=input,
             )
+            # Bound repeated real-execution failures: after the 2nd failure for the
+            # same workflow, stop and surface the error instead of letting the model
+            # thrash execute/rebuild until the request budget is exhausted.
+            stop = execution_retry_guard(ctx.deps.workflow_execution_failures, workflow_id, result)
+            if stop is not None:
+                _log_tool_finished("execute_workflow", started_at, stop)
+                return stop
             for artifact in result.artifacts:
                 await ctx.deps.emit_attachment(ArtifactPreviewAttachment(data=artifact))
             payload = result.model_dump(exclude_none=True)

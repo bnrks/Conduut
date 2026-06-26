@@ -165,6 +165,11 @@ async def test_agent_deps_deduplicates_identical_attachments():
     assert deps.event_queue.qsize() == 1
 
 
+def test_agent_deps_real_action_flag_defaults_false():
+    deps = AgentDeps(user_id="u", conversation_id="c", event_queue=asyncio.Queue())
+    assert deps.real_action_executed is False
+
+
 def test_history_from_store_messages_keeps_only_text_user_assistant_history():
     prompt, history = runner._history_from_store_messages(
         [
@@ -343,6 +348,10 @@ async def test_runner_streams_tokens_thinking_and_preserves_sse_contract(monkeyp
         },
     )
 
+    # This test pins the MEDIUM tier to Anthropic Sonnet (adaptive thinking) to
+    # exercise the thinking+text streaming contract, so it must run on the
+    # "default" profile regardless of the branch's default (CONDUUT_MODEL_PROFILE).
+    monkeypatch.setattr(runner.settings, "model_profile", "default")
     monkeypatch.setattr(runner, "classify_tier", fake_classify)
     monkeypatch.setattr(runner, "key_for_provider", lambda *_args: "key")
     monkeypatch.setattr(runner, "build_model", lambda *_args: object())
@@ -377,6 +386,90 @@ async def test_runner_streams_tokens_thinking_and_preserves_sse_contract(monkeyp
     assert saved["args"][3] == "Workflow created."
     assert "planning" not in saved["args"][3]
     assert saved["kwargs"]["attachments"][0]["type"] == "workflow_preview"
+
+
+def _text_events(text: str):
+    return [PartStartEvent(index=0, part=TextPart(content=text))]
+
+
+@pytest.mark.asyncio
+async def test_buffered_guard_retries_on_garbage_then_replays_clean(monkeypatch):
+    saved = {}
+
+    async def fake_add_message(*args, **kwargs):
+        saved["content"] = args[3]
+
+    async def fake_classify(*_a, **_k):
+        return Tier.MEDIUM
+
+    # Force the DeepSeek (buffered) path.
+    monkeypatch.setattr(runner.settings, "model_profile", "deepseek")
+    monkeypatch.setattr(runner.settings, "enable_reliability_guard", True)
+    monkeypatch.setattr(runner, "classify_tier", fake_classify)
+    monkeypatch.setattr(runner, "key_for_provider", lambda *_a: "key")
+    monkeypatch.setattr(runner, "build_model", lambda *_a: object())
+
+    agents = iter(
+        [
+            FakeStreamingAgent(_text_events("execute_workflow({'workflow_id': 'x'})")),
+            FakeStreamingAgent(_text_events("Hazır, workflow'u çalıştırdım.")),
+        ]
+    )
+    monkeypatch.setattr(runner, "create_agent", lambda _m: next(agents))
+    monkeypatch.setattr(runner.store, "add_message", fake_add_message)
+    _recognize_fake_model_node(monkeypatch)
+
+    events = [
+        _parse_sse(raw)
+        async for raw in runner.run("u1", "c1", [{"role": "user", "content": "kur ve çalıştır"}])
+        if raw.startswith("event:")
+    ]
+    names = [e for e, _ in events]
+    token_text = "".join(d["text"] for e, d in events if e == "token")
+
+    assert names[-1] == "done"
+    assert "execute_workflow(" not in token_text  # garbage never shown
+    assert token_text == "Hazır, workflow'u çalıştırdım."  # clean retry replayed
+    assert saved["content"] == "Hazır, workflow'u çalıştırdım."
+
+
+@pytest.mark.asyncio
+async def test_buffered_guard_no_retry_after_real_action(monkeypatch):
+    async def fake_add_message(*_a, **_k):
+        return None
+
+    async def fake_classify(*_a, **_k):
+        return Tier.MEDIUM
+
+    async def emit_action(deps):
+        deps.real_action_executed = True  # simulate execute_workflow having run
+
+    monkeypatch.setattr(runner.settings, "model_profile", "deepseek")
+    monkeypatch.setattr(runner, "classify_tier", fake_classify)
+    monkeypatch.setattr(runner, "key_for_provider", lambda *_a: "key")
+    monkeypatch.setattr(runner, "build_model", lambda *_a: object())
+
+    calls = {"n": 0}
+
+    def make_agent(_m):
+        calls["n"] += 1
+        return FakeStreamingAgent(_text_events("execute_workflow({'x':1})"), emit=emit_action)
+
+    monkeypatch.setattr(runner, "create_agent", make_agent)
+    monkeypatch.setattr(runner.store, "add_message", fake_add_message)
+    _recognize_fake_model_node(monkeypatch)
+
+    events = [
+        _parse_sse(raw)
+        async for raw in runner.run("u1", "c1", [{"role": "user", "content": "çalıştır"}])
+        if raw.startswith("event:")
+    ]
+    names = [e for e, _ in events]
+    token_text = "".join(d["text"] for e, d in events if e == "token")
+
+    assert names[-1] == "done"  # graceful, not an error loop
+    assert calls["n"] == 1  # NO retry — a real action had run
+    assert "execute_workflow(" not in token_text  # garbage still not shown
 
 
 @pytest.mark.asyncio
