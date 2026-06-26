@@ -284,21 +284,6 @@ def find_templates(
     return [t for _, t in scored[:limit]]
 
 
-def collect_credential_types(nodes: list[NodeInfo]) -> list[dict]:
-    """Tüm node'lardan referans edilen credential tiplerini toplar.
-
-    Her tip için onu kullanan node'ların display_name'lerini (görülme sırasında,
-    tekrarsız) biriktirir. Tipe göre alfabetik sıralı döner.
-    """
-    by_type: dict[str, list[str]] = {}
-    for node in nodes:
-        for cred_type in node.credentials or []:
-            names = by_type.setdefault(cred_type, [])
-            if node.display_name and node.display_name not in names:
-                names.append(node.display_name)
-    return [{"type": cred_type, "nodes": names} for cred_type, names in sorted(by_type.items())]
-
-
 def build_template_response(template: WorkflowTemplate) -> dict:
     """LLM'e gönderilecek template özetini oluşturur."""
     return {

@@ -275,15 +275,9 @@ async def add_service_credential_payload(
     workflow_id: str | None = None,
     node_name: str | None = None,
 ) -> dict[str, Any]:
-    """Resolve a predefined n8n service credential and show its secret form.
+    """Resolve a predefined n8n service credential and show its rich secret form."""
 
-    Looks the catalog up by exact type/label, then by substring. Returns a
-    type-matched credential card (``status="card"``) whose fields come from
-    n8n's schema, or ``status="not_found"`` when nothing fillable matches.
-    """
-
-    # deps kept for payload-function convention; reserved for future per-user catalog filtering.
-    catalog = credential_catalog.build_catalog(registry.list_credential_types())
+    catalog = registry.list_credential_catalog()
     needle = service_or_type.strip().lower()
     match = next(
         (e for e in catalog if e["type"].lower() == needle or e["label"].lower() == needle),
@@ -303,39 +297,41 @@ async def add_service_credential_payload(
             ),
         }
 
-    schema = await n8n_client.get_credential_schema(match["type"])
-    if credential_catalog.schema_is_oauth(schema):
+    definition = registry.get_credential_definition(match["type"])
+    if definition is None or definition.is_oauth or definition.generic_auth:
         return {
             "status": "not_found",
             "instruction": (
-                "That service authenticates via OAuth, which Conduut cannot set up as a "
-                "simple key/secret credential. Tell the user it is not available here; "
-                "OAuth-based services are managed under Connections."
+                "That service can't be set up as a simple key/secret credential "
+                "(OAuth-based or unavailable). Tell the user it isn't available here."
             ),
         }
-    fields = credential_catalog.parse_schema_fields(schema)
+    fields = credential_catalog.credential_fields_from_definition(definition)
     card = CredentialRequestAttachment(
         data=CredentialRequestData(
             workflowId=workflow_id or "",
             nodeName=node_name or "",
-            service=match["label"],
-            credentialType=match["type"],
-            credentialName=f"{match['label']} - Conduut",
+            service=definition.display_name,
+            credentialType=definition.name,
+            credentialName=f"{definition.display_name} - Conduut",
             fields=fields,
             submitPath="/api/credentials",
-            description=f"Enter your {match['label']} credentials to save them in Conduut.",
+            description=(
+                f"Enter your {definition.display_name} credentials to save them in Conduut."
+            ),
             host=None,
             matchKind="type",
+            iconUrl=definition.icon_url or None,
         )
     )
     return {
         "status": "card",
-        "credentialType": match["type"],
-        "label": match["label"],
+        "credentialType": definition.name,
+        "label": definition.display_name,
         "card": card,
         "instruction": (
-            f"A credential form for {match['label']} is shown. Ask the user to enter the "
-            "secret in the card; never accept the key as chat text. Once saved you can "
-            "attach it to a node with attach_credential."
+            f"A credential form for {definition.display_name} is shown. Ask the user to enter "
+            "the secret in the card; never accept the key as chat text. Once saved you can "
+            "attach it with attach_credential."
         ),
     }

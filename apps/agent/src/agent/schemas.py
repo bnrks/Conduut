@@ -263,6 +263,7 @@ class CredentialRequestData(BaseModel):
     # "type" -> credential matched/saved by n8n credential type (e.g. openAiApi),
     # not by host. The card hides the host field and submits match_kind="type".
     matchKind: str | None = None
+    iconUrl: str | None = None
 
 
 class CredentialRequestAttachment(BaseModel):

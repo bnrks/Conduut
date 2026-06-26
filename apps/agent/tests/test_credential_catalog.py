@@ -25,25 +25,6 @@ def test_schema_is_oauth_detects_oauth_fields():
     assert cc.schema_is_oauth({"properties": {"apiKey": {"type": "string"}}}) is False
 
 
-def test_friendly_label_prefers_shortest_node_name():
-    assert cc.friendly_label("openAiApi", ["OpenAI Chat Model", "OpenAI"]) == "OpenAI"
-    assert cc.friendly_label("stripeApi", []) == "Stripe"
-
-
-def test_build_catalog_excludes_oauth_filters_and_sorts():
-    raw = [
-        {"type": "openAiApi", "nodes": ["OpenAI"]},
-        {"type": "slackOAuth2Api", "nodes": ["Slack"]},
-        {"type": "anthropicApi", "nodes": ["Anthropic Chat Model"]},
-    ]
-    full = cc.build_catalog(raw)
-    # OAuth excluded, sorted by label
-    assert [c["type"] for c in full] == ["anthropicApi", "openAiApi"]
-    assert all(c["fillable"] is True for c in full)
-    filtered = cc.build_catalog(raw, query="open")
-    assert [c["type"] for c in filtered] == ["openAiApi"]
-
-
 def test_match_credentials_by_type_only_ready():
     creds = [
         _Cred("c1", "openAiApi"),

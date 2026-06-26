@@ -375,11 +375,21 @@ async def _credential_request_for_node(
     if is_supported_http_type(credential_type) and _is_http_request_node(node):
         return _http_credential_request(workflow_id, workflow_name, node, credential_type)
 
-    try:
-        schema = await n8n_client.get_credential_schema(credential_type)
-        fields = _fields_from_schema(schema)
-    except Exception:
-        fields = [CredentialField(name="apiKey", label="API Key", type="password", required=True)]
+    definition = registry.get_credential_definition(credential_type)
+    if definition is not None and not definition.is_oauth and not definition.generic_auth:
+        from src.agent.credential_catalog import credential_fields_from_definition
+
+        fields = credential_fields_from_definition(definition)
+        icon_url = definition.icon_url or None
+    else:
+        try:
+            schema = await n8n_client.get_credential_schema(credential_type)
+            fields = _fields_from_schema(schema)
+        except Exception:
+            fields = [
+                CredentialField(name="apiKey", label="API Key", type="password", required=True)
+            ]
+        icon_url = None
 
     service = _service_name(node.get("type", ""), node_name)
     credential_name = f"{service} - Conduut"
@@ -395,6 +405,7 @@ async def _credential_request_for_node(
             submitPath="/api/credentials",
             description=f"{node_name} needs {credential_type} credentials before it can run.",
             matchKind="type",
+            iconUrl=icon_url,
         )
     )
 

@@ -133,41 +133,42 @@ async def test_list_credentials_payload_flags_type_match(monkeypatch):
 
 
 async def test_add_service_credential_known_type_returns_card(monkeypatch):
+    from n8n_registry.models import CredentialTypeInfo
+
     monkeypatch.setattr(
-        cred_tools.registry,
-        "list_credential_types",
-        lambda: [{"type": "openAiApi", "nodes": ["OpenAI"]}],
+        cred_tools.registry, "list_credential_catalog",
+        lambda q=None: [{"type": "anthropicApi", "label": "Anthropic", "icon_url": "icons/a.svg"}],
     )
-
-    async def fake_schema(credential_type):
-        return {
-            "properties": {"apiKey": {"type": "string", "displayName": "API Key"}},
-            "required": ["apiKey"],
-        }
-
-    monkeypatch.setattr(cred_tools.n8n_client, "get_credential_schema", fake_schema)
-    result = await cred_tools.add_service_credential_payload(_deps(), "OpenAI")
+    definition = CredentialTypeInfo(
+        name="anthropicApi", display_name="Anthropic", icon_url="icons/a.svg",
+        properties=[{"displayName": "API Key", "name": "apiKey", "type": "string",
+                     "typeOptions": {"password": True}, "required": True}],
+    )
+    monkeypatch.setattr(cred_tools.registry, "get_credential_definition", lambda t: definition)
+    result = await cred_tools.add_service_credential_payload(_deps(), "Anthropic")
     assert result["status"] == "card"
-    assert result["credentialType"] == "openAiApi"
+    assert result["credentialType"] == "anthropicApi"
     assert result["card"].data.matchKind == "type"
-    assert result["card"].data.host is None
+    assert result["card"].data.iconUrl == "icons/a.svg"
+    assert result["card"].data.fields[0].name == "apiKey"
 
 
 async def test_add_service_credential_unknown_returns_not_found(monkeypatch):
-    monkeypatch.setattr(cred_tools.registry, "list_credential_types", lambda: [])
+    monkeypatch.setattr(cred_tools.registry, "list_credential_catalog", lambda q=None: [])
     result = await cred_tools.add_service_credential_payload(_deps(), "nonexistent-svc")
     assert result["status"] == "not_found"
 
 
-async def test_add_service_credential_oauth_by_signature_rejected(monkeypatch):
+async def test_add_service_credential_oauth_rejected(monkeypatch):
+    from n8n_registry.models import CredentialTypeInfo
+
     monkeypatch.setattr(
-        cred_tools.registry, "list_credential_types",
-        lambda: [{"type": "weirdApi", "nodes": ["Weird"]}],  # name passes the OAuth-name filter
+        cred_tools.registry, "list_credential_catalog",
+        lambda q=None: [{"type": "slackOAuth2Api", "label": "Slack", "icon_url": ""}],
     )
-
-    async def fake_schema(credential_type):
-        return {"properties": {"clientId": {}, "oauthTokenData": {}}}  # OAuth by signature
-
-    monkeypatch.setattr(cred_tools.n8n_client, "get_credential_schema", fake_schema)
-    result = await cred_tools.add_service_credential_payload(_deps(), "Weird")
+    monkeypatch.setattr(
+        cred_tools.registry, "get_credential_definition",
+        lambda t: CredentialTypeInfo(name="slackOAuth2Api", display_name="Slack", is_oauth=True),
+    )
+    result = await cred_tools.add_service_credential_payload(_deps(), "Slack")
     assert result["status"] == "not_found"

@@ -13,7 +13,6 @@ from .models import CredentialTypeInfo, NodeInfo, WorkflowTemplate
 from .search import (
     build_schema_response,
     build_template_response,
-    collect_credential_types,
     find_templates,
     get_node_by_type,
     search_nodes,
@@ -155,13 +154,6 @@ class NodeRegistry:
         if not node:
             return None
         return build_schema_response(node)
-
-    def list_credential_types(self) -> list[dict]:
-        """Registry'deki tüm node'lardan referans edilen credential tiplerini döner.
-
-        Her öğe: {type, nodes} — nodes, o tipi kullanan node display_name'leri.
-        """
-        return collect_credential_types(self._nodes)
 
     def find_templates(self, query: str, limit: int = 3) -> list[dict]:
         """Query'ye uygun workflow template'lerini döner."""
