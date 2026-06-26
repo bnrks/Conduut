@@ -5,10 +5,11 @@ from pathlib import Path
 
 from .loader import (
     fetch_nodes_from_n8n,
+    load_credentials_from_file,
     load_nodes_from_file,
     load_templates_from_file,
 )
-from .models import NodeInfo, WorkflowTemplate
+from .models import CredentialTypeInfo, NodeInfo, WorkflowTemplate
 from .search import (
     build_schema_response,
     build_template_response,
@@ -33,6 +34,7 @@ class NodeRegistry:
     def __init__(self) -> None:
         self._nodes: list[NodeInfo] = []
         self._templates: list[WorkflowTemplate] = []
+        self._credentials: list[CredentialTypeInfo] = []
         self._loaded: bool = False
 
     @property
@@ -47,11 +49,16 @@ class NodeRegistry:
     def template_count(self) -> int:
         return len(self._templates)
 
+    @property
+    def credential_count(self) -> int:
+        return len(self._credentials)
+
     async def initialize_from_n8n(
         self,
         n8n_base_url: str,
         templates_path: str | Path | None = None,
         nodes_path: str | Path | None = None,
+        credentials_path: str | Path | None = None,
     ) -> None:
         """
         n8n node registry'sini başlatır.
@@ -94,17 +101,23 @@ class NodeRegistry:
         if templates_path:
             self._templates = load_templates_from_file(templates_path)
 
+        if credentials_path:
+            self._credentials = load_credentials_from_file(credentials_path)
+
         self._loaded = True
 
     def load_from_files(
         self,
         nodes_path: str | Path,
         templates_path: str | Path | None = None,
+        credentials_path: str | Path | None = None,
     ) -> None:
         """Daha önce kaydedilmiş dosyalardan yükler (test / offline kullanım)."""
         self._nodes = load_nodes_from_file(nodes_path)
         if templates_path:
             self._templates = load_templates_from_file(templates_path)
+        if credentials_path:
+            self._credentials = load_credentials_from_file(credentials_path)
         self._loaded = True
 
     # ------------------------------------------------------------------
@@ -156,6 +169,31 @@ class NodeRegistry:
             return []
         results = find_templates(query, self._templates, limit=limit)
         return [build_template_response(t) for t in results]
+
+    def list_credential_catalog(self, query: str | None = None) -> list[dict]:
+        """Fillable (non-OAuth, non-generic) credential types as a catalog.
+
+        Each entry: {type, label, icon_url}. Sorted by label; query matches
+        the display name or type name (case-insensitive substring).
+        """
+        needle = (query or "").strip().lower()
+        out: list[dict] = []
+        for cred in self._credentials:
+            if cred.is_oauth or cred.generic_auth:
+                continue
+            name_match = needle in cred.display_name.lower() or needle in cred.name.lower()
+            if needle and not name_match:
+                continue
+            out.append({"type": cred.name, "label": cred.display_name, "icon_url": cred.icon_url})
+        out.sort(key=lambda item: item["label"].lower())
+        return out
+
+    def get_credential_definition(self, type_name: str) -> CredentialTypeInfo | None:
+        """Return the full CredentialTypeInfo for a given credential type name."""
+        for cred in self._credentials:
+            if cred.name == type_name:
+                return cred
+        return None
 
 
 # Uygulama genelinde tek instance

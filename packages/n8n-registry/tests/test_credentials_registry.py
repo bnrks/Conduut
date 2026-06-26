@@ -1,6 +1,7 @@
 """Tests for credentials.json parsing + OAuth/generic classification."""
 
 from n8n_registry.loader import parse_credentials_json
+from n8n_registry.registry import NodeRegistry
 
 
 def _raw():
@@ -45,3 +46,30 @@ def test_oauth_detected_by_name_extends_and_signature():
 def test_generic_auth_flag():
     by_name = {c.name: c for c in parse_credentials_json(_raw())}
     assert by_name["httpHeaderAuth"].generic_auth is True
+
+
+def _registry():
+    reg = NodeRegistry()
+    reg._credentials = parse_credentials_json(_raw())
+    return reg
+
+
+def test_list_credential_catalog_excludes_oauth_and_generic():
+    reg = _registry()
+    catalog = reg.list_credential_catalog()
+    types = [c["type"] for c in catalog]
+    assert types == ["anthropicApi"]  # oauth + generic excluded; sorted by label
+    assert catalog[0]["label"] == "Anthropic"
+    assert catalog[0]["icon_url"] == "icons/anthropic.svg"
+
+
+def test_list_credential_catalog_query_filters():
+    reg = _registry()
+    assert [c["type"] for c in reg.list_credential_catalog("anth")] == ["anthropicApi"]
+    assert reg.list_credential_catalog("zzz") == []
+
+
+def test_get_credential_definition():
+    reg = _registry()
+    assert reg.get_credential_definition("anthropicApi").display_name == "Anthropic"
+    assert reg.get_credential_definition("missing") is None
