@@ -96,7 +96,7 @@ conduut/
 
 ---
 
-## Geliştirme durumu (son güncelleme: 2026-06-23)
+## Geliştirme durumu (son güncelleme: 2026-06-24)
 
 ### Çalışan servisler (docker compose up)
 - `conduut-agent` — FastAPI agent servisi, port 8000
@@ -194,6 +194,28 @@ Faz 5 — Production            → Monitoring + Stripe + Marketing sayfası
 - `agent/workflow_intent/` **boş** — typed intent engine (ADR-0008) park edildi, aktif yol WorkflowPlan compiler.
 
 **Tespit edilen darboğaz (2026-06-08):** Compiler sadece Gmail + Sheets + filter action'larını destekliyordu. Yoğun kullanılan node'lar (HTTP Request, AI Agent, Code, Edit Fields/Set, IF, Merge) ham JSON fallback'e düşüyor, agent uzun JSON yazarken `MAX_MODEL_REQUESTS` limitine takılıp çöküyordu. → **2026-06-10'da çözüldü (aşağıya bakın).**
+
+---
+
+### Son oturum özeti (2026-06-24) — DeepSeek tier bake-off branch + ucuz model araştırması
+
+**Bağlam:** İsteklerin çoğu MEDIUM tier'a (Claude Sonnet 4.6, $3/$15) düşüyor → maliyet yüksek. Kullanıcı ucuz alternatif istedi. **deep-research harness** ile DeepSeek V4 / Qwen 3.6 / 3.7 araştırıldı (23 kaynak, 25 adversarial doğrulama). Sonuç: en güçlü ucuz aday **DeepSeek V4 Pro** (first-party OpenAI-uyumlu API, tool calls + JSON, ~7x/17x ucuz, OpenRouter dışı). Risk: tool-call reliability kanıtı zayıf (tekil GitHub issue #1244 ~%11 plain-text-tool-call), bağımsız benchmark yok → canlı bake-off şart. Tüm bulgular: [[model-cost-research-2026-06]].
+
+**Karar/uygulama:** Kullanıcı DeepSeek tarafını denemeye karar verdi. Branch: **`feature/deepseek-tier-bakeoff`**. Yeni **`deepseek` model profili** (provider=`deepseek`, first-party):
+- Router + **SIMPLE → `deepseek-v4-flash`**; **MEDIUM + HARD → `deepseek-v4-pro`**. Thinking ilk bake-off'ta kapalı (DeepSeek OpenAI-uyumlu endpoint `openai_reasoning_effort` almıyor; Pro/Flash seçimi yeteneği belirler). Secondary'ler de DeepSeek (saf bake-off; secondary runtime'da henüz kullanılmıyor).
+- Bu branch'te `CONDUUT_MODEL_PROFILE` default'u **`deepseek`** (config.py) → `docker compose up` direkt DeepSeek çalışır.
+
+**Eklenen/değişen (TDD):** `config.py` (`deepseek_api_key` + `_PROVIDER_KEY_ATTR` + default profil `deepseek`), `provider_factory.py` (`SUPPORTED_PROVIDERS`+`deepseek`, `DEEPSEEK_BASE_URL=https://api.deepseek.com`, `build_model` case → `OpenAIChatModel`+`OpenAIProvider(base_url=...)`, `normalize_model_name` deepseek prefix), `model_registry.py` (`PROFILE_DEEPSEEK`). Testler: `test_config`/`test_provider_factory`/`test_model_registry`'ye deepseek case'leri; `test_runner` Sonnet-thinking testi profili açıkça `default`'a pin'ler. **299 passed (5 Windows-tmp alakasız); ruff temiz.**
+
+**Canlı doğrulandı:** DeepSeek `/models` → `200`, model ID'leri tam olarak `deepseek-v4-flash` + `deepseek-v4-pro` (config doğru, key + base_url çalışıyor). API key `apps/agent/.env`'de zaten ekli (`CONDUUT_DEEPSEEK_API_KEY`).
+
+**Ölçüm araçları (eklendi):** `runner.py` → `agent_run_finished` artık token usage logluyor (`input_tokens`/`output_tokens`/`cache_read_tokens`/`model_requests`/`usage_tool_calls`, `result.usage()` try/except'li). `scripts/analyze_bakeoff_logs.py` → `logs/agent/conduut-agent.jsonl`'i modele göre gruplayıp reliability (fail rate+tipleri) / build kalitesi (`workflow_repaired`+sandbox) / maliyet (token+tahmini USD) raporlar; `--since <bugün>` ile bake-off run'larını izole eder. Sonnet baz çizgisi (mevcut log): 31 run, %3.1 fail, 17 run'da 100 repair.
+
+**Canlı bulgu + fix (2026-06-24 ilk koşu):** SIMPLE görevler flash yerine pro'ya gitti. Kök neden: **DeepSeek V4 varsayılan thinking ON, thinking modu forced tool_choice'u reddediyor** (`400 "Thinking mode does not support this tool_choice"`); router `output_type` (structured output→forced tool_choice) kullanınca her seferinde MEDIUM'a fallback ediyordu. **Fix:** `build_model_settings` deepseek için `{"extra_body": {"thinking": {"type": "disabled"}}}` gönderiyor (canlı kanıt: forced tool_choice extra_body'siz 400, ile 200). Ayrıca **log redaction bug'ı:** token alanları "token" substring'i yüzünden `[REDACTED]` oluyordu → `tok_in`/`tok_out`/`tok_cache_read`/`tok_cache_write` olarak yeniden adlandırıldı. **301 passed, ruff temiz.** Detay: [[model-cost-research-2026-06]] §7.
+
+**Thinking display fix (2026-06-24, kural: flash OFF / pro ON):** thinking tüm tier'larda kapalıyken DeepSeek-pro reasoning'i normal mesaj `content`'i olarak yazıp chat balonuna sızdırıyordu (Sonnet'te thinking ON → panel'e gidiyordu). Canlı kanıt: thinking OFF → ThinkingPart=0/TOKEN=1016; ON → ThinkingPart=1906/TOKEN=1576 (pydantic-ai DeepSeek `reasoning_content`→ThinkingPart→mevcut `ThinkingPanel`). **Karar:** router+SIMPLE (flash) thinking OFF (forced tool_choice/hız), MEDIUM+HARD (pro) **thinking ON** (`create_agent` `output_type=str`→auto tool_choice, güvenli). `model_registry.py` `_DS_ON` eklendi. **301 passed, ruff temiz.** Restart sonrası pro reasoning panele gider; cost rakamları (§8) thinking-OFF baseline.
+
+**Bekleyen:** Agent restart sonrası SIMPLE görevleri tekrar koş (artık flash'a gitmeli). Canlı bake-off — 5-10 gerçek senaryo, `analyze_bakeoff_logs.py --since <bugün>` ile ölç: (a) tool-call hata/retry oranı (DeepSeek #1244 riski), (b) build başarı oranı, (c) gerçek token/blended maliyet. İyiyse ADR-0015 olarak kalıcılaştır. (Henüz commit edilmedi.) DeepSeek hesap bakiyesini takip et (ilk istekte 402 görüldü).
 
 ---
 

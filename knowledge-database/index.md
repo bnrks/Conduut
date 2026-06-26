@@ -34,6 +34,14 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
 - [[issue-backlog]] - kullanicinin fark ettigi cozulmesi gereken sorunlar ve
   buglar icin triage bekleyen not alani.
 
+## Arastirma
+
+- [[model-cost-research-2026-06]] - Ucuz medium-tier model alternatifleri (DeepSeek V4,
+  Qwen 3.6/3.7) fiyat/tool-calling/saglayici karsilastirmasi + DeepSeek bake-off branch
+  karari. [[adr-0011-conduut-managed-tiered-models]] ile iliskili.
+- [[claude-vs-deepseek-comparison-2026-06]] - Sonnet 4.6 -> DeepSeek V4 gecisinin her
+  boyutta karsilastirmasi (maliyet/guvenilirlik/build/UX/operasyonel) + verdict.
+
 ## Kararlar
 
 - [[adr-0001-shared-n8n-mvp]] - MVP'de shared n8n instance kullanimi.
