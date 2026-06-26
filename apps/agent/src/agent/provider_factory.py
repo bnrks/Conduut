@@ -25,7 +25,11 @@ class UnsupportedProviderError(ValueError):
     """Raised when the selected provider is not supported by Conduut."""
 
 
-SUPPORTED_PROVIDERS = frozenset({"openai", "anthropic", "google", "groq", "openrouter"})
+SUPPORTED_PROVIDERS = frozenset({"openai", "anthropic", "google", "groq", "openrouter", "deepseek"})
+
+# DeepSeek ships an OpenAI-compatible API, so we reuse OpenAIChatModel with a
+# custom base_url (see model-cost-research-2026-06 / deepseek bake-off).
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 
 @dataclass(frozen=True)
@@ -56,6 +60,7 @@ def normalize_model_name(provider: str, model: str) -> str:
         "openrouter": ("openrouter/",),
         "openai": ("openai/",),
         "anthropic": ("anthropic/",),
+        "deepseek": ("deepseek/",),
     }
 
     for prefix in prefixes.get(provider_key, ()):
@@ -108,6 +113,16 @@ def build_model_settings(provider: str, thinking: ThinkingSpec | None) -> dict[s
             return {"openai_reasoning_effort": thinking.effort}
         return None
 
+    if provider_key == "deepseek":
+        # DeepSeek V4 (flash/pro) default to thinking ON, and thinking mode
+        # rejects the forced tool_choice that the router (structured output) and
+        # any forced-tool path require -> HTTP 400 "Thinking mode does not support
+        # this tool_choice". Disable thinking via the documented extra_body param
+        # (https://api-docs.deepseek.com/guides/thinking_mode) so tool calls work.
+        if not thinking.enabled:
+            return {"extra_body": {"thinking": {"type": "disabled"}}}
+        return None
+
     # groq / openrouter: no thinking settings
     return None
 
@@ -121,6 +136,11 @@ def build_model(provider: str, model: str, api_key: str) -> Any:
     match provider_key:
         case "openai":
             return OpenAIChatModel(model_name, provider=OpenAIProvider(api_key=api_key))
+        case "deepseek":
+            return OpenAIChatModel(
+                model_name,
+                provider=OpenAIProvider(base_url=DEEPSEEK_BASE_URL, api_key=api_key),
+            )
         case "anthropic":
             return AnthropicModel(model_name, provider=AnthropicProvider(api_key=api_key))
         case "google":

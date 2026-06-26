@@ -18,6 +18,7 @@ from src.agent.provider_factory import (
         ("openrouter", "openrouter/openai/gpt-4o-mini", "openai/gpt-4o-mini"),
         ("openai", "openai/gpt-4o-mini", "gpt-4o-mini"),
         ("anthropic", "anthropic/claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001"),
+        ("deepseek", "deepseek/deepseek-v4-pro", "deepseek-v4-pro"),
     ],
 )
 def test_normalize_model_name(provider: str, model: str, expected: str):
@@ -41,6 +42,14 @@ def test_build_model_uses_expected_provider_classes(
 
     assert built.__class__.__name__ == class_name
     assert built.model_name == normalized
+
+
+def test_build_model_deepseek_uses_openai_class_with_deepseek_base_url():
+    built = build_model("deepseek", "deepseek-v4-pro", "test-key")
+
+    assert built.__class__.__name__ == "OpenAIChatModel"
+    assert built.model_name == "deepseek-v4-pro"
+    assert "deepseek" in str(built.client.base_url)
 
 
 def test_build_model_rejects_unsupported_provider():

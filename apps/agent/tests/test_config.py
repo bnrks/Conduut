@@ -29,6 +29,11 @@ def test_key_for_provider_normalizes_and_reads_google(monkeypatch):
     assert key_for_provider("Google") == "g-key"
 
 
+def test_key_for_provider_returns_deepseek_key(monkeypatch):
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-ds-xyz")
+    assert key_for_provider("deepseek") == "sk-ds-xyz"
+
+
 def test_key_for_provider_raises_when_unset(monkeypatch):
     monkeypatch.setattr(settings, "google_api_key", "")
     with pytest.raises(ValueError, match="CONDUUT_GOOGLE_API_KEY"):

@@ -41,6 +41,28 @@ def test_gpt_profile_all_primaries_openai(monkeypatch):
     assert router_choice().provider == "openai"
 
 
+def test_deepseek_profile_tier_primaries(monkeypatch):
+    monkeypatch.setattr(settings, "model_profile", "deepseek")
+    assert resolve(Tier.SIMPLE).provider == "deepseek"
+    assert resolve(Tier.SIMPLE).model == "deepseek-v4-flash"
+    assert resolve(Tier.MEDIUM).provider == "deepseek"
+    assert resolve(Tier.MEDIUM).model == "deepseek-v4-pro"
+    assert resolve(Tier.HARD).provider == "deepseek"
+    assert resolve(Tier.HARD).model == "deepseek-v4-pro"
+    assert router_choice().provider == "deepseek"
+    assert router_choice().model == "deepseek-v4-flash"
+
+
+def test_deepseek_thinking_flash_off_pro_on(monkeypatch):
+    # Rule: flash -> thinking OFF (router forced tool_choice / fast SIMPLE),
+    # pro -> thinking ON so reasoning streams to the thinking panel, not the message.
+    monkeypatch.setattr(settings, "model_profile", "deepseek")
+    assert router_choice().thinking.enabled is False  # flash router, forced tool_choice
+    assert resolve(Tier.SIMPLE).thinking.enabled is False  # flash, fast trivial tasks
+    assert resolve(Tier.MEDIUM).thinking.enabled is True  # pro
+    assert resolve(Tier.HARD).thinking.enabled is True  # pro
+
+
 def test_unknown_profile_falls_back_to_default(monkeypatch):
     monkeypatch.setattr(settings, "model_profile", "nope")
     assert active_profile().name == "default"

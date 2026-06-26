@@ -129,7 +129,52 @@ PROFILE_GPT = ModelProfile(
     },
 )
 
-PROFILES: dict[str, ModelProfile] = {"default": PROFILE_DEFAULT, "gpt": PROFILE_GPT}
+# --- deepseek profile (cost bake-off) -------------------------------------
+# All-DeepSeek via the first-party OpenAI-compatible API (provider "deepseek").
+# Router + SIMPLE on V4 Flash (cheap/fast); MEDIUM + HARD on V4 Pro.
+#
+# Thinking rule: flash -> OFF, pro -> ON.
+#  - flash OFF: the router uses structured output (forced tool_choice) which
+#    DeepSeek thinking mode rejects (HTTP 400); SIMPLE stays fast/trivial.
+#  - pro ON: with thinking OFF, DeepSeek narrates its reasoning as normal message
+#    content (leaks into the chat bubble); with thinking ON that reasoning streams
+#    as a ThinkingPart -> the frontend ThinkingPanel instead. The main agent uses
+#    output_type=str (auto tool_choice), so thinking ON is safe there.
+# Secondaries follow the same flash/pro rule (secondary is not yet used at
+# runtime; escalation is Phase 2). See model-cost-research-2026-06 §7.
+_DS_FLASH = "deepseek-v4-flash"
+_DS_PRO = "deepseek-v4-pro"
+_DS_OFF = ThinkingSpec(enabled=False)
+_DS_ON = ThinkingSpec(enabled=True)
+
+PROFILE_DEEPSEEK = ModelProfile(
+    name="deepseek",
+    router=ModelChoice("deepseek", _DS_FLASH, _DS_OFF, request_limit=1),
+    tiers={
+        Tier.SIMPLE: TierConfig(
+            primary=ModelChoice("deepseek", _DS_FLASH, _DS_OFF),
+            secondary=ModelChoice("deepseek", _DS_PRO, _DS_ON),
+        ),
+        Tier.MEDIUM: TierConfig(
+            primary=ModelChoice("deepseek", _DS_PRO, _DS_ON),
+            secondary=ModelChoice("deepseek", _DS_PRO, _DS_ON),
+        ),
+        Tier.HARD: TierConfig(
+            primary=ModelChoice(
+                "deepseek", _DS_PRO, _DS_ON, request_limit=24, tool_calls_limit=56
+            ),
+            secondary=ModelChoice(
+                "deepseek", _DS_PRO, _DS_ON, request_limit=24, tool_calls_limit=56
+            ),
+        ),
+    },
+)
+
+PROFILES: dict[str, ModelProfile] = {
+    "default": PROFILE_DEFAULT,
+    "gpt": PROFILE_GPT,
+    "deepseek": PROFILE_DEEPSEEK,
+}
 
 
 def _validate_profiles() -> None:

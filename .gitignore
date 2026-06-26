@@ -32,3 +32,5 @@ knowledge-database/.trash/
 !knowledge-database/**/*.md
 # ...ama claude-mem'in otomatik ürettiği boş stub'ı izleme
 knowledge-database/CLAUDE.md
+
+.env

@@ -26,8 +26,12 @@ class Settings(BaseSettings):
 
     # LLM — Conduut-managed models (no per-user provider connection).
     # CONDUUT_MODEL_PROFILE selects the tier→model mapping (see agent/model_registry.py).
-    model_profile: str = "default"  # "default" | "gpt"
+    # NOTE: defaults to "deepseek" on the feature/deepseek-tier-bakeoff branch so the
+    # branch runs the DeepSeek bake-off out of the box (see model-cost-research-2026-06).
+    model_profile: str = "deepseek"  # "default" | "gpt" | "deepseek"
     enable_tier_escalation: bool = True
+    # Buffer+retry DeepSeek runs to absorb the #1244 plain-text-tool-call failure.
+    enable_reliability_guard: bool = True
     # Fixed, cheap Gemini model used for decoupled web-search research
     # (API auth discovery). Provider-independent of the conversational tier.
     research_model: str = "gemini-2.5-flash"
@@ -35,6 +39,7 @@ class Settings(BaseSettings):
     google_api_key: str = ""
     openai_api_key: str = ""
     openrouter_api_key: str = ""
+    deepseek_api_key: str = ""
 
     # n8n
     n8n_url: str = "http://localhost:6180"
@@ -67,6 +72,7 @@ _PROVIDER_KEY_ATTR: dict[str, str] = {
     "google": "google_api_key",
     "openai": "openai_api_key",
     "openrouter": "openrouter_api_key",
+    "deepseek": "deepseek_api_key",
 }
 
 

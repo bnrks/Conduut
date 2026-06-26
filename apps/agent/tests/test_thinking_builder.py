@@ -61,3 +61,14 @@ def test_openai_off_uses_minimal_effort():
 
 def test_groq_has_no_thinking_settings():
     assert build_model_settings("groq", ThinkingSpec(enabled=True)) is None
+
+
+def test_deepseek_disabled_sends_thinking_off_extra_body():
+    # DeepSeek V4 needs thinking explicitly off, else forced tool_choice 400s.
+    assert build_model_settings("deepseek", ThinkingSpec(enabled=False)) == {
+        "extra_body": {"thinking": {"type": "disabled"}},
+    }
+
+
+def test_deepseek_enabled_sends_no_settings():
+    assert build_model_settings("deepseek", ThinkingSpec(enabled=True)) is None
