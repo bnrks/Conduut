@@ -6,17 +6,14 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { useAuth } from "@/hooks/use-auth";
 import {
-  serviceMethodFromFields,
-  type ServiceCredentialField,
-} from "@/lib/credential-auth-methods";
-import {
-  CredentialForm,
-  type CredentialSubmission,
-} from "@/components/credentials/credential-form";
+  DynamicCredentialFields,
+  type CredentialFieldSpec,
+} from "@/components/credentials/dynamic-credential-fields";
 
 interface CatalogEntry {
   type: string;
   label: string;
+  icon_url?: string;
 }
 
 export interface ServiceCredentialPickerProps {
@@ -29,7 +26,8 @@ export function ServiceCredentialPicker({ onSubmit }: ServiceCredentialPickerPro
   const [entries, setEntries] = useState<CatalogEntry[]>([]);
   const [loadingList, setLoadingList] = useState(false);
   const [selected, setSelected] = useState<CatalogEntry | null>(null);
-  const [fields, setFields] = useState<ServiceCredentialField[]>([]);
+  const [fields, setFields] = useState<CredentialFieldSpec[]>([]);
+  const [iconUrl, setIconUrl] = useState("");
   const [loadingSchema, setLoadingSchema] = useState(false);
   const [error, setError] = useState("");
 
@@ -80,7 +78,9 @@ export function ServiceCredentialPicker({ onSubmit }: ServiceCredentialPickerPro
         { headers: { Authorization: `Bearer ${token}` } }
       );
       const data = (await response.json().catch(() => null)) as {
-        fields?: ServiceCredentialField[];
+        fields?: CredentialFieldSpec[];
+        label?: string;
+        iconUrl?: string;
         message?: string;
         detail?: { message?: string };
       } | null;
@@ -88,6 +88,7 @@ export function ServiceCredentialPicker({ onSubmit }: ServiceCredentialPickerPro
         throw new Error(data?.detail?.message || data?.message || "Could not load fields.");
       }
       setFields(data?.fields ?? []);
+      setIconUrl(data?.iconUrl ?? "");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load fields.");
       setSelected(null);
@@ -97,30 +98,30 @@ export function ServiceCredentialPicker({ onSubmit }: ServiceCredentialPickerPro
   };
 
   if (selected) {
-    const method = serviceMethodFromFields(selected.type, selected.label, fields);
     return (
       <div className="space-y-3">
         <button
           type="button"
-          onClick={() => { setSelected(null); setError(""); }}
+          onClick={() => { setSelected(null); setError(""); setIconUrl(""); }}
           className="text-[12px] font-medium text-conduut-500 hover:text-conduut-700"
         >
           ← Choose a different service
         </button>
-        <p className="text-[13px] font-medium text-foreground">{selected.label}</p>
+        <div className="flex items-center gap-2">
+          {iconUrl && (
+            <img src={iconUrl} className="h-4 w-4" alt="" />
+          )}
+          <p className="text-[13px] font-medium text-foreground">{selected.label}</p>
+        </div>
         {loadingSchema ? (
           <div className="flex justify-center py-6">
             <Spinner />
           </div>
         ) : (
-          <CredentialForm
-            methods={[method]}
-            requireHost={false}
-            initialLabel={selected.label}
+          <DynamicCredentialFields
+            fields={fields}
             submitLabel="Save credential"
-            onSubmit={(submission: CredentialSubmission) =>
-              onSubmit(selected.type, submission.label, submission.data)
-            }
+            onSubmit={(data) => onSubmit(selected.type, selected.label, data)}
           />
         )}
       </div>
@@ -156,7 +157,12 @@ export function ServiceCredentialPicker({ onSubmit }: ServiceCredentialPickerPro
               onClick={() => void pick(entry)}
               className="flex w-full items-center justify-between rounded-lg border border-border bg-background px-3 py-2 text-left text-[13px] text-foreground transition-colors hover:border-conduut-400"
             >
-              <span>{entry.label}</span>
+              <span className="flex items-center gap-2">
+                {entry.icon_url && (
+                  <img src={entry.icon_url} className="h-4 w-4" alt="" />
+                )}
+                {entry.label}
+              </span>
               <span className="text-[11px] text-muted-foreground">{entry.type}</span>
             </button>
           ))
