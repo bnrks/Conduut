@@ -11,6 +11,9 @@ dist/
 # Claude Code local settings
 .claude/settings.local.json
 
+# Superpowers brainstorm mockups (local)
+.superpowers/
+
 # Python
 __pycache__/
 *.egg-info/
