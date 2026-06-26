@@ -3,7 +3,7 @@
 import asyncio
 from dataclasses import dataclass
 
-from src.agent.schemas import AgentDeps
+from src.agent.schemas import AgentDeps, CredentialField
 from src.agent.tools import credentials as cred_tools
 from src.agent.tools import readiness
 
@@ -106,3 +106,50 @@ async def test_emit_missing_credentials_returns_reuse_candidates(monkeypatch):
     assert res["missing_count"] == 0
     assert len(res["reuse_candidates"]) == 1
     assert deps.awaiting_user_input is False  # suggestions never block on their own
+
+
+async def test_list_credentials_payload_flags_type_match(monkeypatch):
+    from src import store
+
+    async def fake_list(user_id):
+        return [
+            store.CustomCredential(
+                id="c1",
+                label="OpenAI",
+                credential_type="openAiApi",
+                host="",
+                n8n_credential_id="n",
+                n8n_credential_name="n",
+                created_at="",
+                updated_at="",
+                match_kind="type",
+            )
+        ]
+
+    monkeypatch.setattr(cred_tools.store, "list_custom_credentials", fake_list)
+    result = await cred_tools.list_credentials_payload(_deps(), credential_type="openAiApi")
+    assert result["credentials"][0]["matches_type"] is True
+
+
+async def test_add_service_credential_known_type_returns_card(monkeypatch):
+    monkeypatch.setattr(
+        cred_tools.registry,
+        "list_credential_types",
+        lambda: [{"type": "openAiApi", "nodes": ["OpenAI"]}],
+    )
+
+    async def fake_fields(credential_type):
+        return [CredentialField(name="apiKey", label="API Key", type="password", required=True)]
+
+    monkeypatch.setattr(cred_tools.credential_catalog, "fetch_credential_fields", fake_fields)
+    result = await cred_tools.add_service_credential_payload(_deps(), "OpenAI")
+    assert result["status"] == "card"
+    assert result["credentialType"] == "openAiApi"
+    assert result["card"].data.matchKind == "type"
+    assert result["card"].data.host is None
+
+
+async def test_add_service_credential_unknown_returns_not_found(monkeypatch):
+    monkeypatch.setattr(cred_tools.registry, "list_credential_types", lambda: [])
+    result = await cred_tools.add_service_credential_payload(_deps(), "nonexistent-svc")
+    assert result["status"] == "not_found"

@@ -28,6 +28,7 @@ from src.agent.tools.common import (
     _waiting_for_user_input_result,
 )
 from src.agent.tools.credentials import (
+    add_service_credential_payload,
     attach_credential_payload,
     list_credentials_payload,
     prepare_api_credential_payload,
@@ -767,16 +768,19 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
 
     @agent.tool
     async def list_credentials(
-        ctx: RunContext[AgentDeps], url: str | None = None
+        ctx: RunContext[AgentDeps],
+        url: str | None = None,
+        credential_type: str | None = None,
     ) -> dict[str, Any]:
-        """List the user's saved custom credentials (labels/types/hosts only, never secrets).
+        """List the user's saved credentials (labels/types/hosts only, never secrets).
 
-        Pass the HTTP node URL to see which saved credentials match its host.
+        Pass the HTTP node URL to flag host matches, or credential_type (e.g.
+        openAiApi) to flag the saved credential a service node can reuse.
         """
 
         await ctx.deps.emit_tool_call("list_credentials")
         started_at = perf_counter()
-        result = await list_credentials_payload(ctx.deps, url)
+        result = await list_credentials_payload(ctx.deps, url, credential_type)
         _log_tool_finished("list_credentials", started_at, result)
         return result
 
@@ -831,6 +835,39 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             await ctx.deps.emit_attachment(card)
             ctx.deps.awaiting_user_input = True
         _log_tool_finished("prepare_api_credential", started_at, result)
+        return result
+
+    @agent.tool
+    async def add_service_credential(
+        ctx: RunContext[AgentDeps],
+        service_or_type: str,
+        workflow_id: str | None = None,
+        node_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Show a form to save a predefined n8n service credential (e.g. OpenAI).
+
+        Use when a node needs a known service credential (openAiApi, anthropicApi,
+        slackApi, ...) and none is saved, or when the user asks to add one. The
+        user enters the secret in the card; it never passes through you. Pass
+        workflow_id/node_name to help attach it afterward.
+        """
+
+        await ctx.deps.emit_tool_call("add_service_credential")
+        started_at = perf_counter()
+        try:
+            result = await add_service_credential_payload(
+                ctx.deps, service_or_type, workflow_id, node_name
+            )
+        except Exception as exc:
+            log.error("tool_error", tool="add_service_credential", error=str(exc))
+            result = {"error": _safe_error(exc)}
+            _log_tool_finished("add_service_credential", started_at, result)
+            return result
+        card = result.pop("card", None)
+        if card is not None:
+            await ctx.deps.emit_attachment(card)
+            ctx.deps.awaiting_user_input = True
+        _log_tool_finished("add_service_credential", started_at, result)
         return result
 
     return agent

@@ -5,6 +5,8 @@ from typing import Any
 import structlog
 
 from src import n8n_client, store
+from src.agent import credential_catalog
+from src.agent.credential_catalog import match_credentials_by_type
 from src.agent.credential_types import (
     credential_type_catalog,
     is_supported_http_type,
@@ -20,6 +22,7 @@ from src.agent.schemas import (
     CredentialTypeOption,
 )
 from src.agent.tools.common import _credential_draft_instruction, _safe_error
+from src.registry import registry
 
 log = structlog.get_logger()
 
@@ -95,15 +98,22 @@ def _draft_card(credential: store.CustomCredential) -> CredentialRequestAttachme
     )
 
 
-async def list_credentials_payload(deps: AgentDeps, url: str | None = None) -> dict[str, Any]:
+async def list_credentials_payload(
+    deps: AgentDeps, url: str | None = None, credential_type: str | None = None
+) -> dict[str, Any]:
     """Return the user's saved custom credentials (no secrets).
 
-    When ``url`` is given, ``matches_host`` flags credentials whose saved host
-    matches the URL host so the agent can offer the right one for confirmation.
+    ``url`` flags host matches (HTTP nodes); ``credential_type`` flags type
+    matches (predefined service nodes, e.g. openAiApi).
     """
 
     credentials = await store.list_custom_credentials(deps.user_id)
     matched_ids = {c.id for c in match_credentials(url, credentials)} if url else set()
+    type_ids = (
+        {c.id for c in match_credentials_by_type(credential_type, credentials)}
+        if credential_type
+        else set()
+    )
     return {
         "credentials": [
             {
@@ -112,6 +122,7 @@ async def list_credentials_payload(deps: AgentDeps, url: str | None = None) -> d
                 "credential_type": credential.credential_type,
                 "host": credential.host,
                 "matches_host": credential.id in matched_ids,
+                "matches_type": credential.id in type_ids,
             }
             for credential in credentials
         ]
@@ -255,4 +266,65 @@ async def prepare_api_credential_payload(
         "card": _draft_card(draft),
         "summary": result.summary,
         "instruction": _credential_draft_instruction(label, result.source_url),
+    }
+
+
+async def add_service_credential_payload(
+    deps: AgentDeps,
+    service_or_type: str,
+    workflow_id: str | None = None,
+    node_name: str | None = None,
+) -> dict[str, Any]:
+    """Resolve a predefined n8n service credential and show its secret form.
+
+    Looks the catalog up by exact type/label, then by substring. Returns a
+    type-matched credential card (``status="card"``) whose fields come from
+    n8n's schema, or ``status="not_found"`` when nothing fillable matches.
+    """
+
+    catalog = credential_catalog.build_catalog(registry.list_credential_types())
+    needle = service_or_type.strip().lower()
+    match = next(
+        (e for e in catalog if e["type"].lower() == needle or e["label"].lower() == needle),
+        None,
+    )
+    if match is None:
+        match = next(
+            (e for e in catalog if needle in e["label"].lower() or needle in e["type"].lower()),
+            None,
+        )
+    if match is None:
+        return {
+            "status": "not_found",
+            "instruction": (
+                "No fillable n8n credential type matched that service. Ask the user for "
+                "the exact service name, or note it may be OAuth-based (Connections)."
+            ),
+        }
+
+    fields = await credential_catalog.fetch_credential_fields(match["type"])
+    card = CredentialRequestAttachment(
+        data=CredentialRequestData(
+            workflowId=workflow_id or "",
+            nodeName=node_name or "",
+            service=match["label"],
+            credentialType=match["type"],
+            credentialName=f"{match['label']} - Conduut",
+            fields=fields,
+            submitPath="/api/credentials",
+            description=f"Enter your {match['label']} credentials to save them in Conduut.",
+            host=None,
+            matchKind="type",
+        )
+    )
+    return {
+        "status": "card",
+        "credentialType": match["type"],
+        "label": match["label"],
+        "card": card,
+        "instruction": (
+            f"A credential form for {match['label']} is shown. Ask the user to enter the "
+            "secret in the card; never accept the key as chat text. Once saved you can "
+            "attach it to a node with attach_credential."
+        ),
     }

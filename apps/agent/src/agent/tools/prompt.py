@@ -189,6 +189,14 @@ SYSTEM_PROMPT = (
     " secret into chat text.\n"
     "- You may call list_credentials (optionally with the endpoint url) to see the user's"
     " saved credentials — labels, types, and hosts only, never secrets.\n"
+    "- Predefined service credentials (AI/chat model nodes need `openAiApi`, `anthropicApi`;"
+    ' Slack token `slackApi`, etc.): first call `list_credentials(credential_type="<type>")`.'
+    " If a saved credential matches (`matches_type`), ask the user to confirm with"
+    " `request_user_input`, then `attach_credential(workflow_id, node_name, credential_id)`."
+    ' If none is saved, call `add_service_credential("<service or type>", workflow_id,'
+    " node_name)` to show a secret form. Never ask for or accept the API key as chat text;"
+    " you do not see secrets. OAuth-based services (Gmail/Sheets) stay on the"
+    " Connections/OAuth path.\n"
     "- Agent-prepared credentials: when an HTTP node calls an API that needs auth and there"
     " is NO saved credential, call prepare_api_credential(url, workflow_id, node_name). It"
     " researches how that API authenticates and prepares a draft credential for the user to"
