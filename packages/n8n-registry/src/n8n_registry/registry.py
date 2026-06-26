@@ -103,6 +103,22 @@ class NodeRegistry:
         if credentials_path:
             self._credentials = load_credentials_from_file(credentials_path)
 
+        if not self._credentials:
+            pkg_creds = Path(__file__).parent.parent.parent / "data" / "credentials.json"
+            if pkg_creds.exists():
+                self._credentials = load_credentials_from_file(pkg_creds)
+            else:
+                sibling_creds = (
+                    Path(__file__).parent.parent.parent.parent / "data" / "credentials.json"
+                )
+                if sibling_creds.exists():
+                    self._credentials = load_credentials_from_file(sibling_creds)
+
+        if self._credentials:
+            log.info("Registry loaded %d credentials", len(self._credentials))
+        else:
+            log.warning("No credentials loaded — credentials.json not found")
+
         self._loaded = True
 
     def load_from_files(
