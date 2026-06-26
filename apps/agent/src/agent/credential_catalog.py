@@ -86,6 +86,8 @@ def build_catalog(raw_types: list[dict], query: str | None = None) -> list[dict]
 def match_credentials_by_type(credential_type: str, credentials: list) -> list:
     """Saved credentials of this exact n8n type that are ready (have an n8n cred)."""
 
+    # Matched by credential_type + ready status only — not gated on match_kind
+    # (HTTP and predefined type names never collide).
     matches = []
     for credential in credentials:
         if getattr(credential, "credential_type", None) != credential_type:

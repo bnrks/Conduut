@@ -3,7 +3,7 @@
 import asyncio
 from dataclasses import dataclass
 
-from src.agent.schemas import AgentDeps, CredentialField
+from src.agent.schemas import AgentDeps
 from src.agent.tools import credentials as cred_tools
 from src.agent.tools import readiness
 
@@ -139,10 +139,13 @@ async def test_add_service_credential_known_type_returns_card(monkeypatch):
         lambda: [{"type": "openAiApi", "nodes": ["OpenAI"]}],
     )
 
-    async def fake_fields(credential_type):
-        return [CredentialField(name="apiKey", label="API Key", type="password", required=True)]
+    async def fake_schema(credential_type):
+        return {
+            "properties": {"apiKey": {"type": "string", "displayName": "API Key"}},
+            "required": ["apiKey"],
+        }
 
-    monkeypatch.setattr(cred_tools.credential_catalog, "fetch_credential_fields", fake_fields)
+    monkeypatch.setattr(cred_tools.n8n_client, "get_credential_schema", fake_schema)
     result = await cred_tools.add_service_credential_payload(_deps(), "OpenAI")
     assert result["status"] == "card"
     assert result["credentialType"] == "openAiApi"
@@ -153,4 +156,18 @@ async def test_add_service_credential_known_type_returns_card(monkeypatch):
 async def test_add_service_credential_unknown_returns_not_found(monkeypatch):
     monkeypatch.setattr(cred_tools.registry, "list_credential_types", lambda: [])
     result = await cred_tools.add_service_credential_payload(_deps(), "nonexistent-svc")
+    assert result["status"] == "not_found"
+
+
+async def test_add_service_credential_oauth_by_signature_rejected(monkeypatch):
+    monkeypatch.setattr(
+        cred_tools.registry, "list_credential_types",
+        lambda: [{"type": "weirdApi", "nodes": ["Weird"]}],  # name passes the OAuth-name filter
+    )
+
+    async def fake_schema(credential_type):
+        return {"properties": {"clientId": {}, "oauthTokenData": {}}}  # OAuth by signature
+
+    monkeypatch.setattr(cred_tools.n8n_client, "get_credential_schema", fake_schema)
+    result = await cred_tools.add_service_credential_payload(_deps(), "Weird")
     assert result["status"] == "not_found"

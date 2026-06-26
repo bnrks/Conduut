@@ -208,8 +208,9 @@ export default function CredentialsPage() {
 
       <p className="mb-4 max-w-2xl text-[13px] text-muted-foreground">
         Save the API keys and logins your automations use. When Conduut builds a workflow
-        that calls a service, it matches a saved credential by its address and asks you to
-        confirm before using it. Secrets are stored only in your own n8n instance.
+        that calls a service, it matches a saved credential by its address (HTTP) or by
+        service type and asks you to confirm before using it. Secrets are stored only in
+        your own n8n instance.
       </p>
 
       {showForm && (

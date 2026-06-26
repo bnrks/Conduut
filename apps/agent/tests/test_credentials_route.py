@@ -252,3 +252,15 @@ async def test_list_credentials_includes_match_kind(monkeypatch):
     monkeypatch.setattr(credentials_route.store, "list_custom_credentials", fake_list)
     result = await credentials_route.list_credentials(object())
     assert result["credentials"][0]["match_kind"] == "type"
+
+
+async def test_credential_catalog_schema_rejects_oauth_by_signature(monkeypatch):
+    _patch_user(monkeypatch)
+
+    async def fake_schema(credential_type):
+        return {"properties": {"clientId": {}, "oauthTokenData": {}}}
+
+    monkeypatch.setattr(credentials_route.n8n_client, "get_credential_schema", fake_schema)
+    with pytest.raises(HTTPException) as exc:
+        await credentials_route.credential_catalog_schema(object(), "weirdApi")
+    assert exc.value.status_code == 422

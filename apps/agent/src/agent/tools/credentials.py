@@ -303,7 +303,17 @@ async def add_service_credential_payload(
             ),
         }
 
-    fields = await credential_catalog.fetch_credential_fields(match["type"])
+    schema = await n8n_client.get_credential_schema(match["type"])
+    if credential_catalog.schema_is_oauth(schema):
+        return {
+            "status": "not_found",
+            "instruction": (
+                "That service authenticates via OAuth, which Conduut cannot set up as a "
+                "simple key/secret credential. Tell the user it is not available here; "
+                "OAuth-based services are managed under Connections."
+            ),
+        }
+    fields = credential_catalog.parse_schema_fields(schema)
     card = CredentialRequestAttachment(
         data=CredentialRequestData(
             workflowId=workflow_id or "",
