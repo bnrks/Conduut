@@ -2,6 +2,7 @@
 
 import pytest
 from fastapi import HTTPException
+from n8n_registry.models import CredentialTypeInfo
 
 from src import n8n_client, store
 from src.routes import credentials as credentials_route
@@ -172,11 +173,8 @@ async def test_credential_catalog_excludes_oauth(monkeypatch):
     _patch_user(monkeypatch)
     monkeypatch.setattr(
         credentials_route.registry,
-        "list_credential_types",
-        lambda: [
-            {"type": "openAiApi", "nodes": ["OpenAI"]},
-            {"type": "slackOAuth2Api", "nodes": ["Slack"]},
-        ],
+        "list_credential_catalog",
+        lambda q=None: [{"type": "openAiApi", "label": "OpenAI", "icon_url": ""}],
     )
     result = await credentials_route.credential_catalog_list(object(), q=None)
     assert [c["type"] for c in result["catalog"]] == ["openAiApi"]
@@ -263,4 +261,43 @@ async def test_credential_catalog_schema_rejects_oauth_by_signature(monkeypatch)
     monkeypatch.setattr(credentials_route.n8n_client, "get_credential_schema", fake_schema)
     with pytest.raises(HTTPException) as exc:
         await credentials_route.credential_catalog_schema(object(), "weirdApi")
+    assert exc.value.status_code == 422
+
+
+async def test_catalog_list_from_registry(monkeypatch):
+    _patch_user(monkeypatch)
+    monkeypatch.setattr(
+        credentials_route.registry, "list_credential_catalog",
+        lambda q=None: [{"type": "anthropicApi", "label": "Anthropic", "icon_url": "icons/a.svg"}],
+    )
+    result = await credentials_route.credential_catalog_list(object(), q=None)
+    assert result["catalog"][0]["icon_url"] == "icons/a.svg"
+
+
+async def test_catalog_schema_from_definition(monkeypatch):
+    _patch_user(monkeypatch)
+    definition = CredentialTypeInfo(
+        name="anthropicApi", display_name="Anthropic", icon_url="icons/a.svg",
+        properties=[{"displayName": "API Key", "name": "apiKey", "type": "string",
+                     "typeOptions": {"password": True}, "required": True}],
+    )
+    monkeypatch.setattr(
+        credentials_route.registry, "get_credential_definition",
+        lambda t: definition if t == "anthropicApi" else None,
+    )
+    result = await credentials_route.credential_catalog_schema(object(), "anthropicApi")
+    assert result["label"] == "Anthropic"
+    assert result["iconUrl"] == "icons/a.svg"
+    assert result["fields"][0]["name"] == "apiKey"
+    assert result["fields"][0]["type"] == "password"
+
+
+async def test_catalog_schema_oauth_definition_rejected(monkeypatch):
+    _patch_user(monkeypatch)
+    definition = CredentialTypeInfo(name="slackOAuth2Api", display_name="Slack", is_oauth=True)
+    monkeypatch.setattr(
+        credentials_route.registry, "get_credential_definition", lambda t: definition
+    )
+    with pytest.raises(HTTPException) as exc:
+        await credentials_route.credential_catalog_schema(object(), "slackOAuth2Api")
     assert exc.value.status_code == 422

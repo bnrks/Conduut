@@ -95,13 +95,27 @@ async def credential_types(request: Request):
 @router.get("/credentials/catalog")
 async def credential_catalog_list(request: Request, q: str | None = None):
     get_user_id(request)
-    raw_types = registry.list_credential_types()
-    return {"catalog": credential_catalog.build_catalog(raw_types, q)}
+    return {"catalog": registry.list_credential_catalog(q)}
 
 
 @router.get("/credentials/catalog/{credential_type}/schema")
 async def credential_catalog_schema(request: Request, credential_type: str):
     get_user_id(request)
+    definition = registry.get_credential_definition(credential_type)
+    if definition is not None:
+        if definition.is_oauth or definition.generic_auth:
+            raise HTTPException(
+                status_code=422,
+                detail={"message": "OAuth-based services are managed under Connections."},
+            )
+        fields = credential_catalog.credential_fields_from_definition(definition)
+        return {
+            "credentialType": credential_type,
+            "label": definition.display_name,
+            "iconUrl": definition.icon_url,
+            "fields": [field.model_dump() for field in fields],
+        }
+    # Fallback: definition missing from credentials.json -> public-API schema.
     if credential_catalog.is_oauth_type_name(credential_type):
         raise HTTPException(
             status_code=422,
@@ -117,7 +131,12 @@ async def credential_catalog_schema(request: Request, credential_type: str):
             detail={"message": "OAuth-based services are managed under Connections."},
         )
     fields = credential_catalog.parse_schema_fields(schema)
-    return {"credentialType": credential_type, "fields": [field.model_dump() for field in fields]}
+    return {
+        "credentialType": credential_type,
+        "label": credential_type,
+        "iconUrl": "",
+        "fields": [field.model_dump() for field in fields],
+    }
 
 
 @router.post("/credentials", status_code=201)
