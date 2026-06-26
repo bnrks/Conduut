@@ -56,6 +56,25 @@ def test_build_test_clone_from_webhook_assigns_fresh_path():
     assert hook["path"] == path
 
 
+def test_build_test_clone_uses_response_node_with_respond_to_webhook():
+    # A Respond to Webhook node needs responseMode=responseNode; forcing lastNode
+    # in the clone makes n8n reject the test run as "Unused Respond to Webhook".
+    workflow = {
+        "id": "real-3",
+        "name": "Quote",
+        "nodes": [
+            {"name": "Hook", "type": "n8n-nodes-base.webhook", "parameters": {"path": "p"}},
+            {"name": "Respond", "type": "n8n-nodes-base.respondToWebhook", "parameters": {}},
+        ],
+        "connections": {"Hook": {"main": [[{"node": "Respond", "type": "main", "index": 0}]]}},
+    }
+    clone = _build_test_clone(workflow)
+    assert clone is not None
+    nodes, _connections, _path = clone
+    hook = next(n for n in nodes if n["name"] == "Hook")
+    assert hook["parameters"]["responseMode"] == "responseNode"
+
+
 def test_build_test_clone_converts_manual_trigger():
     workflow = {
         "id": "real-2",
@@ -240,6 +259,43 @@ async def test_run_sandbox_test_flags_execution_error(monkeypatch):
     )
     assert result.passed is False
     assert result.failed_node == "Build"
+
+
+@pytest.mark.asyncio
+async def test_run_sandbox_test_passes_return_only_workflow_without_judge(monkeypatch):
+    # A fetch-and-return workflow has no side-effect action node to neutralize, so
+    # the action judge has nothing to assess and would falsely fail it ("No action
+    # steps configured"). It must pass on a successful run and skip the judge.
+    workflow = {
+        "id": "real-2",
+        "name": "Quote",
+        "nodes": [
+            {"name": "Hook", "type": "n8n-nodes-base.webhook", "parameters": {"path": "p"}},
+            {
+                "name": "Fetch",
+                "type": "n8n-nodes-base.httpRequest",
+                "parameters": {"method": "GET", "url": "https://e.com"},
+            },
+            {"name": "Respond", "type": "n8n-nodes-base.respondToWebhook", "parameters": {}},
+        ],
+        "connections": {
+            "Hook": {"main": [[{"node": "Fetch", "type": "main", "index": 0}]]},
+            "Fetch": {"main": [[{"node": "Respond", "type": "main", "index": 0}]]},
+        },
+    }
+    _wire_fake_n8n(monkeypatch, _success_detail())
+    judge_called = {"called": False}
+
+    async def fake_judge(intent, summaries):
+        judge_called["called"] = True
+        return JudgeVerdict(ok=False, issue="No action steps configured")
+
+    monkeypatch.setattr(sandbox, "_run_judge", fake_judge)
+    result = await sandbox.run_sandbox_test(
+        workflow, user_id="u1", input_schema=[], intent="Fetch a quote and return it"
+    )
+    assert result.passed is True
+    assert judge_called["called"] is False
 
 
 @pytest.mark.asyncio

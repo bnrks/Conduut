@@ -613,6 +613,20 @@ def test_webhook_explicit_response_node_left_alone():
     assert webhook["parameters"]["responseMode"] == "responseNode"
 
 
+def test_webhook_with_respond_node_uses_response_node_mode():
+    # A Respond to Webhook node only fires with responseMode=responseNode; with
+    # lastNode n8n rejects the run as "Unused Respond to Webhook node found".
+    nodes = [
+        _node("Webhook", "n8n-nodes-base.webhook", parameters={"httpMethod": "POST", "path": "x"}),
+        _node("Fetch", "n8n-nodes-base.httpRequest", parameters={"url": "https://e.com"}),
+        _node("Respond", "n8n-nodes-base.respondToWebhook", parameters={}),
+    ]
+    repaired, _conns, repairs = repair_workflow(nodes, None, registry=REGISTRY)
+    webhook = next(n for n in repaired if n["name"] == "Webhook")
+    assert webhook["parameters"]["responseMode"] == "responseNode"
+    assert any("responseNode" in r for r in repairs)
+
+
 # --------------------------------------------------------------------------
 # Idempotency
 # --------------------------------------------------------------------------

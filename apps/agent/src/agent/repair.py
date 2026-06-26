@@ -523,14 +523,20 @@ def _normalize_resource_locators(nodes: list[dict[str, Any]], repairs: list[str]
 
 
 def _normalize_webhook_response_mode(nodes: list[dict[str, Any]], repairs: list[str]) -> None:
-    """Force webhook triggers to respond with the final node's output.
+    """Reconcile the webhook trigger's responseMode with how it returns data.
 
     Without responseMode (or with "onReceived") n8n acks immediately and the run
-    returns no execution data, so Conduut shows "no response from n8n". lastNode
-    makes the webhook return the result synchronously. An explicit responseNode
-    (Respond to Webhook node) is left untouched.
+    returns no execution data, so Conduut shows "no response from n8n". When the
+    workflow has a Respond to Webhook node, the webhook MUST use
+    responseMode=responseNode — with lastNode (or default) n8n rejects the run as
+    "Unused Respond to Webhook node found". Otherwise lastNode makes the webhook
+    return the final node's output synchronously.
     """
 
+    has_respond_node = any(
+        isinstance(node, dict) and node.get("type") == "n8n-nodes-base.respondToWebhook"
+        for node in nodes
+    )
     for node in nodes:
         if node.get("type") != "n8n-nodes-base.webhook":
             continue
@@ -538,7 +544,12 @@ def _normalize_webhook_response_mode(nodes: list[dict[str, Any]], repairs: list[
         if not isinstance(parameters, dict):
             parameters = {}
             node["parameters"] = parameters
-        if parameters.get("responseMode") in (None, "", "onReceived"):
+        current = parameters.get("responseMode")
+        if has_respond_node:
+            if current != "responseNode":
+                parameters["responseMode"] = "responseNode"
+                repairs.append(f"set webhook responseMode=responseNode on '{node.get('name')}'")
+        elif current in (None, "", "onReceived"):
             parameters["responseMode"] = "lastNode"
             repairs.append(f"set webhook responseMode=lastNode on '{node.get('name')}'")
 

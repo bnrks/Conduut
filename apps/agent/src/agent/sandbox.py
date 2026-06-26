@@ -54,6 +54,16 @@ def _build_test_clone(
     nodes = deepcopy(workflow.get("nodes") or [])
     connections = deepcopy(workflow.get("connections") or {})
     path = f"conduut-test-{uuid4().hex}"
+    # A Respond to Webhook node only fires with responseMode=responseNode; forcing
+    # lastNode here makes n8n reject the test run as "Unused Respond to Webhook".
+    response_mode = (
+        "responseNode"
+        if any(
+            isinstance(n, dict) and n.get("type") == "n8n-nodes-base.respondToWebhook"
+            for n in nodes
+        )
+        else "lastNode"
+    )
 
     webhook = next(
         (n for n in nodes if isinstance(n, dict) and n.get("type") == _WEBHOOK_TRIGGER_TYPE),
@@ -63,7 +73,7 @@ def _build_test_clone(
         params = webhook.setdefault("parameters", {})
         params["httpMethod"] = "POST"
         params["multipleMethods"] = False
-        params["responseMode"] = "lastNode"
+        params["responseMode"] = response_mode
         params["path"] = path
         return nodes, connections, path
 
@@ -78,7 +88,7 @@ def _build_test_clone(
         manual["parameters"] = {
             "httpMethod": "POST",
             "path": path,
-            "responseMode": "lastNode",
+            "responseMode": response_mode,
             "options": {},
         }
         return nodes, connections, path
@@ -272,6 +282,13 @@ async def _evaluate_sandbox_run(
         return SandboxTestResult(
             passed=False, findings=empty, empty_fields=empty, execution_id=summary.executionId
         )
+
+    # Return-only / read-only workflows (fetch-and-return, lookups) have no
+    # side-effect action node to neutralize, so the action judge has nothing to
+    # assess and would falsely fail them ("no action steps"). The run succeeded
+    # and no upstream was flagged empty above, so the data path works: pass.
+    if not neutralized:
+        return SandboxTestResult(passed=True, execution_id=summary.executionId)
 
     verdict = await _run_judge(intent, _action_summaries(detail, clone_workflow, neutralized))
     if not verdict.ok:
