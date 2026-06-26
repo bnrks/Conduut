@@ -73,3 +73,16 @@ def test_get_credential_definition():
     reg = _registry()
     assert reg.get_credential_definition("anthropicApi").display_name == "Anthropic"
     assert reg.get_credential_definition("missing") is None
+
+
+def test_icon_url_handles_object_and_string_forms():
+    raw = [
+        {"name": "openAiApi", "displayName": "OpenAi",
+         "iconUrl": {"light": "icons/openai.svg", "dark": "icons/openai.dark.svg"}},
+        {"name": "slackApi", "displayName": "Slack", "iconUrl": "icons/slack.svg"},
+        {"name": "noIcon", "displayName": "No Icon"},
+    ]
+    by_name = {c.name: c for c in parse_credentials_json(raw)}
+    assert by_name["openAiApi"].icon_url == "icons/openai.svg"  # light picked from object
+    assert by_name["slackApi"].icon_url == "icons/slack.svg"
+    assert by_name["noIcon"].icon_url == ""

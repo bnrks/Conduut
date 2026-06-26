@@ -277,6 +277,13 @@ def _credential_is_oauth(name: str, extends: list[str], properties: list[dict]) 
     return bool(prop_names & _OAUTH_PROP_SIGNATURES)
 
 
+def _icon_url_value(raw_icon: Any) -> str:
+    """n8n iconUrl is a string or a {light,dark} object — return the light path."""
+    if isinstance(raw_icon, dict):
+        return str(raw_icon.get("light") or raw_icon.get("dark") or "")
+    return str(raw_icon or "")
+
+
 def _parse_credential_type(raw: dict[str, Any]) -> CredentialTypeInfo | None:
     name = raw.get("name", "")
     if not name:
@@ -291,7 +298,7 @@ def _parse_credential_type(raw: dict[str, Any]) -> CredentialTypeInfo | None:
     return CredentialTypeInfo(
         name=name,
         display_name=raw.get("displayName", name),
-        icon_url=str(raw.get("iconUrl") or ""),
+        icon_url=_icon_url_value(raw.get("iconUrl")),
         documentation_url=str(raw.get("documentationUrl") or ""),
         properties=properties,
         extends=extends,

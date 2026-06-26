@@ -7,8 +7,9 @@ Firestore so credentials can be listed and matched to HTTP nodes by host.
 
 from typing import Any
 
+import httpx
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from src import n8n_client, store
@@ -20,6 +21,7 @@ from src.agent.credential_types import (
     normalize_host,
 )
 from src.auth import get_user_id
+from src.config import settings
 from src.registry import registry
 
 router = APIRouter()
@@ -90,6 +92,28 @@ async def list_credentials(request: Request):
 async def credential_types(request: Request):
     get_user_id(request)
     return {"types": credential_type_catalog()}
+
+
+@router.get("/credentials/icon")
+async def credential_icon(path: str):
+    """Public proxy for n8n-served credential icons (public SVG assets; <img> can't
+    send a bearer token). Strictly limited to n8n's ``icons/`` path to prevent SSRF.
+    """
+    if not path.startswith("icons/") or ".." in path:
+        raise HTTPException(status_code=400, detail={"message": "Invalid icon path."})
+    url = f"{settings.n8n_url.rstrip('/')}/{path}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={"message": "Icon unavailable."}) from exc
+    if response.status_code != 200:
+        raise HTTPException(status_code=404, detail={"message": "Icon not found."})
+    return Response(
+        content=response.content,
+        media_type=response.headers.get("content-type", "image/svg+xml"),
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.get("/credentials/catalog")

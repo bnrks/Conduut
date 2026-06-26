@@ -267,7 +267,8 @@ async def test_credential_catalog_schema_rejects_oauth_by_signature(monkeypatch)
 async def test_catalog_list_from_registry(monkeypatch):
     _patch_user(monkeypatch)
     monkeypatch.setattr(
-        credentials_route.registry, "list_credential_catalog",
+        credentials_route.registry,
+        "list_credential_catalog",
         lambda q=None: [{"type": "anthropicApi", "label": "Anthropic", "icon_url": "icons/a.svg"}],
     )
     result = await credentials_route.credential_catalog_list(object(), q=None)
@@ -277,12 +278,22 @@ async def test_catalog_list_from_registry(monkeypatch):
 async def test_catalog_schema_from_definition(monkeypatch):
     _patch_user(monkeypatch)
     definition = CredentialTypeInfo(
-        name="anthropicApi", display_name="Anthropic", icon_url="icons/a.svg",
-        properties=[{"displayName": "API Key", "name": "apiKey", "type": "string",
-                     "typeOptions": {"password": True}, "required": True}],
+        name="anthropicApi",
+        display_name="Anthropic",
+        icon_url="icons/a.svg",
+        properties=[
+            {
+                "displayName": "API Key",
+                "name": "apiKey",
+                "type": "string",
+                "typeOptions": {"password": True},
+                "required": True,
+            }
+        ],
     )
     monkeypatch.setattr(
-        credentials_route.registry, "get_credential_definition",
+        credentials_route.registry,
+        "get_credential_definition",
         lambda t: definition if t == "anthropicApi" else None,
     )
     result = await credentials_route.credential_catalog_schema(object(), "anthropicApi")
@@ -301,3 +312,35 @@ async def test_catalog_schema_oauth_definition_rejected(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         await credentials_route.credential_catalog_schema(object(), "slackOAuth2Api")
     assert exc.value.status_code == 422
+
+
+async def test_credential_icon_rejects_non_icon_path():
+    with pytest.raises(HTTPException) as exc:
+        await credentials_route.credential_icon(path="../../etc/passwd")
+    assert exc.value.status_code == 400
+
+
+async def test_credential_icon_streams_svg(monkeypatch):
+    class _Resp:
+        status_code = 200
+        content = b"<svg/>"
+        headers = {"content-type": "image/svg+xml"}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            assert url.endswith("/icons/slack.svg")
+            return _Resp()
+
+    monkeypatch.setattr(credentials_route.httpx, "AsyncClient", _Client)
+    result = await credentials_route.credential_icon(path="icons/slack.svg")
+    assert result.media_type == "image/svg+xml"
+    assert result.body == b"<svg/>"
