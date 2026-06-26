@@ -213,11 +213,27 @@ class PlatformActionResult(BaseModel):
     artifacts: list[ArtifactPreviewData] = Field(default_factory=list)
 
 
+class CredentialFieldOption(BaseModel):
+    label: str
+    value: str
+
+
+class CredentialFieldCondition(BaseModel):
+    field: str
+    values: list[Any] = Field(default_factory=list)
+
+
 class CredentialField(BaseModel):
     name: str
     label: str
-    type: str = "string"
+    type: str = "string"  # text | password | json | number | boolean | options
     required: bool = False
+    default: Any = None
+    placeholder: str | None = None
+    description: str | None = None
+    advanced: bool = False
+    options: list[CredentialFieldOption] | None = None
+    showWhen: CredentialFieldCondition | None = None
 
 
 class CredentialTypeOption(BaseModel):

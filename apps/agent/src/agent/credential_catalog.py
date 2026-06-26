@@ -9,8 +9,10 @@ n8n's ``GET /credentials/schema/{type}``.
 
 import re
 
+from n8n_registry.models import CredentialTypeInfo
+
 from src import n8n_client
-from src.agent.schemas import CredentialField
+from src.agent.schemas import CredentialField, CredentialFieldCondition, CredentialFieldOption
 
 # Field names that signal an OAuth2 credential (second-line defense after the
 # name heuristic; the static schema then must not be offered as a fillable form).
@@ -134,3 +136,72 @@ async def fetch_credential_fields(credential_type: str) -> list[CredentialField]
 
     schema = await n8n_client.get_credential_schema(credential_type)
     return parse_schema_fields(schema)
+
+
+# n8n property types that are display-only / not user-fillable.
+_SKIP_PROPERTY_TYPES = {"notice", "hidden"}
+
+
+def credential_fields_from_definition(definition: CredentialTypeInfo) -> list[CredentialField]:
+    """Build rich form fields from an n8n credential definition (credentials.json).
+
+    Honors default, required (-> non-required is advanced), password, options,
+    and single-key displayOptions.show (conditional visibility). Unknown property
+    types fall back to a plain text input.
+    """
+
+    fields: list[CredentialField] = []
+    for prop in definition.properties:
+        if not isinstance(prop, dict):
+            continue
+        name = prop.get("name")
+        if not name:
+            continue
+        prop_type = str(prop.get("type") or "string")
+        if prop_type in _SKIP_PROPERTY_TYPES:
+            continue
+        is_password = bool((prop.get("typeOptions") or {}).get("password"))
+        if prop_type == "string":
+            field_type = "password" if is_password else "text"
+        elif prop_type in {"boolean", "number", "json", "options"}:
+            field_type = prop_type
+        else:
+            field_type = "text"  # safe fallback for unusual types
+
+        options = None
+        if field_type == "options":
+            options = [
+                CredentialFieldOption(
+                    label=str(opt.get("name", opt.get("value", ""))),
+                    value=str(opt.get("value", "")),
+                )
+                for opt in (prop.get("options") or [])
+                if isinstance(opt, dict)
+            ]
+
+        show_when = None
+        display_options = prop.get("displayOptions")
+        if isinstance(display_options, dict):
+            show = display_options.get("show")
+            if isinstance(show, dict) and show:
+                first_key = next(iter(show))
+                show_when = CredentialFieldCondition(
+                    field=first_key, values=list(show.get(first_key) or [])
+                )
+
+        required = bool(prop.get("required"))
+        fields.append(
+            CredentialField(
+                name=name,
+                label=str(prop.get("displayName") or name),
+                type=field_type,
+                required=required,
+                default=prop.get("default"),
+                placeholder=prop.get("placeholder") or None,
+                description=prop.get("description") or None,
+                advanced=not required,
+                options=options,
+                showWhen=show_when,
+            )
+        )
+    return fields
