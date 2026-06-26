@@ -36,16 +36,28 @@ export function ServiceCredentialPicker({ onSubmit }: ServiceCredentialPickerPro
   useEffect(() => {
     if (!user || selected) return;
     let active = true;
+    setLoadingList(true);
     const handle = setTimeout(async () => {
-      setLoadingList(true);
       try {
         const token = await user.getIdToken();
         const suffix = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : "";
         const response = await fetch(`/api/credentials/catalog${suffix}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        const data = (await response.json().catch(() => null)) as { catalog?: CatalogEntry[] } | null;
-        if (active) setEntries(data?.catalog ?? []);
+        const data = (await response.json().catch(() => null)) as {
+          catalog?: CatalogEntry[];
+          message?: string;
+          detail?: { message?: string };
+        } | null;
+        if (!response.ok) {
+          throw new Error(data?.detail?.message ?? data?.message ?? "Could not load services.");
+        }
+        if (active) {
+          setEntries(data?.catalog ?? []);
+          setError("");
+        }
+      } catch (err) {
+        if (active) setError(err instanceof Error ? err.message : "Could not load services.");
       } finally {
         if (active) setLoadingList(false);
       }
@@ -90,7 +102,7 @@ export function ServiceCredentialPicker({ onSubmit }: ServiceCredentialPickerPro
       <div className="space-y-3">
         <button
           type="button"
-          onClick={() => setSelected(null)}
+          onClick={() => { setSelected(null); setError(""); }}
           className="text-[12px] font-medium text-conduut-500 hover:text-conduut-700"
         >
           ← Choose a different service
