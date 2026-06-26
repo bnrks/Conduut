@@ -6,6 +6,7 @@ Firestore so credentials can be listed and matched to HTTP nodes by host.
 """
 
 from typing import Any
+from urllib.parse import unquote
 
 import httpx
 import structlog
@@ -99,16 +100,18 @@ async def credential_icon(path: str):
     """Public proxy for n8n-served credential icons (public SVG assets; <img> can't
     send a bearer token). Strictly limited to n8n's ``icons/`` path to prevent SSRF.
     """
-    if not path.startswith("icons/") or ".." in path:
+    safe_path = unquote(path)
+    if not safe_path.startswith("icons/") or ".." in safe_path:
         raise HTTPException(status_code=400, detail={"message": "Invalid icon path."})
-    url = f"{settings.n8n_url.rstrip('/')}/{path}"
+    url = f"{settings.n8n_url.rstrip('/')}/{safe_path}"
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(url)
     except Exception as exc:
         raise HTTPException(status_code=502, detail={"message": "Icon unavailable."}) from exc
     if response.status_code != 200:
-        raise HTTPException(status_code=404, detail={"message": "Icon not found."})
+        status_code = 502 if response.status_code >= 500 else 404
+        raise HTTPException(status_code=status_code, detail={"message": "Icon not found."})
     return Response(
         content=response.content,
         media_type=response.headers.get("content-type", "image/svg+xml"),

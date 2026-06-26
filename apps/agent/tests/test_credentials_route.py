@@ -320,6 +320,37 @@ async def test_credential_icon_rejects_non_icon_path():
     assert exc.value.status_code == 400
 
 
+async def test_credential_icon_rejects_double_encoded_traversal():
+    with pytest.raises(HTTPException) as exc:
+        await credentials_route.credential_icon(path="icons/%2e%2e/api/v1/credentials")
+    assert exc.value.status_code == 400
+
+
+async def test_credential_icon_maps_upstream_5xx_to_502(monkeypatch):
+    class _Resp:
+        status_code = 503
+        content = b""
+        headers: dict = {}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            return _Resp()
+
+    monkeypatch.setattr(credentials_route.httpx, "AsyncClient", _Client)
+    with pytest.raises(HTTPException) as exc:
+        await credentials_route.credential_icon(path="icons/x.svg")
+    assert exc.value.status_code == 502
+
+
 async def test_credential_icon_streams_svg(monkeypatch):
     class _Resp:
         status_code = 200
