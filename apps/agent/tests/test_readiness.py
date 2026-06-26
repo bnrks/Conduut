@@ -324,3 +324,52 @@ async def test_readiness_http_already_attached_is_ready(monkeypatch):
     assert res["missing_credentials"] == []
     assert res["reuse_candidates"] == []
     assert res["ready"] is True
+
+
+# ---------------------------------------------------------------------------
+# Predefined credential type-matched library (matchKind="type")
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _Cred:
+    id: str
+    label: str
+    credential_type: str
+    host: str = ""
+    status: str = "ready"
+    n8n_credential_id: str = "n8n_x"
+    n8n_credential_name: str = "n8n_x"
+
+
+async def test_readiness_type_matched_library_suggests_candidate(monkeypatch):
+    workflow = {
+        "id": "wf1",
+        "name": "AI flow",
+        "nodes": [
+            {
+                "name": "OpenAI Chat Model",
+                "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+                "parameters": {},
+            }
+        ],
+        "connections": {},
+    }
+
+    monkeypatch.setattr(
+        readiness.registry,
+        "get_node_schema",
+        lambda node_type: {"credentials": ["openAiApi"]},
+    )
+
+    async def fake_list(user_id):
+        return [_Cred(id="cred_o", label="OpenAI", credential_type="openAiApi")]
+
+    monkeypatch.setattr(readiness.store, "list_custom_credentials", fake_list)
+
+    result = await readiness.analyze_workflow_readiness_payload(workflow, user_id="u1")
+    assert result["missing_credentials"] == []
+    candidates = result["reuse_candidates"]
+    assert len(candidates) == 1
+    assert candidates[0]["credentialId"] == "cred_o"
+    assert candidates[0]["matchKind"] == "type"

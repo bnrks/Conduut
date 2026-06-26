@@ -6,7 +6,7 @@ import structlog
 from pydantic_ai import RunContext
 
 from src import n8n_client, store
-from src.agent.credential_catalog import parse_schema_fields
+from src.agent.credential_catalog import match_credentials_by_type, parse_schema_fields
 from src.agent.credential_types import (
     credential_type_catalog,
     is_supported_http_type,
@@ -394,6 +394,7 @@ async def _credential_request_for_node(
             fields=fields,
             submitPath="/api/credentials",
             description=f"{node_name} needs {credential_type} credentials before it can run.",
+            matchKind="type",
         )
     )
 
@@ -467,6 +468,7 @@ async def analyze_workflow_readiness_payload(
                             "label": credential.label,
                             "credentialType": credential.credential_type,
                             "host": credential.host,
+                            "matchKind": "host",
                         }
                     )
                 continue
@@ -482,6 +484,24 @@ async def analyze_workflow_readiness_payload(
             research_candidates.append(
                 {"nodeName": str(node.get("name") or ""), "url": str(url or "")}
             )
+            continue
+
+        # Predefined credential library (type-matched), before the reuse bridge.
+        if http_credentials is None:
+            http_credentials = await store.list_custom_credentials(user_id) if user_id else []
+        type_matches = match_credentials_by_type(credential_type, http_credentials)
+        if type_matches:
+            for credential in type_matches:
+                reuse_candidates.append(
+                    {
+                        "nodeName": str(node.get("name") or ""),
+                        "credentialId": credential.id,
+                        "label": credential.label,
+                        "credentialType": credential.credential_type,
+                        "host": credential.host,
+                        "matchKind": "type",
+                    }
+                )
             continue
 
         # Non-HTTP, managed-less types (e.g. openAiApi): cross-workflow reuse bridge.
