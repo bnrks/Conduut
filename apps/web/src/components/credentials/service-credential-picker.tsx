@@ -109,7 +109,14 @@ export function ServiceCredentialPicker({ onSubmit }: ServiceCredentialPickerPro
         </button>
         <div className="flex items-center gap-2">
           {iconUrl && (
-            <img src={iconUrl} className="h-4 w-4" alt="" />
+            <img
+              src={iconUrl}
+              className="h-4 w-4"
+              alt=""
+              onError={(event) => {
+                (event.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
           )}
           <p className="text-[13px] font-medium text-foreground">{selected.label}</p>
         </div>
@@ -159,7 +166,14 @@ export function ServiceCredentialPicker({ onSubmit }: ServiceCredentialPickerPro
             >
               <span className="flex items-center gap-2">
                 {entry.icon_url && (
-                  <img src={entry.icon_url} className="h-4 w-4" alt="" />
+                  <img
+                    src={entry.icon_url}
+                    className="h-4 w-4"
+                    alt=""
+                    onError={(event) => {
+                      (event.currentTarget as HTMLImageElement).style.display = "none";
+                    }}
+                  />
                 )}
                 {entry.label}
               </span>
