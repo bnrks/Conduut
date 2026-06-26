@@ -90,7 +90,7 @@ def match_credentials_by_type(credential_type: str, credentials: list) -> list:
     for credential in credentials:
         if getattr(credential, "credential_type", None) != credential_type:
             continue
-        if getattr(credential, "status", "ready") != "ready":
+        if getattr(credential, "status", None) != "ready":
             continue
         matches.append(credential)
     return matches

@@ -35,7 +35,8 @@ def test_build_catalog_excludes_oauth_filters_and_sorts():
         {"type": "anthropicApi", "nodes": ["Anthropic Chat Model"]},
     ]
     full = cc.build_catalog(raw)
-    assert [c["type"] for c in full] == ["anthropicApi", "openAiApi"]  # OAuth excluded, sorted by label
+    # OAuth excluded, sorted by label
+    assert [c["type"] for c in full] == ["anthropicApi", "openAiApi"]
     assert all(c["fillable"] is True for c in full)
     filtered = cc.build_catalog(raw, query="open")
     assert [c["type"] for c in filtered] == ["openAiApi"]
@@ -64,3 +65,4 @@ def test_parse_schema_fields_marks_secrets():
     assert by_name["apiKey"].type == "password"
     assert by_name["apiKey"].required is True
     assert by_name["organizationId"].type == "string"
+    assert by_name["organizationId"].required is False
