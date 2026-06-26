@@ -99,7 +99,56 @@ export function methodForCredentialType(type: string): AuthMethod {
 
 // Friendly label for a stored credential's n8n type (used in lists/badges).
 export function friendlyTypeLabel(type: string): string {
-  return METHOD_BY_TYPE.get(type)?.label ?? type;
+  return METHOD_BY_TYPE.get(type)?.label ?? humanizeCredentialType(type);
+}
+
+const TYPE_SUFFIXES = ["OAuth2Api", "OAuth2", "Api", "Auth"];
+
+// Fallback label for a predefined n8n credential type with no friendly mapping
+// (e.g. "openAiApi" -> "Open Ai"). Catalog labels from the agent are preferred.
+export function humanizeCredentialType(type: string): string {
+  let base = type;
+  for (const suffix of TYPE_SUFFIXES) {
+    if (base.endsWith(suffix) && base.length > suffix.length) {
+      base = base.slice(0, -suffix.length);
+      break;
+    }
+  }
+  const spaced = base.replace(/(?<!^)(?=[A-Z])/g, " ").trim();
+  if (!spaced) return type;
+  return spaced
+    .split(/\s+/)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+export interface ServiceCredentialField {
+  name: string;
+  label: string;
+  type?: string;
+  required?: boolean;
+}
+
+// Build a one-method form for a predefined service credential whose fields come
+// from n8n's schema. buildData passes values straight through (n8n field names).
+export function serviceMethodFromFields(
+  credentialType: string,
+  label: string,
+  fields: ServiceCredentialField[]
+): AuthMethod {
+  const safeFields = fields.length > 0 ? fields : [{ name: "apiKey", label: "API Key", type: "password" }];
+  return {
+    id: credentialType,
+    credentialType,
+    label,
+    fields: safeFields.map((field) => ({
+      name: field.name,
+      label: field.label,
+      type: field.type === "password" ? "password" : field.type === "json" ? "json" : "text",
+    })),
+    buildData: (values) =>
+      Object.fromEntries(safeFields.map((field) => [field.name, values[field.name] ?? ""])),
+  };
 }
 
 // Default field values (e.g. Authorization / Bearer) for a method.
