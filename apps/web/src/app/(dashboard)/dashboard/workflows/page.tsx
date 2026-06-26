@@ -29,10 +29,17 @@ type StatusFilter = "all" | WorkflowStatus;
 type RunMode = "single" | "batch";
 type BatchMappingSource = "column" | "fixed" | "none";
 
+interface WorkflowRunOutput {
+  nodeName: string;
+  itemCount: number;
+  items: unknown[];
+}
+
 interface WorkflowRunResult {
   workflowName: string;
   status?: string;
   summary?: string;
+  outputs?: WorkflowRunOutput[];
   artifacts?: ArtifactPreviewData[];
 }
 
@@ -747,17 +754,17 @@ export default function WorkflowsPage() {
       const result = (await response.json().catch(() => null)) as {
         status?: string;
         summary?: string;
+        outputs?: WorkflowRunOutput[];
         artifacts?: ArtifactPreviewData[];
       } | null;
       toast.success(result?.summary || `Workflow ${result?.status || "triggered"}.`);
-      if (result?.artifacts?.length) {
-        setRunResult({
-          workflowName: workflow.name,
-          status: result.status,
-          summary: result.summary,
-          artifacts: result.artifacts,
-        });
-      }
+      setRunResult({
+        workflowName: workflow.name,
+        status: result?.status,
+        summary: result?.summary,
+        outputs: result?.outputs,
+        artifacts: result?.artifacts,
+      });
       setRunWorkflow(null);
       setRunValues({});
       void fetchWorkflows();
@@ -1228,9 +1235,28 @@ export default function WorkflowsPage() {
               </Button>
             </div>
             <div className="flex max-h-[70vh] flex-col gap-3 overflow-y-auto pr-1">
+              {(runResult.outputs ?? []).map((output, index) => (
+                <div
+                  key={`out-${index}`}
+                  className="rounded-md border border-border bg-muted/30 p-3"
+                >
+                  <p className="mb-1.5 text-[12px] font-medium text-muted-foreground">
+                    {output.nodeName}
+                    {output.itemCount > 1 ? ` · ${output.itemCount} items` : ""}
+                  </p>
+                  <pre className="overflow-x-auto whitespace-pre-wrap break-words text-[12.5px] text-foreground">
+                    {JSON.stringify(output.items, null, 2)}
+                  </pre>
+                </div>
+              ))}
               {(runResult.artifacts ?? []).map((artifact, index) => (
                 <ArtifactPreview key={index} data={artifact} />
               ))}
+              {!(runResult.outputs ?? []).length && !(runResult.artifacts ?? []).length && (
+                <p className="text-[13px] text-muted-foreground">
+                  Workflow çalıştı ama gösterilecek bir çıktı üretmedi.
+                </p>
+              )}
             </div>
           </div>
         </div>
