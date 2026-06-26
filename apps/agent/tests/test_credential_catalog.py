@@ -119,7 +119,26 @@ def test_credential_fields_from_definition_anthropic():
     assert by_name["headerName"].showWhen.field == "header"
     assert by_name["headerName"].showWhen.values == [True]
     assert by_name["headerValue"].type == "password"
-    opts = by_name["allowedHttpRequestDomains"]
-    assert opts.type == "options"
-    assert opts.default == "all"
-    assert [o.value for o in opts.options] == ["all", "none"]
+    # n8n editor-only meta fields are skipped (n8n public API rejects them in data).
+    assert "allowedHttpRequestDomains" not in by_name
+    assert "allowedDomains" not in by_name
+
+
+def test_credential_fields_options_mapping():
+    definition = CredentialTypeInfo(
+        name="svc",
+        display_name="Svc",
+        properties=[
+            {
+                "displayName": "Region",
+                "name": "region",
+                "type": "options",
+                "default": "us",
+                "options": [{"name": "US", "value": "us"}, {"name": "EU", "value": "eu"}],
+            }
+        ],
+    )
+    region = cc.credential_fields_from_definition(definition)[0]
+    assert region.type == "options"
+    assert region.default == "us"
+    assert [o.value for o in region.options] == ["us", "eu"]

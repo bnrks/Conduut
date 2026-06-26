@@ -83,6 +83,11 @@ def parse_schema_fields(schema: dict) -> list[CredentialField]:
 
 # n8n property types that are display-only / not user-fillable.
 _SKIP_PROPERTY_TYPES = {"notice", "hidden"}
+# n8n appends these HTTP-domain-restriction meta fields to ~280/415 credential
+# types, but they are NOT part of the credential `data` the public API accepts —
+# POST /credentials rejects them as additional properties ("... is not allowed to
+# have the additional property"). Skip them so created credentials validate.
+_SKIP_PROPERTY_NAMES = {"allowedHttpRequestDomains", "allowedDomains"}
 
 
 def credential_fields_from_definition(definition: CredentialTypeInfo) -> list[CredentialField]:
@@ -98,7 +103,7 @@ def credential_fields_from_definition(definition: CredentialTypeInfo) -> list[Cr
         if not isinstance(prop, dict):
             continue
         name = prop.get("name")
-        if not name:
+        if not name or name in _SKIP_PROPERTY_NAMES:
             continue
         prop_type = str(prop.get("type") or "string")
         if prop_type in _SKIP_PROPERTY_TYPES:
