@@ -66,3 +66,38 @@ def test_set_node_schema_uses_assignments_example():
         }
     ]
     assert schema["usageHints"]
+
+
+from n8n_registry.search import collect_credential_types
+
+
+def _cred_node(type_name, display_name, creds):
+    return NodeInfo(
+        type_name=type_name,
+        display_name=display_name,
+        description="",
+        type_version=1,
+        credentials=creds,
+        category="",
+        is_trigger=False,
+    )
+
+
+def test_collect_credential_types_aggregates_nodes():
+    nodes = [
+        _cred_node("n8n-nodes-base.openAi", "OpenAI", ["openAiApi"]),
+        _cred_node("@n8n/n8n-nodes-langchain.lmChatOpenAi", "OpenAI Chat Model", ["openAiApi"]),
+        _cred_node("n8n-nodes-base.slack", "Slack", ["slackApi", "slackOAuth2Api"]),
+        _cred_node("n8n-nodes-base.noAuth", "No Auth", []),
+    ]
+    result = collect_credential_types(nodes)
+    by_type = {entry["type"]: entry["nodes"] for entry in result}
+    assert set(by_type) == {"openAiApi", "slackApi", "slackOAuth2Api"}
+    assert by_type["openAiApi"] == ["OpenAI", "OpenAI Chat Model"]
+    assert [entry["type"] for entry in result] == sorted(by_type)
+
+
+def test_registry_list_credential_types():
+    registry = NodeRegistry()
+    registry._nodes = [_cred_node("n8n-nodes-base.openAi", "OpenAI", ["openAiApi"])]
+    assert registry.list_credential_types() == [{"type": "openAiApi", "nodes": ["OpenAI"]}]
