@@ -6,6 +6,7 @@ import structlog
 from pydantic_ai import RunContext
 
 from src import n8n_client, store
+from src.agent.credential_catalog import parse_schema_fields
 from src.agent.credential_types import (
     credential_type_catalog,
     is_supported_http_type,
@@ -297,32 +298,9 @@ async def _attach_existing_credential_if_available(
 
 
 def _fields_from_schema(schema: dict[str, Any]) -> list[CredentialField]:
-    properties = schema.get("properties") if isinstance(schema, dict) else None
-    required = set(schema.get("required") or []) if isinstance(schema, dict) else set()
-    if not isinstance(properties, dict):
-        return [CredentialField(name="apiKey", label="API Key", type="password", required=True)]
-
-    fields: list[CredentialField] = []
-    for name, meta in properties.items():
-        if not isinstance(meta, dict):
-            continue
-        field_type = str(meta.get("type") or "string")
-        if field_type not in {"string", "number", "integer", "boolean"}:
-            continue
-        display_name = meta.get("displayName") or name.replace("_", " ").title()
-        secret = any(part in name.lower() for part in ("key", "token", "secret", "password"))
-        fields.append(
-            CredentialField(
-                name=name,
-                label=str(display_name),
-                type="password" if secret else field_type,
-                required=name in required or len(properties) == 1,
-            )
-        )
-
-    return fields or [
-        CredentialField(name="apiKey", label="API Key", type="password", required=True)
-    ]
+    # Moved to credential_catalog.parse_schema_fields (shared with the catalog);
+    # kept as a thin alias so existing call sites stay unchanged.
+    return parse_schema_fields(schema)
 
 
 def _http_credential_request(
