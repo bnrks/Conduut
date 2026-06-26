@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { WorkflowCard } from "@/components/dashboard/workflow-card";
+import { WorkflowRunningOverlay } from "@/components/dashboard/workflow-running-overlay";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useAuth } from "@/hooks/use-auth";
 import type { ArtifactPreviewData } from "@/types/artifact";
@@ -104,6 +105,20 @@ interface BatchStreamEvent {
 }
 
 const MAX_BATCH_ROWS = 50;
+const MIN_OVERLAY_MS = 700;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Overlay'i en az MIN_OVERLAY_MS görünür tutar — çok hızlı dönen run'larda
+// "yanıp sönme"yi engeller.
+async function ensureMinOverlay(startedAt: number): Promise<void> {
+  const elapsed = performance.now() - startedAt;
+  if (elapsed < MIN_OVERLAY_MS) {
+    await delay(MIN_OVERLAY_MS - elapsed);
+  }
+}
 
 async function getErrorMessage(response: Response, fallback: string): Promise<string> {
   const payload = await response.json().catch(() => null) as {
@@ -370,6 +385,7 @@ export default function WorkflowsPage() {
   const [batchRunProgress, setBatchRunProgress] = useState<BatchRunProgress | null>(null);
   const [runResult, setRunResult] = useState<WorkflowRunResult | null>(null);
   const [batchResult, setBatchResult] = useState<WorkflowBatchRunResult | null>(null);
+  const [runningOverlay, setRunningOverlay] = useState<{ workflowName: string } | null>(null);
 
   const fetchWorkflows = useCallback(async () => {
     if (authLoading) return;
@@ -735,6 +751,8 @@ export default function WorkflowsPage() {
   const submitWorkflowRun = async (workflow: Workflow, input: Record<string, string>) => {
     if (!user) return;
     setRunningWorkflowId(workflow.id);
+    setRunningOverlay({ workflowName: workflow.name });
+    const startedAt = performance.now();
     try {
       const token = await user.getIdToken();
       const response = await fetch(
@@ -757,6 +775,8 @@ export default function WorkflowsPage() {
         outputs?: WorkflowRunOutput[];
         artifacts?: ArtifactPreviewData[];
       } | null;
+      await ensureMinOverlay(startedAt);
+      setRunningOverlay(null);
       toast.success(result?.summary || `Workflow ${result?.status || "triggered"}.`);
       setRunResult({
         workflowName: workflow.name,
@@ -769,6 +789,8 @@ export default function WorkflowsPage() {
       setRunValues({});
       void fetchWorkflows();
     } catch (error) {
+      await ensureMinOverlay(startedAt);
+      setRunningOverlay(null);
       toast.error(error instanceof Error ? error.message : "Could not run workflow.");
     } finally {
       setRunningWorkflowId(null);
@@ -1332,6 +1354,10 @@ export default function WorkflowsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {runningOverlay && (
+        <WorkflowRunningOverlay workflowName={runningOverlay.workflowName} />
       )}
     </div>
   );
