@@ -60,6 +60,9 @@ class CustomCredential:
     secret_fields: list[str] = field(default_factory=list)
     source_url: str = ""
     confidence: str = ""
+    # "host" -> matched to HTTP Request nodes by URL host (generic HTTP auth);
+    # "type" -> matched to any node by n8n credential type (e.g. openAiApi).
+    match_kind: str = "host"
     pending_workflow_id: str = ""
     pending_node_name: str = ""
 
@@ -247,6 +250,7 @@ async def save_custom_credential(
     host: str,
     n8n_credential_id: str,
     n8n_credential_name: str,
+    match_kind: str = "host",
 ) -> CustomCredential:
     credential_id = str(uuid4())
     now = _now_iso()
@@ -257,6 +261,7 @@ async def save_custom_credential(
         "n8n_credential_id": n8n_credential_id,
         "n8n_credential_name": n8n_credential_name,
         "status": "ready",
+        "match_kind": match_kind,
         "created_at": now,
         "updated_at": now,
     }
@@ -279,6 +284,7 @@ def _custom_credential_from_data(credential_id: str, data: dict) -> CustomCreden
         secret_fields=list(data.get("secret_fields") or []),
         source_url=data.get("source_url", ""),
         confidence=data.get("confidence", ""),
+        match_kind=data.get("match_kind", "host"),
         pending_workflow_id=data.get("pending_workflow_id", ""),
         pending_node_name=data.get("pending_node_name", ""),
     )

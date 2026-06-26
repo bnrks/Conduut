@@ -154,3 +154,18 @@ async def test_draft_credential_save_and_finalize(monkeypatch):
         )
         is None
     )
+
+
+def test_custom_credential_match_kind_defaults_to_host():
+    cred = store._custom_credential_from_data(
+        "c1", {"label": "X", "credential_type": "httpHeaderAuth"}
+    )
+    assert cred.match_kind == "host"
+
+
+def test_custom_credential_match_kind_type_roundtrip():
+    cred = store._custom_credential_from_data(
+        "c2", {"label": "OpenAI", "credential_type": "openAiApi", "match_kind": "type"}
+    )
+    assert cred.match_kind == "type"
+    assert cred.credential_type == "openAiApi"
