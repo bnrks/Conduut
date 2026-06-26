@@ -73,3 +73,28 @@ async def test_attach_without_generic_auth_keeps_parameters(monkeypatch):
     assert "authentication" not in put_node["parameters"]
     assert "genericAuthType" not in put_node["parameters"]
     assert put_node["credentials"]["gmailOAuth2"] == {"id": "c2", "name": "Google"}
+
+
+async def test_call_webhook_uses_long_timeout_for_llm_workflows(monkeypatch):
+    # A synchronous webhook run (responseMode=lastNode) blocks until the WHOLE
+    # workflow finishes; AI/LLM workflows routinely take 30-120s. The webhook
+    # client must wait long enough or the run errors even though n8n succeeds.
+    captured: dict = {}
+
+    class _CapturingClient:
+        def __init__(self, *args, timeout=None, **kwargs):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, json=None):
+            return _FakeResp()
+
+    monkeypatch.setattr(n8n_client.httpx, "AsyncClient", _CapturingClient)
+    await n8n_client.call_webhook("some/path", {"x": 1})
+    assert captured["timeout"] is not None
+    assert float(captured["timeout"]) >= 120

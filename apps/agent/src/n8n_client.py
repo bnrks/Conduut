@@ -438,12 +438,19 @@ async def get_execution_detail(execution_id: str) -> dict[str, Any]:
     return r.json()
 
 
+# A synchronous webhook run (responseMode=lastNode) blocks until the WHOLE
+# workflow finishes. AI/LLM workflows routinely take 30-120s, so this must be far
+# longer than the 30s used for quick CRUD API calls — otherwise the run times out
+# even though n8n completes the execution successfully.
+_WEBHOOK_RUN_TIMEOUT = 120.0
+
+
 async def call_webhook(path: str, payload: dict[str, Any] | None = None) -> httpx.Response:
     started_at = perf_counter()
     url = f"{settings.n8n_url.rstrip('/')}/webhook/{path}"
     log.debug("n8n_webhook_request_started", path=path, payload=payload)
     try:
-        async with httpx.AsyncClient(timeout=30.0) as c:
+        async with httpx.AsyncClient(timeout=_WEBHOOK_RUN_TIMEOUT) as c:
             response = await c.post(url, json=payload or {})
     except Exception as exc:
         duration_ms = round((perf_counter() - started_at) * 1000, 2)
