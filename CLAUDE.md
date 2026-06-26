@@ -197,6 +197,22 @@ Faz 5 — Production            → Monitoring + Stripe + Marketing sayfası
 
 ---
 
+### Son oturum özeti (2026-06-26) — Predefined credential library (ADR-0015)
+
+**Bağlam:** ADR-0012 credential kütüphanesi yalnızca generic HTTP auth tiplerini destekliyordu (`httpHeaderAuth` vb.). n8n'in predefined tipleri (`openAiApi`, `anthropicApi`, `githubApi` vb.) farklı mekanizma kullanıyor: `predefinedCredentialType` ile doğrudan node'a bağlanıyor, `genericAuthType` yolundan geçmiyor. Sonuç: her workflow kurulumunda aynı OpenAI key'i tekrar tekrar isteniyor, cross-workflow reuse yoktu.
+
+**Karar (ADR-0015):** Mevcut `users/{uid}/credentials` koleksiyonuna `match_kind: "host" | "type"` ayrımı eklendi (varsayılan `"host"` — geri uyumlu, migrasyon yok). Predefined tipler `match_kind="type"` ile kaydediliyor; host zorunlu değil; bağlanırken `generic_auth_type=None` (n8n direkt `credentials.{type}` wiring'i yapar). OAuth2 tabanli predefined tipler (Google, Slack OAuth vb.) katalogdan **ayıklanıyor** (`is_oauth_type_name` + `schema_is_oauth`) — Connections katmanı değişmedi.
+
+**Eklenen/değişen (backend):** `agent/credential_catalog.py` (**yeni**: `build_catalog` OAuth-ayıklamalı + `friendly_label`, `match_credentials_by_type`, `parse_schema_fields` taşındı, `fetch_credential_fields`). `routes/credentials.py` (`GET /catalog`, `GET /catalog/{type}/schema` OAuth 422, `POST /credentials` `match_kind` türetimi). `tools/readiness.py` (predefined tipler için type-matched kütüphane önce bakılıyor, `matchKind` taşıyor). `tools/factory.py` (`add_service_credential` yeni tool). `tools/prompt.py` (predefined tip tespiti → önce `list_credentials`, yoksa `add_service_credential`). `store.CustomCredential` (`match_kind` alanı). **336 passed; ruff temiz.**
+
+**Frontend:** `service-credential-picker.tsx` (**yeni**: aranabilir katalog → dinamik alanlar). `/dashboard/credentials` çift mod (Servis seçici + Custom HTTP). `credential-auth-methods.ts` → `serviceMethodFromFields`. Chat kartı `match_kind` gönderiyor. **tsc temiz, eslint 0 hata.**
+
+**Kavramsal ayrım (değişmez):** Connections = Conduut'un hem n8n'de hem serviste doğrudan erişimi olan servisler (Google Gmail/Sheets, `direct_api_enabled`, ADR-0006). Credentials = yalnızca n8n içinde kullanılan sırlar (openAiApi vb.). Bu ADR yalnızca Credentials tarafını genişletti.
+
+**Bekleyen:** Canlı uçtan-uca doğrulama (Step 4, manuel): dashboard'dan OpenAI credential ekle → AI workflow → type-matched reuse → ikinci workflow'da öneri; OAuth tiplerinin katalogda görünmediğini doğrula. (bkz. [[adr-0015-predefined-credential-library]])
+
+---
+
 ### Son oturum özeti (2026-06-24) — DeepSeek tier bake-off branch + ucuz model araştırması
 
 **Bağlam:** İsteklerin çoğu MEDIUM tier'a (Claude Sonnet 4.6, $3/$15) düşüyor → maliyet yüksek. Kullanıcı ucuz alternatif istedi. **deep-research harness** ile DeepSeek V4 / Qwen 3.6 / 3.7 araştırıldı (23 kaynak, 25 adversarial doğrulama). Sonuç: en güçlü ucuz aday **DeepSeek V4 Pro** (first-party OpenAI-uyumlu API, tool calls + JSON, ~7x/17x ucuz, OpenRouter dışı). Risk: tool-call reliability kanıtı zayıf (tekil GitHub issue #1244 ~%11 plain-text-tool-call), bağımsız benchmark yok → canlı bake-off şart. Tüm bulgular: [[model-cost-research-2026-06]].
@@ -416,6 +432,7 @@ python packages/n8n-registry/scripts/fetch_nodes.py
 - `apps/agent/src/agent/sandbox.py` — **sandbox test motoru** (ADR-0014): `run_sandbox_test` (klonla→nötralize→çalıştır→değerlendir→sil), `SandboxTestResult`, örnek-girdi, test-klonu, boş-çıktı kontrolü, LLM yargısı (`_run_judge_llm` izole, sabit Gemini Flash). Build'in son adımında yan-etkisiz test
 - `apps/agent/src/agent/sandbox_nodes.py` — aksiyon-node sınıflandırıcı (`is_side_effect_node`: gmail send/sheets write/slack/HTTP non-GET...) + `neutralize_action_nodes` (`disabled=true`) (ADR-0014)
 - `apps/agent/src/agent/tools/sandbox_gate.py` — `_test_and_gate`: test'i koşar, başarısızsa `ModelRetry` ile self-repair (en fazla 2 deneme, `workflow_test_attempts` bütçesi), bütçe dolunca `needs_attention`; harness hatası build'i bloklamaz. `create_workflow`/`update_workflow` (build sonrası) + `execute_workflow` (test-before-execute, `_needs_pretest`) üzerinden tetiklenir (ADR-0014)
+- `apps/agent/src/agent/credential_catalog.py` — predefined credential katalog motoru: `build_catalog` (OAuth ayıklama + friendly_label), `match_credentials_by_type`, `parse_schema_fields`, `fetch_credential_fields`; n8n registry + schema endpoint üzerinden çalışır (ADR-0015)
 - `apps/agent/src/agent/credential_types.py` — custom HTTP credential V1 tip kataloğu + `normalize_host` + `match_credentials` (host eşleştirme) (ADR-0012)
 - `apps/agent/src/agent/tools/credentials.py` — `list_credentials_payload` (secret yok, host-eşleşme bayraklı) + `attach_credential_payload` (ownership doğrular, generic auth wiring) (ADR-0012)
 - `apps/agent/src/routes/credentials.py` — custom credential kütüphanesi route'ları (POST create/attach, GET, GET `/types`, DELETE `/{id}`) (ADR-0012)

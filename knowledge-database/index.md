@@ -86,6 +86,11 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
   (hata / bos cikti / LLM yargisi) + 2 denemeye kadar self-repair (ModelRetry
   dongusu); basarisizsa workflow "needs_attention". Yeni `sandbox.py` +
   `sandbox_nodes.py` + `tools/sandbox_gate.py`.
+- [[adr-0015-predefined-credential-library]] - n8n hazir (predefined) credential
+  tipleri (openAiApi vb.) birlesik Credentials kutuphanesine type-matched alt-tur
+  olarak; dinamik katalog (registry + OAuth ayiklama) + alanlar n8n semasindan;
+  `add_service_credential` tool + dashboard servis secici. Connections = servise
+  n8n-disi direkt erisim (degismez).
 
 ## Kaynak Dokumanlar
 
