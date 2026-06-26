@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from .models import NodeInfo, WorkflowTemplate
+from .models import CredentialTypeInfo, NodeInfo, WorkflowTemplate
 
 log = logging.getLogger(__name__)
 
@@ -256,4 +256,79 @@ def load_templates_from_file(path: str | Path) -> list[WorkflowTemplate]:
         return templates
     except Exception as exc:
         log.warning("Failed to load templates from %s: %s", path, exc)
+        return []
+
+
+_OAUTH_PROP_SIGNATURES = {
+    "oauthTokenData",
+    "grantType",
+    "authUrl",
+    "accessTokenUrl",
+    "authQueryParameters",
+}
+
+
+def _credential_is_oauth(name: str, extends: list[str], properties: list[dict]) -> bool:
+    if "oauth" in name.lower():
+        return True
+    if any("oauth" in str(item).lower() for item in extends):
+        return True
+    prop_names = {p.get("name") for p in properties if isinstance(p, dict)}
+    return bool(prop_names & _OAUTH_PROP_SIGNATURES)
+
+
+def _parse_credential_type(raw: dict[str, Any]) -> CredentialTypeInfo | None:
+    name = raw.get("name", "")
+    if not name:
+        return None
+    extends = raw.get("extends") or []
+    if not isinstance(extends, list):
+        extends = [extends]
+    extends = [str(item) for item in extends]
+    properties = raw.get("properties") or []
+    if not isinstance(properties, list):
+        properties = []
+    return CredentialTypeInfo(
+        name=name,
+        display_name=raw.get("displayName", name),
+        icon_url=str(raw.get("iconUrl") or ""),
+        documentation_url=str(raw.get("documentationUrl") or ""),
+        properties=properties,
+        extends=extends,
+        generic_auth=bool(raw.get("genericAuth")),
+        is_oauth=_credential_is_oauth(name, extends, properties),
+    )
+
+
+def parse_credentials_json(data: Any) -> list[CredentialTypeInfo]:
+    """Parse n8n credentials.json (list, or {"data": [...]}) into CredentialTypeInfo."""
+    if isinstance(data, dict):
+        raw_list = data.get("data") or data.get("credentials") or []
+    elif isinstance(data, list):
+        raw_list = data
+    else:
+        log.warning("credentials.json unexpected format: %s", type(data))
+        return []
+    by_name: dict[str, CredentialTypeInfo] = {}
+    for raw in raw_list:
+        if not isinstance(raw, dict):
+            continue
+        parsed = _parse_credential_type(raw)
+        if parsed:
+            by_name[parsed.name] = parsed
+    log.info("Loaded %d credential types from credentials.json", len(by_name))
+    return list(by_name.values())
+
+
+def load_credentials_from_file(path: str | Path) -> list[CredentialTypeInfo]:
+    """Load credential type definitions from a saved credentials.json file."""
+    p = Path(path)
+    if not p.exists():
+        log.warning("credentials.json not found at %s", path)
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return parse_credentials_json(data)
+    except Exception as exc:
+        log.warning("Failed to load credentials.json from %s: %s", path, exc)
         return []

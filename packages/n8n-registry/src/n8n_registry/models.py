@@ -25,3 +25,15 @@ class WorkflowTemplate:
     node_types: list[str] = field(default_factory=list)  # used node type strings
     workflow_json: dict = field(default_factory=dict)
     search_text: str = ""   # pre-built search string
+
+
+@dataclass
+class CredentialTypeInfo:
+    name: str                       # "anthropicApi"
+    display_name: str               # "Anthropic"
+    icon_url: str = ""              # "icons/anthropic.svg"
+    documentation_url: str = ""
+    properties: list[dict] = field(default_factory=list)  # raw n8n INodeProperties
+    extends: list[str] = field(default_factory=list)
+    generic_auth: bool = False      # n8n genericAuth (httpHeaderAuth etc.)
+    is_oauth: bool = False
