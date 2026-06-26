@@ -262,3 +262,14 @@ select:focus-visible {
 .fade-in-word {
   animation: conduut-word-in 0.32s ease-out both;
 }
+
+/* ── Workflow "running" overlay animasyonları ── */
+@keyframes conduut-node-pulse {
+  0%, 100% { opacity: 0.5; transform: scale(0.82); }
+  50%      { opacity: 1;   transform: scale(1.12); }
+}
+
+@keyframes conduut-dot-blink {
+  0%, 80%, 100% { opacity: 0.2; }
+  40%           { opacity: 1; }
+}
