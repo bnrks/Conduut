@@ -1,3 +1,6 @@
+import pytest
+
+from src import store
 from src.agent.schemas import WorkflowOutputField
 from src.agent.tools.output_schema import (
     _normalized_output_schema,
@@ -56,3 +59,63 @@ def test_merge_output_schema_into_resources_omits_key_when_empty():
     merged = merge_output_schema_into_resources({"test_status": "passed"}, [])
     assert "output_schema" not in merged
     assert merged["test_status"] == "passed"
+
+
+@pytest.mark.asyncio
+async def test_save_workflow_output_metadata_merges_and_preserves(monkeypatch):
+    saved: dict = {}
+
+    async def fake_get(_user_id, _workflow_id):
+        return store.WorkflowMetadata(
+            workflow_id="wf_1",
+            input_schema=[],
+            created_at="now",
+            updated_at="now",
+            resources={"test_status": "passed"},
+        )
+
+    async def fake_save(user_id, workflow_id, *, input_schema, resources=None):
+        saved["input_schema"] = input_schema
+        saved["resources"] = resources
+
+    monkeypatch.setattr("src.agent.tools.output_schema.store.get_workflow_metadata", fake_get)
+    monkeypatch.setattr("src.agent.tools.output_schema.store.save_workflow_metadata", fake_save)
+
+    from src.agent.tools.output_schema import save_workflow_output_metadata
+
+    await save_workflow_output_metadata(
+        "user_1",
+        "wf_1",
+        input_schema_payload=[{"name": "to", "label": "To", "type": "email", "required": True}],
+        output_schema=[{"name": "price", "label": "Fiyat", "format": "currency"}],
+    )
+
+    assert saved["input_schema"] == [
+        {"name": "to", "label": "To", "type": "email", "required": True}
+    ]
+    assert saved["resources"]["test_status"] == "passed"
+    assert saved["resources"]["output_schema"] == [
+        {"name": "price", "label": "Fiyat", "format": "currency"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_save_workflow_output_metadata_omits_empty_schema(monkeypatch):
+    saved: dict = {}
+
+    async def fake_get(_user_id, _workflow_id):
+        return None
+
+    async def fake_save(user_id, workflow_id, *, input_schema, resources=None):
+        saved["resources"] = resources
+
+    monkeypatch.setattr("src.agent.tools.output_schema.store.get_workflow_metadata", fake_get)
+    monkeypatch.setattr("src.agent.tools.output_schema.store.save_workflow_metadata", fake_save)
+
+    from src.agent.tools.output_schema import save_workflow_output_metadata
+
+    await save_workflow_output_metadata(
+        "user_1", "wf_1", input_schema_payload=[], output_schema=None
+    )
+
+    assert "output_schema" not in saved["resources"]

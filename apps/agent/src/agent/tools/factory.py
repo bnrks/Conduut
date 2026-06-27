@@ -16,6 +16,7 @@ from src.agent.schemas import (
     UserInputRequestData,
     WorkflowInputField,
     WorkflowNode,
+    WorkflowOutputField,
     WorkflowPreviewAttachment,
     WorkflowPreviewData,
     dump_workflow_nodes,
@@ -34,6 +35,7 @@ from src.agent.tools.credentials import (
     prepare_api_credential_payload,
 )
 from src.agent.tools.execution import _summarize_execution
+from src.agent.tools.output_schema import save_workflow_output_metadata
 from src.agent.tools.prompt import SYSTEM_PROMPT
 from src.agent.tools.readiness import (
     _emit_missing_credentials,
@@ -356,6 +358,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         nodes: list[WorkflowNode],
         connections: dict[str, Any] | None = None,
         input_schema: list[WorkflowInputField] | None = None,
+        output_schema: list[WorkflowOutputField] | None = None,
     ) -> dict[str, Any]:
         """Create an n8n workflow. The single workflow builder.
 
@@ -368,6 +371,9 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         models / memory / tools to an AI Agent (text in its prompt), and read
         the agent answer downstream from its json.output. See the system prompt
         for worked examples.
+        When the workflow returns data to the user, pass output_schema (named
+        fields + friendly labels + format) and make the final node output
+        exactly those names.
         """
 
         if ctx.deps.awaiting_user_input:
@@ -420,10 +426,11 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
 
         ctx.deps.conversation_workflows[name] = workflow.id
 
-        await store.save_workflow_metadata(
+        await save_workflow_output_metadata(
             ctx.deps.user_id,
             workflow.id,
-            input_schema=_input_schema_payload(runtime_schema),
+            input_schema_payload=_input_schema_payload(runtime_schema),
+            output_schema=output_schema,
         )
 
         await ctx.deps.emit_attachment(
@@ -457,6 +464,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         nodes: list[WorkflowNode],
         connections: dict[str, Any] | None = None,
         input_schema: list[WorkflowInputField] | None = None,
+        output_schema: list[WorkflowOutputField] | None = None,
     ) -> dict[str, Any]:
         """Update an existing workflow with the complete compact n8n JSON.
 
@@ -464,6 +472,9 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         structure. Same compact-JSON contract and auto-repair as create_workflow
         (boilerplate filled, AI sub-nodes wired to ai_* ports, webhook inputs
         read as $json.body.<field>).
+        When the workflow returns data to the user, pass output_schema (named
+        fields + friendly labels + format) and make the final node output
+        exactly those names.
         """
 
         if ctx.deps.awaiting_user_input:
@@ -496,10 +507,11 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             _log_tool_finished("update_workflow", started_at, result)
             return result
 
-        await store.save_workflow_metadata(
+        await save_workflow_output_metadata(
             ctx.deps.user_id,
             workflow.id,
-            input_schema=_input_schema_payload(runtime_schema),
+            input_schema_payload=_input_schema_payload(runtime_schema),
+            output_schema=output_schema,
         )
 
         await ctx.deps.emit_attachment(

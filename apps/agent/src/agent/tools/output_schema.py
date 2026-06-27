@@ -7,6 +7,7 @@ workflow metadata `resources.output_schema`, decoupled from the n8n JSON.
 
 from typing import Any
 
+from src import store
 from src.agent.schemas import WorkflowOutputField
 
 _OUTPUT_FORMAT_VALUES = {
@@ -76,3 +77,27 @@ def merge_output_schema_into_resources(
     if payload:
         resources["output_schema"] = payload
     return resources
+
+
+async def save_workflow_output_metadata(
+    user_id: str,
+    workflow_id: str,
+    *,
+    input_schema_payload: list[dict[str, Any]],
+    output_schema: list[WorkflowOutputField | dict[str, Any]] | None,
+) -> None:
+    """Persist input + output schema, preserving any existing resources.
+
+    Reads existing metadata so the output schema rides alongside other resource
+    keys (e.g. test_status) instead of clobbering them.
+    """
+
+    existing = await store.get_workflow_metadata(user_id, workflow_id)
+    payload = _output_schema_payload(_normalized_output_schema(output_schema))
+    resources = merge_output_schema_into_resources(existing.resources if existing else {}, payload)
+    await store.save_workflow_metadata(
+        user_id,
+        workflow_id,
+        input_schema=input_schema_payload,
+        resources=resources,
+    )
