@@ -321,6 +321,17 @@ class UserInputRequestAttachment(BaseModel):
     data: UserInputRequestData
 
 
+class WorkflowResultPresentationField(BaseModel):
+    label: str
+    format: str = "text"
+    value: Any = None
+
+
+class WorkflowResultPresentation(BaseModel):
+    title: str | None = None
+    fields: list[WorkflowResultPresentationField] = Field(default_factory=list)
+
+
 class WorkflowRunResultData(BaseModel):
     workflowId: str
     executionId: str | None = None
@@ -331,6 +342,7 @@ class WorkflowRunResultData(BaseModel):
     response: dict[str, Any] | None = None
     outputs: list[dict[str, Any]] = Field(default_factory=list)
     artifacts: list[ArtifactPreviewData] = Field(default_factory=list)
+    presentation: WorkflowResultPresentation | None = None
 
 
 class WorkflowBatchRowResultData(BaseModel):

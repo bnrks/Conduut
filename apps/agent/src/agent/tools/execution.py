@@ -2,7 +2,12 @@
 
 from typing import Any
 
-from src.agent.schemas import WorkflowRunResultData
+from src.agent.schemas import (
+    WorkflowOutputField,
+    WorkflowResultPresentation,
+    WorkflowResultPresentationField,
+    WorkflowRunResultData,
+)
 from src.agent.tools.common import _preview_value
 
 _MAX_OUTPUT_NODES = 4
@@ -57,6 +62,40 @@ def _visible_response_body(response: dict[str, Any] | None) -> Any | None:
     if not response:
         return None
     return _strip_technical_output(response.get("body"))
+
+
+def _first_result_item(body: Any) -> Any:
+    if isinstance(body, list):
+        return body[0] if body else None
+    return body
+
+
+def _resolve_presentation(
+    response: dict[str, Any] | None,
+    output_schema: list[WorkflowOutputField],
+    *,
+    title: str | None = None,
+) -> WorkflowResultPresentation | None:
+    if not output_schema:
+        return None
+    item = _first_result_item(_visible_response_body(response))
+    if not isinstance(item, dict):
+        return None
+    fields: list[WorkflowResultPresentationField] = []
+    for field in output_schema:
+        value = item.get(field.name)
+        if value in (None, ""):
+            continue
+        fields.append(
+            WorkflowResultPresentationField(
+                label=field.label,
+                format=field.format,
+                value=value,
+            )
+        )
+    if not fields:
+        return None
+    return WorkflowResultPresentation(title=title, fields=fields)
 
 
 def _extract_execution_outputs(
@@ -141,6 +180,7 @@ def _summarize_execution(
     *,
     response: dict[str, Any] | None = None,
     workflow: dict[str, Any] | None = None,
+    output_schema: list[WorkflowOutputField] | None = None,
 ) -> WorkflowRunResultData:
     status = execution.get("status") or ("success" if execution.get("finished") else "unknown")
     execution_id = str(execution.get("id", "")) or None
@@ -170,6 +210,9 @@ def _summarize_execution(
         summary = f"Workflow run completed with {output_count} output item(s)."
     if status in {"error", "failed"} or error_message:
         summary = f"Workflow execution failed: {error_message or 'Unknown error'}"
+    presentation = None
+    if status not in {"error", "failed"} and not error_message:
+        presentation = _resolve_presentation(response, output_schema or [])
     return WorkflowRunResultData(
         workflowId=str(execution.get("workflowId", "")),
         executionId=execution_id,
@@ -179,4 +222,5 @@ def _summarize_execution(
         error=error_message,
         response=response if status in {"error", "failed"} or error_message else None,
         outputs=outputs,
+        presentation=presentation,
     )

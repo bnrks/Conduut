@@ -11,6 +11,7 @@ from src.agent.schemas import (
     WorkflowActionSpec,
     WorkflowInputField,
     WorkflowNode,
+    WorkflowOutputField,
     WorkflowPlan,
     WorkflowSpec,
     WorkflowStepSpec,
@@ -34,6 +35,7 @@ from src.agent.tools import (
     run_workflow_batch_with_input,
     run_workflow_with_input,
 )
+from src.agent.tools.execution import _resolve_presentation
 from src.agent.tools.factory import _normalized_user_input_request
 from src.agent.tools.spec_compiler import WorkflowPlanCompileError, WorkflowSpecCompileError
 
@@ -2708,3 +2710,84 @@ async def test_gmail_modify_operation_does_not_auto_attach_read_send_connection(
     attachment = readiness["missing_credentials"][0]
     assert attachment.type == "credential_request"
     assert attachment.data.credentialType == "gmailOAuth2"
+
+
+def test_resolve_presentation_maps_named_fields_from_body():
+    presentation = _resolve_presentation(
+        {"statusCode": 200, "body": {"price": 67000, "currency": "USD", "extra": "ignored"}},
+        [
+            WorkflowOutputField(name="price", label="Fiyat", format="currency"),
+            WorkflowOutputField(name="currency", label="Para birimi", format="text"),
+        ],
+    )
+    assert presentation is not None
+    assert presentation.title is None
+    assert [(f.label, f.format, f.value) for f in presentation.fields] == [
+        ("Fiyat", "currency", 67000),
+        ("Para birimi", "text", "USD"),
+    ]
+
+
+def test_resolve_presentation_skips_missing_and_empty_fields():
+    presentation = _resolve_presentation(
+        {"statusCode": 200, "body": {"price": 10, "currency": ""}},
+        [
+            WorkflowOutputField(name="price", label="Fiyat", format="number"),
+            WorkflowOutputField(name="currency", label="Para birimi"),
+            WorkflowOutputField(name="absent", label="Yok"),
+        ],
+    )
+    assert presentation is not None
+    assert [f.label for f in presentation.fields] == ["Fiyat"]
+
+
+def test_resolve_presentation_uses_first_item_for_list_body():
+    presentation = _resolve_presentation(
+        {"statusCode": 200, "body": [{"q": "first"}, {"q": "second"}]},
+        [WorkflowOutputField(name="q", label="Söz")],
+    )
+    assert presentation is not None
+    assert presentation.fields[0].value == "first"
+
+
+def test_resolve_presentation_returns_none_for_empty_schema():
+    assert _resolve_presentation({"statusCode": 200, "body": {"x": 1}}, []) is None
+
+
+def test_resolve_presentation_returns_none_when_no_field_resolves():
+    assert (
+        _resolve_presentation(
+            {"statusCode": 200, "body": {"other": 1}},
+            [WorkflowOutputField(name="price", label="Fiyat")],
+        )
+        is None
+    )
+
+
+def test_summarize_execution_populates_presentation_from_output_schema():
+    result = _summarize_execution(
+        {
+            "id": "7",
+            "workflowId": "wf_1",
+            "status": "success",
+            "data": {"resultData": {"runData": {}}},
+        },
+        response={"statusCode": 200, "body": {"price": 67000}},
+        output_schema=[WorkflowOutputField(name="price", label="Fiyat", format="currency")],
+    )
+    assert result.presentation is not None
+    assert result.presentation.fields[0].value == 67000
+
+
+def test_summarize_execution_skips_presentation_on_error():
+    result = _summarize_execution(
+        {
+            "id": "8",
+            "workflowId": "wf_1",
+            "status": "error",
+            "data": {"resultData": {"error": {"message": "boom"}}},
+        },
+        response={"statusCode": 500, "body": {"price": 1}},
+        output_schema=[WorkflowOutputField(name="price", label="Fiyat")],
+    )
+    assert result.presentation is None
