@@ -1,6 +1,6 @@
 "use client";
 
-import type { Message, MessageAttachment, MessageRole } from "@/types/chat";
+import type { AgentStep, Message, MessageAttachment, MessageRole } from "@/types/chat";
 
 type RawMessage = Partial<Message> & {
   conversation_id?: string;
@@ -37,6 +37,7 @@ export function normalizeMessage(
           : new Date().toISOString(),
     created_at: typeof message.created_at === "string" ? message.created_at : undefined,
     attachments: Array.isArray(message.attachments) ? message.attachments : undefined,
+    steps: Array.isArray(message.steps) ? (message.steps as AgentStep[]) : undefined,
     provider: typeof message.provider === "string" ? message.provider : undefined,
     model: typeof message.model === "string" ? message.model : undefined,
     reasoningEffort:

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator
 
 import structlog
@@ -37,6 +38,7 @@ from src.agent.reliability_guard import (
 )
 from src.agent.router import classify_tier
 from src.agent.schemas import AgentDeps, AgentEvent
+from src.agent.step_assembler import StepAssembler, build_steps
 from src.agent.tools import create_agent
 from src.config import key_for_provider, settings
 from src.logging_config import bind_log_context, clear_log_context
@@ -222,6 +224,21 @@ def _content_with_attachment_context(message: dict) -> str:
     )
 
 
+# `_content_with_*_context` appends "[Conduut internal context ...]" to prior
+# messages as model INPUT. The model sometimes imitates that pattern and emits it
+# as visible text; it is scaffolding and must never reach the user, so we strip it
+# (and anything after it — it is always appended at the message tail) from any
+# content we display or persist. See strip_internal_context usage in the replay
+# and persist paths.
+_INTERNAL_CONTEXT_RE = re.compile(r"\s*\[Conduut internal context.*", re.DOTALL)
+
+
+def strip_internal_context(text: str) -> str:
+    """Remove an echoed internal-context annotation from model-visible output."""
+
+    return _INTERNAL_CONTEXT_RE.sub("", text)
+
+
 def _event_to_sse(item: AgentEvent) -> str:
     event, data = item
     return _sse(event, data)
@@ -249,11 +266,6 @@ async def _persist_artifact_previews(
                 origin=origin,
                 exc_info=True,
             )
-
-
-async def _drain_events(queue: asyncio.Queue[AgentEvent]) -> AsyncIterator[str]:
-    while not queue.empty():
-        yield _event_to_sse(queue.get_nowait())
 
 
 async def _emit_stream_event(
@@ -405,17 +417,21 @@ async def _run_live(
                             await _emit_stream_event(event, event_queue, conv_id, text_chunks)
             return agent_run.result
 
+    assembler = StepAssembler()
     task = asyncio.create_task(_agent_stream())
 
     while not task.done():
         try:
             item = await asyncio.wait_for(event_queue.get(), timeout=2.0)
+            assembler.add(item[0], item[1])
             yield _event_to_sse(item)
         except asyncio.TimeoutError:
             yield ": keep-alive\n\n"
 
-    async for pending_event in _drain_events(event_queue):
-        yield pending_event
+    while not event_queue.empty():
+        item = event_queue.get_nowait()
+        assembler.add(item[0], item[1])
+        yield _event_to_sse(item)
 
     try:
         result = task.result()
@@ -469,7 +485,7 @@ async def _run_live(
     except Exception:
         usage = None
     async for sse in _persist_and_done(
-        deps, full_content, choice, tier, user_id, conv_id, usage=usage
+        deps, full_content, choice, tier, user_id, conv_id, usage=usage, steps=assembler.steps()
     ):
         yield sse
 
@@ -483,8 +499,13 @@ async def _persist_and_done(
     conv_id: str,
     *,
     usage=None,
+    steps: list[dict] | None = None,
 ) -> AsyncIterator[str]:
     """Log usage, persist the assistant message + artifacts, emit the done event."""
+
+    # The model occasionally echoes the "[Conduut internal context ...]" history
+    # scaffolding into its reply; strip it from everything the user sees/reloads.
+    full_content = strip_internal_context(full_content)
 
     attachment_types = [str(a.get("type")) for a in deps.attachments if isinstance(a, dict)]
     # Per-run token usage for cost analysis (bake-off). Field names avoid the
@@ -510,6 +531,14 @@ async def _persist_and_done(
         **usage_fields,
     )
 
+    persist_steps = steps if steps and len(steps) > 1 else None
+    if persist_steps:
+        persist_steps = [
+            {**step, "text": strip_internal_context(step.get("text", ""))}
+            if step.get("kind") == "text"
+            else step
+            for step in persist_steps
+        ]
     assistant_saved = False
     try:
         await store.add_message(
@@ -521,6 +550,7 @@ async def _persist_and_done(
             model=choice.model,
             tier=tier.value,
             attachments=deps.attachments or None,
+            steps=persist_steps,
         )
         log.info("assistant_message_saved", content_length=len(full_content))
         assistant_saved = True
@@ -643,12 +673,21 @@ async def _collect_attempt(
 
 async def _replay_buffer(buffer: list[AgentEvent]) -> AsyncIterator[str]:
     """Replay buffered events as a simulated stream: non-token events immediately,
-    token text re-chunked with a small delay for a live-typing feel."""
+    token text re-chunked with a small delay for a live-typing feel. Consecutive
+    token events (one text segment) are grouped so an echoed internal-context
+    annotation that spans token boundaries is stripped before display."""
 
-    for event, data in buffer:
+    index = 0
+    total = len(buffer)
+    while index < total:
+        event, data = buffer[index]
         if event == "token":
-            text = str(data.get("text", ""))
             conv = data.get("conversation_id")
+            text = ""
+            while index < total and buffer[index][0] == "token":
+                text += str(buffer[index][1].get("text", ""))
+                index += 1
+            text = strip_internal_context(text)
             for start in range(0, len(text), REPLAY_CHUNK):
                 yield _sse(
                     "token",
@@ -657,6 +696,7 @@ async def _replay_buffer(buffer: list[AgentEvent]) -> AsyncIterator[str]:
                 await asyncio.sleep(REPLAY_DELAY)
         else:
             yield _event_to_sse((event, data))
+            index += 1
 
 
 def _degraded_message() -> str:
@@ -708,7 +748,14 @@ async def _run_buffered_with_retry(
             async for sse in _replay_buffer(buffer):
                 yield sse
             async for sse in _persist_and_done(
-                deps, full_content, choice, tier, user_id, conv_id, usage=usage
+                deps,
+                full_content,
+                choice,
+                tier,
+                user_id,
+                conv_id,
+                usage=usage,
+                steps=build_steps(buffer),
             ):
                 yield sse
             return

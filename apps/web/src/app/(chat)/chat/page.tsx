@@ -14,7 +14,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { streamChat } from "@/lib/chat/sse";
 import { setConversationCache } from "@/lib/chat/conversation-cache";
 import { toolActivityLabel } from "@/lib/chat/tool-activity";
-import type { Message, MessageAttachment } from "@/types/chat";
+import type { Message, MessageAttachment, AgentStep } from "@/types/chat";
 
 function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -68,6 +68,24 @@ export default function NewChatPage() {
 
     const assistantMessageId = createId("assistant");
     let assistantContent = "";
+    const assistantSteps: AgentStep[] = [];
+
+    const addTokenStep = (text: string) => {
+      const last = assistantSteps[assistantSteps.length - 1];
+      if (!last || last.kind !== "text") assistantSteps.push({ kind: "text", text: "" });
+      (assistantSteps[assistantSteps.length - 1] as { kind: "text"; text: string }).text += text;
+    };
+    const addActivityStep = (tool: string) => {
+      const last = assistantSteps[assistantSteps.length - 1];
+      if (!last || last.kind !== "activity") assistantSteps.push({ kind: "activity", actions: [] });
+      (assistantSteps[assistantSteps.length - 1] as { kind: "activity"; actions: string[] }).actions.push(tool);
+    };
+    const cloneSteps = (): AgentStep[] | undefined =>
+      assistantSteps.length
+        ? assistantSteps.map((s) =>
+            s.kind === "text" ? { kind: "text", text: s.text } : { kind: "activity", actions: [...s.actions] }
+          )
+        : undefined;
     let assistantThinking = "";
     let assistantAttachments: MessageAttachment[] = [];
     let createdConversationId = "";
@@ -95,6 +113,7 @@ export default function NewChatPage() {
                   content: assistantContent,
                   thinking: assistantThinking || undefined,
                   attachments: visibleAttachments,
+                  steps: cloneSteps(),
                   conversationId: createdConversationId || msg.conversationId,
                   provider: doneProvider ?? msg.provider,
                   model: doneModel ?? msg.model,
@@ -104,7 +123,7 @@ export default function NewChatPage() {
           );
         }
 
-        if (!assistantContent && !assistantThinking && visibleAttachments.length === 0) {
+        if (!assistantContent && !assistantThinking && visibleAttachments.length === 0 && assistantSteps.length === 0) {
           return normalized;
         }
 
@@ -117,6 +136,7 @@ export default function NewChatPage() {
             content: assistantContent,
             thinking: assistantThinking || undefined,
             attachments: visibleAttachments,
+            steps: cloneSteps(),
             createdAt: now,
             provider: doneProvider,
             model: doneModel,
@@ -164,6 +184,8 @@ export default function NewChatPage() {
             const label = toolActivityLabel(data.tool);
             setAgentActivity(label);
             setAgentActivities((prev) => appendRecentActivity(prev, label));
+            if (typeof data.tool === "string" && data.tool) addActivityStep(data.tool);
+            upsertAssistantMessage();
             return;
           }
 
@@ -171,6 +193,7 @@ export default function NewChatPage() {
             const text = typeof data.text === "string" ? data.text : "";
             if (!text) return;
             assistantContent += text;
+            addTokenStep(text);
           } else if (event === "thinking") {
             const text = typeof data.text === "string" ? data.text : "";
             if (!text) return;
@@ -201,6 +224,7 @@ export default function NewChatPage() {
             role: "agent",
             content: assistantContent,
             attachments: assistantAttachments.length > 0 ? assistantAttachments : undefined,
+            steps: cloneSteps(),
             createdAt: now,
             provider: doneProvider,
             model: doneModel,

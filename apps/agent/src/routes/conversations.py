@@ -57,6 +57,7 @@ async def get_conversation(conversation_id: str, request: Request):
                 "provider": m.provider,
                 "model": m.model,
                 "attachments": m.attachments,
+                "steps": m.steps,
             }
             for m in (conv.messages or [])
         ],

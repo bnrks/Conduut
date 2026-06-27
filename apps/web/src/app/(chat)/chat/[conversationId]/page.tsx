@@ -15,7 +15,7 @@ import { streamChat } from "@/lib/chat/sse";
 import { popConversationCache } from "@/lib/chat/conversation-cache";
 import { normalizeMessages } from "@/lib/chat/messages";
 import { toolActivityLabel } from "@/lib/chat/tool-activity";
-import type { Conversation, Message, MessageAttachment } from "@/types/chat";
+import type { Conversation, Message, MessageAttachment, AgentStep } from "@/types/chat";
 
 interface ConversationDetailResponse extends Conversation {
   messages: Message[];
@@ -112,6 +112,24 @@ export default function ConversationPage() {
 
     const assistantMessageId = createId("assistant");
     let assistantContent = "";
+    const assistantSteps: AgentStep[] = [];
+
+    const addTokenStep = (text: string) => {
+      const last = assistantSteps[assistantSteps.length - 1];
+      if (!last || last.kind !== "text") assistantSteps.push({ kind: "text", text: "" });
+      (assistantSteps[assistantSteps.length - 1] as { kind: "text"; text: string }).text += text;
+    };
+    const addActivityStep = (tool: string) => {
+      const last = assistantSteps[assistantSteps.length - 1];
+      if (!last || last.kind !== "activity") assistantSteps.push({ kind: "activity", actions: [] });
+      (assistantSteps[assistantSteps.length - 1] as { kind: "activity"; actions: string[] }).actions.push(tool);
+    };
+    const cloneSteps = (): AgentStep[] | undefined =>
+      assistantSteps.length
+        ? assistantSteps.map((s) =>
+            s.kind === "text" ? { kind: "text", text: s.text } : { kind: "activity", actions: [...s.actions] }
+          )
+        : undefined;
     let assistantThinking = "";
     let assistantAttachments: MessageAttachment[] = [];
     const assistantCreatedAt = now;
@@ -133,6 +151,7 @@ export default function ConversationPage() {
                   content: assistantContent,
                   thinking: assistantThinking || undefined,
                   attachments: visibleAttachments,
+                  steps: cloneSteps(),
                   provider: doneProvider ?? msg.provider,
                   model: doneModel ?? msg.model,
                   tier: doneTier ?? msg.tier,
@@ -141,7 +160,7 @@ export default function ConversationPage() {
           );
         }
 
-        if (!assistantContent && !assistantThinking && visibleAttachments.length === 0) {
+        if (!assistantContent && !assistantThinking && visibleAttachments.length === 0 && assistantSteps.length === 0) {
           return prev;
         }
 
@@ -154,6 +173,7 @@ export default function ConversationPage() {
             content: assistantContent,
             thinking: assistantThinking || undefined,
             attachments: visibleAttachments,
+            steps: cloneSteps(),
             createdAt: assistantCreatedAt,
             provider: doneProvider,
             model: doneModel,
@@ -198,6 +218,8 @@ export default function ConversationPage() {
             const label = toolActivityLabel(data.tool);
             setAgentActivity(label);
             setAgentActivities((prev) => appendRecentActivity(prev, label));
+            if (typeof data.tool === "string" && data.tool) addActivityStep(data.tool);
+            upsertAssistantMessage();
             return;
           }
 
@@ -205,6 +227,7 @@ export default function ConversationPage() {
             const text = typeof data.text === "string" ? data.text : "";
             if (!text) return;
             assistantContent += text;
+            addTokenStep(text);
           } else if (event === "thinking") {
             const text = typeof data.text === "string" ? data.text : "";
             if (!text) return;

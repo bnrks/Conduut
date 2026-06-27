@@ -596,3 +596,220 @@ def test_conversation_workflows_from_messages_ignores_non_workflow_attachments()
         {"role": "assistant", "content": "y"},
     ]
     assert runner._conversation_workflows_from_messages(messages) == {}
+
+
+# ---------------------------------------------------------------------------
+# Task 3: StepAssembler wired into runner — segmented steps persistence tests
+# ---------------------------------------------------------------------------
+
+
+class _FakeMultiRoundRun:
+    """agent.iter() taklidi: her tur için bir model-request node yield eder,
+    turdan SONRA (varsa) tool emit eder -> token...tool_call...token sırası."""
+
+    def __init__(self, deps, rounds):
+        self._deps = deps
+        self._rounds = rounds
+        self.ctx = object()
+        self.result = FakeResult()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_a):
+        return False
+
+    async def __aiter__(self):
+        for events, emit in self._rounds:
+            yield _FakeModelRequestNode(events)
+            if emit is not None:
+                await emit(self._deps)
+
+
+class FakeMultiRoundAgent:
+    def __init__(self, rounds):
+        self._rounds = rounds
+
+    def iter(self, _prompt, *, deps, message_history, model_settings, usage_limits):
+        return _FakeMultiRoundRun(deps, self._rounds)
+
+
+@pytest.mark.asyncio
+async def test_runner_persists_segmented_steps_multi_round(monkeypatch):
+    saved = {}
+
+    async def fake_add_message(*args, **kwargs):
+        saved["content"] = args[3]
+        saved["steps"] = kwargs.get("steps")
+
+    async def fake_classify(*_a, **_k):
+        return Tier.MEDIUM
+
+    async def emit_creds(deps):
+        await deps.emit_tool_call("list_credentials")
+
+    rounds = [
+        (_text_events("Önce kontrol edeyim."), emit_creds),
+        (_text_events("Hazır."), None),
+    ]
+
+    monkeypatch.setattr(runner.settings, "model_profile", "default")  # live path
+    monkeypatch.setattr(runner, "classify_tier", fake_classify)
+    monkeypatch.setattr(runner, "key_for_provider", lambda *_a: "key")
+    monkeypatch.setattr(runner, "build_model", lambda *_a: object())
+    monkeypatch.setattr(runner, "create_agent", lambda _m: FakeMultiRoundAgent(rounds))
+    monkeypatch.setattr(runner.store, "add_message", fake_add_message)
+    _recognize_fake_model_node(monkeypatch)
+
+    _ = [
+        raw
+        async for raw in runner.run("u", "c", [{"role": "user", "content": "x"}])
+        if raw.startswith("event:")
+    ]
+
+    assert saved["content"] == "Önce kontrol edeyim.Hazır."  # content preserved
+    assert saved["steps"] == [
+        {"kind": "text", "text": "Önce kontrol edeyim."},
+        {"kind": "activity", "actions": ["list_credentials"]},
+        {"kind": "text", "text": "Hazır."},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runner_single_round_persists_no_steps(monkeypatch):
+    saved = {}
+
+    async def fake_add_message(*args, **kwargs):
+        saved["content"] = args[3]
+        saved["steps"] = kwargs.get("steps")
+
+    async def fake_classify(*_a, **_k):
+        return Tier.MEDIUM
+
+    monkeypatch.setattr(runner.settings, "model_profile", "default")
+    monkeypatch.setattr(runner, "classify_tier", fake_classify)
+    monkeypatch.setattr(runner, "key_for_provider", lambda *_a: "key")
+    monkeypatch.setattr(runner, "build_model", lambda *_a: object())
+    monkeypatch.setattr(
+        runner, "create_agent", lambda _m: FakeMultiRoundAgent([(_text_events("Tek cevap."), None)])
+    )
+    monkeypatch.setattr(runner.store, "add_message", fake_add_message)
+    _recognize_fake_model_node(monkeypatch)
+
+    _ = [
+        raw
+        async for raw in runner.run("u", "c", [{"role": "user", "content": "x"}])
+        if raw.startswith("event:")
+    ]
+
+    assert saved["content"] == "Tek cevap."
+    assert saved["steps"] is None  # single text step -> not segmented -> not stored
+
+
+@pytest.mark.asyncio
+async def test_buffered_path_persists_segmented_steps(monkeypatch):
+    saved = {}
+
+    async def fake_add_message(*args, **kwargs):
+        saved["steps"] = kwargs.get("steps")
+
+    async def fake_classify(*_a, **_k):
+        return Tier.MEDIUM
+
+    async def emit_create(deps):
+        await deps.emit_tool_call("create_workflow")
+
+    rounds = [
+        (_text_events("Oluşturuyorum."), emit_create),
+        (_text_events("Bitti."), None),
+    ]
+
+    monkeypatch.setattr(runner.settings, "model_profile", "deepseek")  # buffered path
+    monkeypatch.setattr(runner.settings, "enable_reliability_guard", True)
+    monkeypatch.setattr(runner, "classify_tier", fake_classify)
+    monkeypatch.setattr(runner, "key_for_provider", lambda *_a: "key")
+    monkeypatch.setattr(runner, "build_model", lambda *_a: object())
+    monkeypatch.setattr(runner, "create_agent", lambda _m: FakeMultiRoundAgent(rounds))
+    monkeypatch.setattr(runner.store, "add_message", fake_add_message)
+    _recognize_fake_model_node(monkeypatch)
+
+    _ = [
+        raw
+        async for raw in runner.run("u", "c", [{"role": "user", "content": "kur"}])
+        if raw.startswith("event:")
+    ]
+
+    assert saved["steps"] == [
+        {"kind": "text", "text": "Oluşturuyorum."},
+        {"kind": "activity", "actions": ["create_workflow"]},
+        {"kind": "text", "text": "Bitti."},
+    ]
+
+
+# --- internal-context echo strip (model imitates [Conduut internal context ...]) ---
+
+
+def test_strip_internal_context_removes_future_tool_calls_annotation():
+    text = (
+        "Nasıl ilerlemek istersin?\n\n"
+        "[Conduut internal context for future tool calls: "
+        "user_input_request question=Nasıl ilerlemek istersin? missingFields=['AI servisi kararı']]"
+    )
+    assert runner.strip_internal_context(text) == "Nasıl ilerlemek istersin?"
+
+
+def test_strip_internal_context_removes_answer_annotation():
+    text = (
+        "Tamam, devam ediyorum.\n\n"
+        "[Conduut internal context: this user message answers the previous "
+        "user_input_request question=X. Treat this answer as accumulated task information.]"
+    )
+    assert runner.strip_internal_context(text) == "Tamam, devam ediyorum."
+
+
+def test_strip_internal_context_leaves_clean_text_untouched():
+    text = "Sadece normal bir cevap [köşeli parantez] içeren."
+    assert runner.strip_internal_context(text) == text
+
+
+def test_strip_internal_context_handles_annotation_only():
+    text = "[Conduut internal context for future tool calls: workflow_preview id=wf_1]"
+    assert runner.strip_internal_context(text) == ""
+
+
+@pytest.mark.asyncio
+async def test_buffered_path_strips_echoed_internal_context(monkeypatch):
+    saved = {}
+
+    async def fake_add_message(*args, **kwargs):
+        saved["content"] = args[3]
+
+    async def fake_classify(*_a, **_k):
+        return Tier.MEDIUM
+
+    echoed = (
+        "Hazır, ne yapmak istersin?\n\n"
+        "[Conduut internal context for future tool calls: "
+        "user_input_request question=Q missingFields=['x']]"
+    )
+
+    monkeypatch.setattr(runner.settings, "model_profile", "deepseek")  # buffered path
+    monkeypatch.setattr(runner.settings, "enable_reliability_guard", True)
+    monkeypatch.setattr(runner, "classify_tier", fake_classify)
+    monkeypatch.setattr(runner, "key_for_provider", lambda *_a: "key")
+    monkeypatch.setattr(runner, "build_model", lambda *_a: object())
+    monkeypatch.setattr(runner, "create_agent", lambda _m: FakeStreamingAgent(_text_events(echoed)))
+    monkeypatch.setattr(runner.store, "add_message", fake_add_message)
+    _recognize_fake_model_node(monkeypatch)
+
+    events = [
+        _parse_sse(raw)
+        async for raw in runner.run("u", "c", [{"role": "user", "content": "x"}])
+        if raw.startswith("event:")
+    ]
+    token_text = "".join(d["text"] for e, d in events if e == "token")
+
+    assert "[Conduut internal context" not in token_text  # buffered replay stripped
+    assert token_text == "Hazır, ne yapmak istersin?"
+    assert "[Conduut internal context" not in saved["content"]  # persisted content stripped
+    assert saved["content"] == "Hazır, ne yapmak istersin?"

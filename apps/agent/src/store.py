@@ -120,6 +120,7 @@ class Message:
     model: str | None = None
     tier: str | None = None
     attachments: list[dict] | None = None
+    steps: list[dict] | None = None
 
 
 @dataclass
@@ -904,6 +905,7 @@ async def get_conversation(user_id: str, conv_id: str) -> Conversation | None:
             model=m.to_dict().get("model"),
             tier=m.to_dict().get("tier"),
             attachments=m.to_dict().get("attachments"),
+            steps=m.to_dict().get("steps"),
         )
         for m in msg_docs
     ]
@@ -980,6 +982,7 @@ async def add_message(
     model: str | None = None,
     tier: str | None = None,
     attachments: list[dict] | None = None,
+    steps: list[dict] | None = None,
 ) -> Message:
     msg_id = str(uuid4())
     now = _now_iso()
@@ -993,6 +996,8 @@ async def add_message(
         data["tier"] = tier
     if attachments:
         data["attachments"] = attachments
+    if steps:
+        data["steps"] = steps
 
     await _run(lambda: _msg_ref(user_id, conv_id, msg_id).set(data))
 
@@ -1018,6 +1023,7 @@ async def add_message(
         model=model,
         tier=tier,
         attachments=attachments or None,
+        steps=steps,
     )
 
 
@@ -1037,6 +1043,7 @@ async def get_conversation_messages(user_id: str, conv_id: str) -> list[Message]
             model=d.to_dict().get("model"),
             tier=d.to_dict().get("tier"),
             attachments=d.to_dict().get("attachments"),
+            steps=d.to_dict().get("steps"),
         )
         for d in docs
     ]

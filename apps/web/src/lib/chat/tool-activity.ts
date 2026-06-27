@@ -16,9 +16,28 @@ const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   inspect_execution: "Reading the run result",
   list_executions: "Checking recent runs",
   delete_workflow: "Deleting the workflow",
+  list_credentials: "Checking saved credentials",
+  attach_credential: "Attaching the credential",
+  prepare_api_credential: "Setting up API access",
+  add_service_credential: "Saving the credential",
+  run_platform_action: "Running the action",
+  test_workflow: "Testing the workflow",
 };
 
 export function toolActivityLabel(tool: unknown): string {
   if (typeof tool !== "string") return "Working on it";
   return TOOL_ACTIVITY_LABELS[tool] ?? "Working on the workflow";
+}
+
+export function activityLineLabel(actions: string[]): string {
+  const seen = new Set<string>();
+  const labels: string[] = [];
+  for (const action of actions) {
+    const label = toolActivityLabel(action);
+    if (!seen.has(label)) {
+      seen.add(label);
+      labels.push(label);
+    }
+  }
+  return labels.join(" · ");
 }
