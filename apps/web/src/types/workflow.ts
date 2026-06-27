@@ -21,3 +21,14 @@ export interface Workflow {
   updatedAt: string;
   inputSchema?: WorkflowInputField[];
 }
+
+export interface WorkflowResultPresentationField {
+  label: string;
+  format: string;
+  value: unknown;
+}
+
+export interface WorkflowResultPresentation {
+  title?: string | null;
+  fields: WorkflowResultPresentationField[];
+}
