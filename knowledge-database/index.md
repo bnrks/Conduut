@@ -91,6 +91,11 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
   olarak; dinamik katalog (registry + OAuth ayiklama) + alanlar n8n semasindan;
   `add_service_credential` tool + dashboard servis secici. Connections = servise
   n8n-disi direkt erisim (degismez).
+- [[adr-0016-segmented-agent-messages]] - Agent run'inin cok-turlu narrasyonu tek
+  balona yapistirilmiyor; her tur ayri balon + aralarinda tek satir aktivite
+  (interleaved, ChatGPT/Claude gibi). `token<->tool_call` cikariminla `steps`
+  (text/activity), `content` history icin korunur, `len>1` esigi, geriye uyumlu.
+  Yeni `step_assembler.py` + internal-context echo leak fix (`strip_internal_context`).
 
 ## Kaynak Dokumanlar
 

@@ -96,7 +96,7 @@ conduut/
 
 ---
 
-## Geliştirme durumu (son güncelleme: 2026-06-24)
+## Geliştirme durumu (son güncelleme: 2026-06-27)
 
 ### Çalışan servisler (docker compose up)
 - `conduut-agent` — FastAPI agent servisi, port 8000
@@ -196,6 +196,18 @@ Faz 5 — Production            → Monitoring + Stripe + Marketing sayfası
 **Tespit edilen darboğaz (2026-06-08):** Compiler sadece Gmail + Sheets + filter action'larını destekliyordu. Yoğun kullanılan node'lar (HTTP Request, AI Agent, Code, Edit Fields/Set, IF, Merge) ham JSON fallback'e düşüyor, agent uzun JSON yazarken `MAX_MODEL_REQUESTS` limitine takılıp çöküyordu. → **2026-06-10'da çözüldü (aşağıya bakın).**
 
 ---
+
+### Son oturum özeti (2026-06-27) — Segmented agent messages + internal-context leak fix (ADR-0016)
+
+**Bağlam:** DeepSeek-pro her tool-call turunda "şimdi şunu yapıyorum" diye ara-anlatı yazıyor; `runner.py` `full_content = "".join(text_chunks)` ile **tüm turların metnini tek balona yapıştırıyordu** → süreç narrasyonu sızmış gibi görünen tek çirkin balon (glue-mark: `kontrol edeyim.Anthropic`). Kullanıcı tespit etti.
+
+**Karar (ADR-0016):** Interleaved agentic UX (ChatGPT/Claude gibi) — her model turu ayrı balon, aralarında tek satır aktivite. Anahtar gözlem: SSE stream zaten doğru sırada (`token↔tool_call` değişimi), yeni event tipi gerekmez. Mesaja sıralı `steps` (`{kind:text,text}` / `{kind:activity,actions}`); `content` history için aynen korunur; **`len>1` eşiği** (tek-adımlı + eski mesajlar tek balon → geriye uyumlu, migrasyon yok). brainstorm → spec → plan → **subagent-driven TDD** (6 task + final review + fix).
+
+**Eklenen/değişen:** `agent/step_assembler.py` (**yeni**: saf `StepAssembler`+`build_steps`, çıkarım kuralı, hem live hem buffered besler). `runner.py` (assembler wiring + eşik). `store.py` (`Message.steps`+`add_message`+`get_conversation*`). `routes/conversations.py` (GET serileştirmesine `steps` — **final review Critical C1**, seam'i task sahiplenmemişti). Frontend: `types/chat.ts` `AgentStep`, `messages.ts` normalize, `tool-activity.ts` 6 label+`activityLineLabel`, `message.tsx` segment render+fallback (**Critical C2**: `useSteps` clarification bastırmasını atlıyordu), `[conversationId]/page.tsx`+`chat/page.tsx` canlı `steps` inşası.
+
+**Internal-context echo leak (ayrı kök-neden, canlı bulundu):** `_history_from_store_messages` prior mesajlara model GİRDİSİ olarak `[Conduut internal context for future tool calls: ...]` ekliyor; DeepSeek-pro bunu history'den taklit edip cevabına yazıyordu → balona sızıyordu (segmentasyondan değil, ön-mevcut). Fix: `strip_internal_context()` — buffered `_replay_buffer` (ardışık token gruplama) + `_persist_and_done` (content+step metni) + prompt kuralı.
+
+**Sonuç:** Backend 366 passed (5 ön-mevcut Windows-tmp), ruff temiz; frontend tsc 0/lint 0. Final whole-branch review (opus) 2 Critical seam-bug yakaladı (C1/C2, düzeltildi). **Canlı doğrulandı** (DeepSeek-pro): interleaved balonlar + aktivite satırları, leak yok. **main'e merge + push edildi** (commit a6079ff). (bkz. [[adr-0016-segmented-agent-messages]])
 
 ### Son oturum özeti (2026-06-26) — Predefined credential library (ADR-0015)
 
@@ -437,6 +449,7 @@ python packages/n8n-registry/scripts/fetch_nodes.py
 - `apps/agent/src/agent/model_registry.py` — **Conduut-yönetimli kademe kayıt defteri**: `Tier`/`ModelChoice`/`TierConfig`/`ModelProfile`, `PROFILE_DEFAULT`+`PROFILE_GPT`, `resolve(tier, secondary=)`, `router_choice()`. Model id'leri + `ThinkingSpec` model-başına sabit; `CONDUUT_MODEL_PROFILE` ile seçilir (ADR-0011)
 - `apps/agent/src/agent/router.py` — `classify_tier`: ucuz sınıflandırıcı (Flash-Lite, thinking off) isteği SIMPLE/MEDIUM/HARD'a atar; hata→MEDIUM (ADR-0011)
 - `apps/agent/src/agent/loop.py` — ince kabuk (`runner.run`'a yönlendirir)
+- `apps/agent/src/agent/step_assembler.py` — **segment çıkarımı** (`StepAssembler`/`build_steps`): SSE event akışından (`token↔tool_call`) sıralı `steps` (`text`/`activity`) üretir; saf/I/O'suz, hem live hem buffered runner yolu besler. `runner.py` ayrıca `strip_internal_context()` ile model'in taklit ettiği `[Conduut internal context ...]` scaffolding'ini çıktıdan siler (ADR-0016)
 - `apps/agent/src/agent/tools/factory.py` — Pydantic AI tool kayıtları + `create_agent`
 - `apps/agent/src/agent/tools/prompt.py` — system prompt
 - `apps/agent/src/agent/repair.py` — **onarıcı normalizer** (`repair_workflow`): kompakt JSON → boilerplate doldur + lineer wiring + sub-node `ai_*` port + `$json.body`/`{{input.x}}` onarımı + e-posta node'larında `options.appendAttribution=false` (n8n "sent automatically with n8n" footer'ını kapatır) + **resourceLocator normalizasyonu** (googleSheets `documentId`/`sheetName` düz string → `{__rl, mode, value}`; aksi halde n8n value/mode'u undefined okur, "Can not get sheet 'undefined'" hatası) + **webhook `responseMode=lastNode`** (varsayılan "onReceived" anında ack'leyip execution verisi döndürmüyor → "n8n'den cevap gelmedi"; lastNode senkron sonuç döndürür) (ADR-0010, tek JSON yüzeyinin kalbi)
