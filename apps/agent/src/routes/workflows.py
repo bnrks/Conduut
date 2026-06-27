@@ -203,6 +203,11 @@ async def run_workflow(workflow_id: str, request: Request, body: WorkflowRunRequ
             "summary": result.summary,
             "outputs": result.outputs,
             "artifacts": [artifact.model_dump(exclude_none=True) for artifact in result.artifacts],
+            "presentation": (
+                result.presentation.model_dump(exclude_none=True)
+                if result.presentation
+                else None
+            ),
         }
     except ValueError as e:
         raise HTTPException(status_code=422, detail={"message": str(e)}) from e

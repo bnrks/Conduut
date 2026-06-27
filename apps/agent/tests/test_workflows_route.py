@@ -429,3 +429,69 @@ async def test_stream_batch_run_workflow_stops_before_stream_when_credentials_mi
         )
 
     assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_run_workflow_returns_presentation(monkeypatch):
+    from src.agent.schemas import (
+        WorkflowResultPresentation,
+        WorkflowResultPresentationField,
+    )
+
+    monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
+
+    async def fake_get_workflow(workflow_id: str):
+        return {"id": "wf_1", "name": "W", "nodes": []}
+
+    async def fake_readiness(_workflow: dict, *, user_id: str):
+        return {"missing_credentials": []}
+
+    async def fake_run_workflow_with_input(_workflow, *, user_id, input_payload):
+        return WorkflowRunResultData(
+            workflowId="wf_1",
+            executionId="exec_1",
+            status="success",
+            summary="ok",
+            presentation=WorkflowResultPresentation(
+                fields=[
+                    WorkflowResultPresentationField(
+                        label="Fiyat", format="currency", value=67000
+                    )
+                ]
+            ),
+        )
+
+    monkeypatch.setattr(workflows_route.n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(workflows_route, "analyze_workflow_readiness_payload", fake_readiness)
+    monkeypatch.setattr(workflows_route, "run_workflow_with_input", fake_run_workflow_with_input)
+
+    response = await workflows_route.run_workflow(
+        "wf_1", object(), workflows_route.WorkflowRunRequest(input={})
+    )
+
+    assert response["presentation"]["fields"][0]["label"] == "Fiyat"
+    assert response["presentation"]["fields"][0]["value"] == 67000
+
+
+@pytest.mark.asyncio
+async def test_run_workflow_presentation_is_none_when_absent(monkeypatch):
+    monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
+
+    async def fake_get_workflow(workflow_id: str):
+        return {"id": "wf_1", "name": "W", "nodes": []}
+
+    async def fake_readiness(_workflow: dict, *, user_id: str):
+        return {"missing_credentials": []}
+
+    async def fake_run_workflow_with_input(_workflow, *, user_id, input_payload):
+        return WorkflowRunResultData(workflowId="wf_1", status="success", summary="ok")
+
+    monkeypatch.setattr(workflows_route.n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(workflows_route, "analyze_workflow_readiness_payload", fake_readiness)
+    monkeypatch.setattr(workflows_route, "run_workflow_with_input", fake_run_workflow_with_input)
+
+    response = await workflows_route.run_workflow(
+        "wf_1", object(), workflows_route.WorkflowRunRequest(input={})
+    )
+
+    assert response["presentation"] is None
