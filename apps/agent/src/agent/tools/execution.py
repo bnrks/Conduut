@@ -179,6 +179,7 @@ def _summarize_execution(
     execution: dict[str, Any],
     *,
     response: dict[str, Any] | None = None,
+    full_response: dict[str, Any] | None = None,
     workflow: dict[str, Any] | None = None,
     output_schema: list[WorkflowOutputField] | None = None,
 ) -> WorkflowRunResultData:
@@ -212,7 +213,8 @@ def _summarize_execution(
         summary = f"Workflow execution failed: {error_message or 'Unknown error'}"
     presentation = None
     if status not in {"error", "failed"} and not error_message:
-        presentation = _resolve_presentation(response, output_schema or [])
+        presentation_source = full_response if full_response is not None else response
+        presentation = _resolve_presentation(presentation_source, output_schema or [])
     return WorkflowRunResultData(
         workflowId=str(execution.get("workflowId", "")),
         executionId=execution_id,

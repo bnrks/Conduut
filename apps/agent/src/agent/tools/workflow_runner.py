@@ -14,7 +14,7 @@ from src.agent.schemas import (
     WorkflowBatchRunResultData,
     WorkflowRunResultData,
 )
-from src.agent.tools.common import _response_preview
+from src.agent.tools.common import _response_full, _response_preview
 from src.agent.tools.constants import _MANUAL_TRIGGER_TYPE, _WEBHOOK_TRIGGER_TYPE
 from src.agent.tools.execution import _summarize_execution
 from src.agent.tools.output_schema import _normalized_output_schema
@@ -311,10 +311,12 @@ async def _run_prepared_webhook_workflow(
     workflow_id = str(workflow.get("id") or "")
     webhook_response = await n8n_client.call_webhook(str(path), input_payload)
     response = _response_preview(webhook_response)
+    full_response = _response_full(webhook_response)
     if webhook_response.status_code >= 400:
         execution_result = await _latest_workflow_execution_result(
             workflow,
             response=response,
+            full_response=full_response,
             metadata=metadata,
         )
         if execution_result is not None:
@@ -346,6 +348,7 @@ async def _run_prepared_webhook_workflow(
     execution_result = await _latest_workflow_execution_result(
         workflow,
         response=response,
+        full_response=full_response,
         metadata=metadata,
     )
     if execution_result is None:
@@ -372,6 +375,7 @@ async def _latest_workflow_execution_result(
     workflow: dict[str, Any],
     *,
     response: Any,
+    full_response: dict[str, Any] | None = None,
     metadata: store.WorkflowMetadata | None,
 ) -> WorkflowRunResultData | None:
     workflow_id = str(workflow.get("id") or "")
@@ -384,7 +388,11 @@ async def _latest_workflow_execution_result(
         metadata.resources.get("output_schema") if metadata else None
     )
     result = _summarize_execution(
-        detail, response=response, workflow=workflow, output_schema=output_schema
+        detail,
+        response=response,
+        full_response=full_response,
+        workflow=workflow,
+        output_schema=output_schema,
     )
     result.artifacts = [
         *build_gmail_workflow_artifacts(

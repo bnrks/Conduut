@@ -35,6 +35,7 @@ from src.agent.tools import (
     run_workflow_batch_with_input,
     run_workflow_with_input,
 )
+from src.agent.tools.common import _preview_value
 from src.agent.tools.execution import _resolve_presentation
 from src.agent.tools.factory import _normalized_user_input_request
 from src.agent.tools.spec_compiler import WorkflowPlanCompileError, WorkflowSpecCompileError
@@ -2873,3 +2874,27 @@ async def test_run_workflow_with_input_builds_presentation_from_output_schema(mo
     assert result.presentation is not None
     assert result.presentation.fields[0].label == "Fiyat"
     assert result.presentation.fields[0].value == 67000
+
+
+def test_summarize_execution_resolves_presentation_from_full_response_not_preview():
+    body = {f"k{i}": i for i in range(12)}  # 12 keys; declared fields sit beyond the preview cap
+    body["summary"] = "x" * 2000  # exceeds the 1200-char preview cap
+    body["tags"] = ["a", "b", "c", "d", "e"]  # exceeds the 3-item preview cap
+    result = _summarize_execution(
+        {
+            "id": "9",
+            "workflowId": "wf",
+            "status": "success",
+            "data": {"resultData": {"runData": {}}},
+        },
+        response={"statusCode": 200, "body": _preview_value(body)},
+        full_response={"statusCode": 200, "body": body},
+        output_schema=[
+            WorkflowOutputField(name="summary", label="Özet", format="longtext"),
+            WorkflowOutputField(name="tags", label="Etiketler", format="list"),
+        ],
+    )
+    assert result.presentation is not None
+    values = {f.label: f.value for f in result.presentation.fields}
+    assert values["Özet"] == "x" * 2000
+    assert values["Etiketler"] == ["a", "b", "c", "d", "e"]

@@ -91,16 +91,32 @@ def _preview_value(value: Any, *, depth: int = 0) -> Any:
     return str(value)[:_MAX_OUTPUT_STRING]
 
 
+def _parse_response_body(response: httpx.Response) -> Any | None:
+    if not response.content:
+        return None
+    try:
+        return response.json()
+    except ValueError:
+        return response.text
+
+
 def _response_preview(response: httpx.Response) -> dict[str, Any]:
-    content_type = response.headers.get("content-type")
-    body: Any | None = None
-    if response.content:
-        try:
-            body = response.json()
-        except ValueError:
-            body = response.text
     return {
         "statusCode": response.status_code,
-        "contentType": content_type,
-        "body": _preview_value(body),
+        "contentType": response.headers.get("content-type"),
+        "body": _preview_value(_parse_response_body(response)),
+    }
+
+
+def _response_full(response: httpx.Response) -> dict[str, Any]:
+    """Like _response_preview but WITHOUT truncating the body.
+
+    Used to resolve the run-result presentation from the complete webhook body —
+    the preview's list/string/key caps would silently drop or truncate declared
+    output_schema fields.
+    """
+    return {
+        "statusCode": response.status_code,
+        "contentType": response.headers.get("content-type"),
+        "body": _parse_response_body(response),
     }
