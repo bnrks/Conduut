@@ -14,7 +14,8 @@ import { OAuthPrompt, type OAuthPromptData } from "./oauth-prompt";
 import { CredentialRequest, type CredentialRequestData } from "./credential-request";
 import { ThinkingPanel } from "./thinking-panel";
 import { cn } from "@/lib/utils";
-import type { Message as MessageType } from "@/types/chat";
+import type { Message as MessageType, AgentStep } from "@/types/chat";
+import { activityLineLabel } from "@/lib/chat/tool-activity";
 import type { ArtifactPreviewData } from "@/types/artifact";
 
 export interface MessageProps {
@@ -180,6 +181,43 @@ function UserInputSummary({ data }: { data: Record<string, unknown> }) {
   );
 }
 
+function ActivityLine({ actions }: { actions: string[] }) {
+  const label = activityLineLabel(actions);
+  if (!label) return null;
+  return (
+    <div className="flex items-center gap-1.5 py-0.5 text-[12px] text-muted-foreground">
+      <Check className="h-3 w-3 text-conduut-500" />
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function AgentSteps({ steps, isStreaming }: { steps: AgentStep[]; isStreaming?: boolean }) {
+  // Son text adımı stream sırasında highlight ertelemesini alır (O(N²) önlemi).
+  const lastTextIndex = steps.reduce(
+    (acc, step, i) => (step.kind === "text" ? i : acc),
+    -1
+  );
+  return (
+    <div className="flex w-full flex-col items-start gap-1.5">
+      {steps.map((step, i) =>
+        step.kind === "text" ? (
+          step.text.trim().length === 0 ? null : (
+            <div
+              key={i}
+              className="rounded-2xl rounded-bl-md border border-border bg-card px-4 py-2.5 text-[15px] leading-relaxed text-foreground break-words"
+            >
+              <MarkdownContent content={step.text} streaming={!!isStreaming && i === lastTextIndex} />
+            </div>
+          )
+        ) : (
+          <ActivityLine key={i} actions={step.actions} />
+        )
+      )}
+    </div>
+  );
+}
+
 function MessageBase({ message, hideInputRequests = false, isStreaming = false }: MessageProps) {
   const [showTimestamp, setShowTimestamp] = useState(false);
   const isUser = message.role === "user";
@@ -190,8 +228,10 @@ function MessageBase({ message, hideInputRequests = false, isStreaming = false }
   const inputRequests = hideInputRequests ? [] : inputRequestAttachments;
   const hasText = message.content.trim().length > 0 && inputRequestAttachments.length === 0;
   const hasThinking = !isUser && !!message.thinking;
+  const steps = !isUser ? message.steps : undefined;
+  const useSteps = !!steps && steps.length > 1;
 
-  if (!hasText && !hasThinking && inputRequests.length === 0 && visibleAttachments.length === 0) {
+  if (!hasText && !hasThinking && !useSteps && inputRequests.length === 0 && visibleAttachments.length === 0) {
     return null;
   }
 
@@ -218,36 +258,40 @@ function MessageBase({ message, hideInputRequests = false, isStreaming = false }
         {hasThinking && (
           <ThinkingPanel content={message.thinking ?? ""} answerStarted={hasText} />
         )}
-        {hasText && (
-          <div className="relative">
-            <div
-              className={cn(
-                "px-4 py-2.5 text-[15px] leading-relaxed break-words",
-                isUser
-                  ? "bg-conduut-50 text-foreground rounded-2xl rounded-br-md whitespace-pre-wrap"
-                  : "bg-card border border-border text-foreground rounded-2xl rounded-bl-md"
-              )}
-            >
-              {isUser ? (
-                message.content
-              ) : (
-                <MarkdownContent content={message.content} streaming={isStreaming} />
-              )}
-            </div>
+        {useSteps ? (
+          <AgentSteps steps={steps!} isStreaming={isStreaming} />
+        ) : (
+          hasText && (
+            <div className="relative">
+              <div
+                className={cn(
+                  "px-4 py-2.5 text-[15px] leading-relaxed break-words",
+                  isUser
+                    ? "bg-conduut-50 text-foreground rounded-2xl rounded-br-md whitespace-pre-wrap"
+                    : "bg-card border border-border text-foreground rounded-2xl rounded-bl-md"
+                )}
+              >
+                {isUser ? (
+                  message.content
+                ) : (
+                  <MarkdownContent content={message.content} streaming={isStreaming} />
+                )}
+              </div>
 
-            {/* Timestamp on hover */}
-            <div
-              className={cn(
-                "absolute -bottom-5 flex items-center gap-1.5 whitespace-nowrap transition-opacity duration-150",
-                isUser ? "right-0" : "left-0",
-                showTimestamp ? "opacity-100" : "opacity-0"
-              )}
-            >
-              <span className="text-[11px] text-muted-foreground">
-                {formatTime(message.createdAt)}
-              </span>
+              {/* Timestamp on hover */}
+              <div
+                className={cn(
+                  "absolute -bottom-5 flex items-center gap-1.5 whitespace-nowrap transition-opacity duration-150",
+                  isUser ? "right-0" : "left-0",
+                  showTimestamp ? "opacity-100" : "opacity-0"
+                )}
+              >
+                <span className="text-[11px] text-muted-foreground">
+                  {formatTime(message.createdAt)}
+                </span>
+              </div>
             </div>
-          </div>
+          )
         )}
 
         {/* Debug: which tier/model answered (assistant only) */}
