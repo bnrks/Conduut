@@ -96,7 +96,7 @@ conduut/
 
 ---
 
-## Geliştirme durumu (son güncelleme: 2026-06-27)
+## Geliştirme durumu (son güncelleme: 2026-06-28)
 
 ### Çalışan servisler (docker compose up)
 - `conduut-agent` — FastAPI agent servisi, port 8000
@@ -194,6 +194,24 @@ Faz 5 — Production            → Monitoring + Stripe + Marketing sayfası
 - `agent/workflow_intent/` **boş** — typed intent engine (ADR-0008) park edildi, aktif yol WorkflowPlan compiler.
 
 **Tespit edilen darboğaz (2026-06-08):** Compiler sadece Gmail + Sheets + filter action'larını destekliyordu. Yoğun kullanılan node'lar (HTTP Request, AI Agent, Code, Edit Fields/Set, IF, Merge) ham JSON fallback'e düşüyor, agent uzun JSON yazarken `MAX_MODEL_REQUESTS` limitine takılıp çöküyordu. → **2026-06-10'da çözüldü (aşağıya bakın).**
+
+---
+
+### Son oturum özeti (2026-06-28) — Workflow sonuç sunumu (ADR-0017)
+
+**Bağlam:** Workflow chat'ten çalışınca sonuç güzel (LLM narrator var); dashboard'dan çalışınca `_summarize_execution` ham `outputs`'u üretip `dashboard/workflows/page.tsx` `<pre>{JSON.stringify(...)}</pre>` basıyordu — teknik, çirkin JSON. Eksik olan güzelleştirme değil, sonucu **anlamlandıran katman**.
+
+**Karar (ADR-0017):** "Anlam"ı **build zamanında** üret (agent amacı zaten biliyor), bir kez metadata'ya yaz, run'da deterministik + sıfır-maliyet render et — **`input_schema`'nın aynası**. (B=run-time LLM narrator batch'te ≤50 çağrı yüzünden elendi; C=LLM'siz renderer yalnız fallback.) **Eşleme sözleşmesi:** sonuç isimli üst-seviye alanlar döner, `output_schema` onları etiketler/formatlar (`item[field.name]`, serbest JSON-path yok). brainstorm → spec → plan → **subagent-driven TDD** (7 task + final review + 1 Important fix).
+
+**Eklenen/değişen:** `agent/tools/output_schema.py` (**yeni**: `WorkflowOutputField` normalize + `save_workflow_output_metadata`), `schemas.py` (`WorkflowOutputField`, `WorkflowResultPresentation`, `WorkflowRunResultData.presentation`), `tools/execution.py` (`_resolve_presentation`+`_summarize_execution(output_schema=, full_response=)`), `tools/workflow_runner.py` (metadata'dan oku + `full_response` thread), `tools/common.py` (`_response_full`), `tools/factory.py` (her iki closure'a `output_schema` + `resources.output_schema`'ya kaydet — `test_status`'u ezmeden), `tools/prompt.py` (kural), `routes/workflows.py` (response'a `presentation`). Frontend: `types/workflow.ts`, `components/dashboard/workflow-result-view.tsx` (**yeni**: format-duyarlı render, ham JSON `<details>` fallback), `dashboard/workflows/page.tsx`.
+
+**Depolama:** `resources.output_schema` (top-level değil — `test_status` deseni). İki-yönlü koruma doğrulandı: build `test_status`'u, sandbox `output_schema`'yı ezmez.
+
+**Final review (opus) — 1 Important fix:** presentation `_response_preview` ile **kırpılmış** gövdeden çözülüyordu (`_preview_value`: string>1200, list→3, dict→12 anahtar) → 12. anahtardan sonraki **declared alan sessizce düşüyor**, longtext/list kırpılıyordu. Fix: `_response_full` + `_summarize_execution(full_response=)` presentation'ı **tam gövdeden** çözer, preview yalnız `outputs`/error için kalır (backward-compatible, commit `af7420f`).
+
+**Bilinen V1 sınırı (ertelendi):** currency hardcoded USD; datetime epoch parse etmez; sticky output_schema (update'te `[]` ile temizleme yok); teknik-anahtar adı çakışması; çok-satır tablo + batch presentation + kullanıcı düzenleme kapsam dışı.
+
+**Sonuç:** Backend 386 passed (5 ön-mevcut Windows-tmp), ruff temiz; frontend tsc 0 / lint 0. **Canlı uçtan-uca doğrulama BEKLIYOR** (manuel: veri-döndüren workflow → dashboard Run → temiz kart + "Ham veriyi gör"). (bkz. [[adr-0017-workflow-result-presentation]])
 
 ---
 
@@ -471,7 +489,8 @@ python packages/n8n-registry/scripts/fetch_nodes.py
 - `apps/web/src/app/(dashboard)/dashboard/credentials/page.tsx` — credential yönetim sayfası (ekle/sil, tip seçici + host)
 - `apps/agent/src/agent/tools/validation.py` + `agent/validation.py` — node/connection normalize + validate + ModelRetry
 - `apps/agent/src/agent/tools/runtime_inputs.py` — runtime input şeması + webhook expression
-- `apps/agent/src/agent/tools/workflow_runner.py` — tekil + batch workflow run
+- `apps/agent/src/agent/tools/output_schema.py` — **sonuç sunum şeması** (ADR-0017): `WorkflowOutputField` + `_normalized_output_schema` (input_schema aynası) + `save_workflow_output_metadata` (`resources.output_schema`, `test_status`'u korur). Build'de agent bildirir, run'da `_resolve_presentation` (execution.py) **tam webhook gövdesinden** `presentation`'a çözer
+- `apps/agent/src/agent/tools/workflow_runner.py` — tekil + batch workflow run (metadata'dan `output_schema` okur, `full_response`'u presentation'a thread'ler — ADR-0017)
 - `apps/agent/src/platforms/actions.py` — n8n'siz direkt platform aksiyonları (Gmail/Sheets)
 - `apps/agent/src/registry.py` — NodeRegistry singleton (n8n'den startup'ta yüklenir)
 - `apps/agent/src/n8n_client.py` — n8n REST API client
@@ -485,4 +504,5 @@ python packages/n8n-registry/scripts/fetch_nodes.py
 - `apps/web/src/app/(chat)/chat/[conversationId]/page.tsx` — konuşma sayfası (SSE fix burada)
 - `apps/web/src/lib/chat/sse.ts` — SSE stream parser
 - `apps/web/src/lib/chat/conversation-cache.ts` — sayfa geçişinde mesaj önbelleği
-- `apps/web/src/app/(dashboard)/dashboard/workflows/page.tsx` — workflow dashboard
+- `apps/web/src/components/dashboard/workflow-result-view.tsx` — **format-duyarlı sonuç kartı** (ADR-0017): backend `presentation`'ını render eder (currency/datetime/url/email/boolean/list/longtext); `asText` ham object'i React child basmaz
+- `apps/web/src/app/(dashboard)/dashboard/workflows/page.tsx` — workflow dashboard (run-result modal: `presentation` kartı + ham JSON `<details>` "Ham veriyi gör" fallback — ADR-0017)

@@ -96,6 +96,12 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
   (interleaved, ChatGPT/Claude gibi). `token<->tool_call` cikariminla `steps`
   (text/activity), `content` history icin korunur, `len>1` esigi, geriye uyumlu.
   Yeni `step_assembler.py` + internal-context echo leak fix (`strip_internal_context`).
+- [[adr-0017-workflow-result-presentation]] - Dashboard workflow run sonucu ham JSON
+  yerine anlamli kart. Agent build-time `output_schema` bildirir (input_schema aynasi),
+  `resources.output_schema`'ya yazilir, run'da webhook govdesi semaya gore deterministik
+  `presentation`'a cozulur (isimli-alan eslemesi, tek-item, non-error; tam govdeden,
+  preview-kirpmasi degil). Frontend format-duyarli `WorkflowResultView`; ham JSON
+  `<details>` fallback. Yeni `tools/output_schema.py` + `workflow-result-view.tsx`.
 
 ## Kaynak Dokumanlar
 
