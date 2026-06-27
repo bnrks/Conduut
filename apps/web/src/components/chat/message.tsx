@@ -229,7 +229,7 @@ function MessageBase({ message, hideInputRequests = false, isStreaming = false }
   const hasText = message.content.trim().length > 0 && inputRequestAttachments.length === 0;
   const hasThinking = !isUser && !!message.thinking;
   const steps = !isUser ? message.steps : undefined;
-  const useSteps = !!steps && steps.length > 1;
+  const useSteps = !!steps && steps.length > 1 && inputRequestAttachments.length === 0;
 
   if (!hasText && !hasThinking && !useSteps && inputRequests.length === 0 && visibleAttachments.length === 0) {
     return null;
