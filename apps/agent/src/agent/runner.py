@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator
 
 import structlog
@@ -221,6 +222,21 @@ def _content_with_attachment_context(message: dict) -> str:
         f"{content}\n\n"
         "[Conduut internal context for future tool calls: " + "; ".join(context_items) + "]"
     )
+
+
+# `_content_with_*_context` appends "[Conduut internal context ...]" to prior
+# messages as model INPUT. The model sometimes imitates that pattern and emits it
+# as visible text; it is scaffolding and must never reach the user, so we strip it
+# (and anything after it — it is always appended at the message tail) from any
+# content we display or persist. See strip_internal_context usage in the replay
+# and persist paths.
+_INTERNAL_CONTEXT_RE = re.compile(r"\s*\[Conduut internal context.*", re.DOTALL)
+
+
+def strip_internal_context(text: str) -> str:
+    """Remove an echoed internal-context annotation from model-visible output."""
+
+    return _INTERNAL_CONTEXT_RE.sub("", text)
 
 
 def _event_to_sse(item: AgentEvent) -> str:
@@ -487,6 +503,10 @@ async def _persist_and_done(
 ) -> AsyncIterator[str]:
     """Log usage, persist the assistant message + artifacts, emit the done event."""
 
+    # The model occasionally echoes the "[Conduut internal context ...]" history
+    # scaffolding into its reply; strip it from everything the user sees/reloads.
+    full_content = strip_internal_context(full_content)
+
     attachment_types = [str(a.get("type")) for a in deps.attachments if isinstance(a, dict)]
     # Per-run token usage for cost analysis (bake-off). Field names avoid the
     # substring "token": the log redactor treats any key containing "token" as a
@@ -512,6 +532,13 @@ async def _persist_and_done(
     )
 
     persist_steps = steps if steps and len(steps) > 1 else None
+    if persist_steps:
+        persist_steps = [
+            {**step, "text": strip_internal_context(step.get("text", ""))}
+            if step.get("kind") == "text"
+            else step
+            for step in persist_steps
+        ]
     assistant_saved = False
     try:
         await store.add_message(
@@ -646,12 +673,21 @@ async def _collect_attempt(
 
 async def _replay_buffer(buffer: list[AgentEvent]) -> AsyncIterator[str]:
     """Replay buffered events as a simulated stream: non-token events immediately,
-    token text re-chunked with a small delay for a live-typing feel."""
+    token text re-chunked with a small delay for a live-typing feel. Consecutive
+    token events (one text segment) are grouped so an echoed internal-context
+    annotation that spans token boundaries is stripped before display."""
 
-    for event, data in buffer:
+    index = 0
+    total = len(buffer)
+    while index < total:
+        event, data = buffer[index]
         if event == "token":
-            text = str(data.get("text", ""))
             conv = data.get("conversation_id")
+            text = ""
+            while index < total and buffer[index][0] == "token":
+                text += str(buffer[index][1].get("text", ""))
+                index += 1
+            text = strip_internal_context(text)
             for start in range(0, len(text), REPLAY_CHUNK):
                 yield _sse(
                     "token",
@@ -660,6 +696,7 @@ async def _replay_buffer(buffer: list[AgentEvent]) -> AsyncIterator[str]:
                 await asyncio.sleep(REPLAY_DELAY)
         else:
             yield _event_to_sse((event, data))
+            index += 1
 
 
 def _degraded_message() -> str:

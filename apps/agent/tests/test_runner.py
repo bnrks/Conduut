@@ -744,3 +744,72 @@ async def test_buffered_path_persists_segmented_steps(monkeypatch):
         {"kind": "activity", "actions": ["create_workflow"]},
         {"kind": "text", "text": "Bitti."},
     ]
+
+
+# --- internal-context echo strip (model imitates [Conduut internal context ...]) ---
+
+
+def test_strip_internal_context_removes_future_tool_calls_annotation():
+    text = (
+        "Nasıl ilerlemek istersin?\n\n"
+        "[Conduut internal context for future tool calls: "
+        "user_input_request question=Nasıl ilerlemek istersin? missingFields=['AI servisi kararı']]"
+    )
+    assert runner.strip_internal_context(text) == "Nasıl ilerlemek istersin?"
+
+
+def test_strip_internal_context_removes_answer_annotation():
+    text = (
+        "Tamam, devam ediyorum.\n\n"
+        "[Conduut internal context: this user message answers the previous "
+        "user_input_request question=X. Treat this answer as accumulated task information.]"
+    )
+    assert runner.strip_internal_context(text) == "Tamam, devam ediyorum."
+
+
+def test_strip_internal_context_leaves_clean_text_untouched():
+    text = "Sadece normal bir cevap [köşeli parantez] içeren."
+    assert runner.strip_internal_context(text) == text
+
+
+def test_strip_internal_context_handles_annotation_only():
+    text = "[Conduut internal context for future tool calls: workflow_preview id=wf_1]"
+    assert runner.strip_internal_context(text) == ""
+
+
+@pytest.mark.asyncio
+async def test_buffered_path_strips_echoed_internal_context(monkeypatch):
+    saved = {}
+
+    async def fake_add_message(*args, **kwargs):
+        saved["content"] = args[3]
+
+    async def fake_classify(*_a, **_k):
+        return Tier.MEDIUM
+
+    echoed = (
+        "Hazır, ne yapmak istersin?\n\n"
+        "[Conduut internal context for future tool calls: "
+        "user_input_request question=Q missingFields=['x']]"
+    )
+
+    monkeypatch.setattr(runner.settings, "model_profile", "deepseek")  # buffered path
+    monkeypatch.setattr(runner.settings, "enable_reliability_guard", True)
+    monkeypatch.setattr(runner, "classify_tier", fake_classify)
+    monkeypatch.setattr(runner, "key_for_provider", lambda *_a: "key")
+    monkeypatch.setattr(runner, "build_model", lambda *_a: object())
+    monkeypatch.setattr(runner, "create_agent", lambda _m: FakeStreamingAgent(_text_events(echoed)))
+    monkeypatch.setattr(runner.store, "add_message", fake_add_message)
+    _recognize_fake_model_node(monkeypatch)
+
+    events = [
+        _parse_sse(raw)
+        async for raw in runner.run("u", "c", [{"role": "user", "content": "x"}])
+        if raw.startswith("event:")
+    ]
+    token_text = "".join(d["text"] for e, d in events if e == "token")
+
+    assert "[Conduut internal context" not in token_text  # buffered replay stripped
+    assert token_text == "Hazır, ne yapmak istersin?"
+    assert "[Conduut internal context" not in saved["content"]  # persisted content stripped
+    assert saved["content"] == "Hazır, ne yapmak istersin?"
