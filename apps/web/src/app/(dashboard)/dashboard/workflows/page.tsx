@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ArtifactPreview } from "@/components/artifacts/artifact-preview";
+import { WorkflowResultView } from "@/components/dashboard/workflow-result-view";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
@@ -24,7 +25,7 @@ import { WorkflowRunningOverlay } from "@/components/dashboard/workflow-running-
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useAuth } from "@/hooks/use-auth";
 import type { ArtifactPreviewData } from "@/types/artifact";
-import type { Workflow, WorkflowInputField, WorkflowStatus } from "@/types/workflow";
+import type { Workflow, WorkflowInputField, WorkflowResultPresentation, WorkflowStatus } from "@/types/workflow";
 
 type StatusFilter = "all" | WorkflowStatus;
 type RunMode = "single" | "batch";
@@ -42,6 +43,7 @@ interface WorkflowRunResult {
   summary?: string;
   outputs?: WorkflowRunOutput[];
   artifacts?: ArtifactPreviewData[];
+  presentation?: WorkflowResultPresentation | null;
 }
 
 interface ParsedWorkbook {
@@ -774,6 +776,7 @@ export default function WorkflowsPage() {
         summary?: string;
         outputs?: WorkflowRunOutput[];
         artifacts?: ArtifactPreviewData[];
+        presentation?: WorkflowResultPresentation | null;
       } | null;
       await ensureMinOverlay(startedAt);
       setRunningOverlay(null);
@@ -784,6 +787,7 @@ export default function WorkflowsPage() {
         summary: result?.summary,
         outputs: result?.outputs,
         artifacts: result?.artifacts,
+        presentation: result?.presentation,
       });
       setRunWorkflow(null);
       setRunValues({});
@@ -1257,28 +1261,42 @@ export default function WorkflowsPage() {
               </Button>
             </div>
             <div className="flex max-h-[70vh] flex-col gap-3 overflow-y-auto pr-1">
-              {(runResult.outputs ?? []).map((output, index) => (
-                <div
-                  key={`out-${index}`}
-                  className="rounded-md border border-border bg-muted/30 p-3"
-                >
-                  <p className="mb-1.5 text-[12px] font-medium text-muted-foreground">
-                    {output.nodeName}
-                    {output.itemCount > 1 ? ` · ${output.itemCount} items` : ""}
-                  </p>
-                  <pre className="overflow-x-auto whitespace-pre-wrap break-words text-[12.5px] text-foreground">
-                    {JSON.stringify(output.items, null, 2)}
-                  </pre>
-                </div>
-              ))}
+              {runResult.presentation && runResult.presentation.fields.length > 0 && (
+                <WorkflowResultView presentation={runResult.presentation} />
+              )}
               {(runResult.artifacts ?? []).map((artifact, index) => (
                 <ArtifactPreview key={index} data={artifact} />
               ))}
-              {!(runResult.outputs ?? []).length && !(runResult.artifacts ?? []).length && (
-                <p className="text-[13px] text-muted-foreground">
-                  Workflow çalıştı ama gösterilecek bir çıktı üretmedi.
-                </p>
+              {(runResult.outputs ?? []).length > 0 && (
+                <details className="rounded-md border border-border bg-muted/30">
+                  <summary className="cursor-pointer px-3 py-2 text-[12px] font-medium text-muted-foreground">
+                    Ham veriyi gör
+                  </summary>
+                  <div className="flex flex-col gap-2 px-3 pb-3">
+                    {(runResult.outputs ?? []).map((output, index) => (
+                      <div
+                        key={`out-${index}`}
+                        className="rounded-md border border-border bg-background p-3"
+                      >
+                        <p className="mb-1.5 text-[12px] font-medium text-muted-foreground">
+                          {output.nodeName}
+                          {output.itemCount > 1 ? ` · ${output.itemCount} items` : ""}
+                        </p>
+                        <pre className="overflow-x-auto whitespace-pre-wrap break-words text-[12.5px] text-foreground">
+                          {JSON.stringify(output.items, null, 2)}
+                        </pre>
+                      </div>
+                    ))}
+                  </div>
+                </details>
               )}
+              {!runResult.presentation?.fields.length &&
+                !(runResult.outputs ?? []).length &&
+                !(runResult.artifacts ?? []).length && (
+                  <p className="text-[13px] text-muted-foreground">
+                    Workflow çalıştı ama gösterilecek bir çıktı üretmedi.
+                  </p>
+                )}
             </div>
           </div>
         </div>
