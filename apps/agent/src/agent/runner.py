@@ -37,6 +37,7 @@ from src.agent.reliability_guard import (
 )
 from src.agent.router import classify_tier
 from src.agent.schemas import AgentDeps, AgentEvent
+from src.agent.step_assembler import StepAssembler, build_steps
 from src.agent.tools import create_agent
 from src.config import key_for_provider, settings
 from src.logging_config import bind_log_context, clear_log_context
@@ -251,11 +252,6 @@ async def _persist_artifact_previews(
             )
 
 
-async def _drain_events(queue: asyncio.Queue[AgentEvent]) -> AsyncIterator[str]:
-    while not queue.empty():
-        yield _event_to_sse(queue.get_nowait())
-
-
 async def _emit_stream_event(
     event: object,
     event_queue: asyncio.Queue[AgentEvent],
@@ -405,17 +401,21 @@ async def _run_live(
                             await _emit_stream_event(event, event_queue, conv_id, text_chunks)
             return agent_run.result
 
+    assembler = StepAssembler()
     task = asyncio.create_task(_agent_stream())
 
     while not task.done():
         try:
             item = await asyncio.wait_for(event_queue.get(), timeout=2.0)
+            assembler.add(item[0], item[1])
             yield _event_to_sse(item)
         except asyncio.TimeoutError:
             yield ": keep-alive\n\n"
 
-    async for pending_event in _drain_events(event_queue):
-        yield pending_event
+    while not event_queue.empty():
+        item = event_queue.get_nowait()
+        assembler.add(item[0], item[1])
+        yield _event_to_sse(item)
 
     try:
         result = task.result()
@@ -469,7 +469,7 @@ async def _run_live(
     except Exception:
         usage = None
     async for sse in _persist_and_done(
-        deps, full_content, choice, tier, user_id, conv_id, usage=usage
+        deps, full_content, choice, tier, user_id, conv_id, usage=usage, steps=assembler.steps()
     ):
         yield sse
 
@@ -483,6 +483,7 @@ async def _persist_and_done(
     conv_id: str,
     *,
     usage=None,
+    steps: list[dict] | None = None,
 ) -> AsyncIterator[str]:
     """Log usage, persist the assistant message + artifacts, emit the done event."""
 
@@ -510,6 +511,7 @@ async def _persist_and_done(
         **usage_fields,
     )
 
+    persist_steps = steps if steps and len(steps) > 1 else None
     assistant_saved = False
     try:
         await store.add_message(
@@ -521,6 +523,7 @@ async def _persist_and_done(
             model=choice.model,
             tier=tier.value,
             attachments=deps.attachments or None,
+            steps=persist_steps,
         )
         log.info("assistant_message_saved", content_length=len(full_content))
         assistant_saved = True
@@ -708,7 +711,14 @@ async def _run_buffered_with_retry(
             async for sse in _replay_buffer(buffer):
                 yield sse
             async for sse in _persist_and_done(
-                deps, full_content, choice, tier, user_id, conv_id, usage=usage
+                deps,
+                full_content,
+                choice,
+                tier,
+                user_id,
+                conv_id,
+                usage=usage,
+                steps=build_steps(buffer),
             ):
                 yield sse
             return
