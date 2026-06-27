@@ -17,6 +17,7 @@ from src.agent.schemas import (
 from src.agent.tools.common import _response_preview
 from src.agent.tools.constants import _MANUAL_TRIGGER_TYPE, _WEBHOOK_TRIGGER_TYPE
 from src.agent.tools.execution import _summarize_execution
+from src.agent.tools.output_schema import _normalized_output_schema
 from src.agent.tools.readiness import (
     analyze_workflow_readiness_payload,
     attach_unambiguous_reuse_candidates,
@@ -379,7 +380,12 @@ async def _latest_workflow_execution_result(
         return None
 
     detail = await n8n_client.get_execution_detail(executions[0].id)
-    result = _summarize_execution(detail, response=response, workflow=workflow)
+    output_schema = _normalized_output_schema(
+        metadata.resources.get("output_schema") if metadata else None
+    )
+    result = _summarize_execution(
+        detail, response=response, workflow=workflow, output_schema=output_schema
+    )
     result.artifacts = [
         *build_gmail_workflow_artifacts(
             workflow_id=workflow_id,

@@ -2791,3 +2791,85 @@ def test_summarize_execution_skips_presentation_on_error():
         output_schema=[WorkflowOutputField(name="price", label="Fiyat")],
     )
     assert result.presentation is None
+
+
+@pytest.mark.asyncio
+async def test_run_workflow_with_input_builds_presentation_from_output_schema(monkeypatch):
+    async def fake_get_workflow_metadata(_user_id, workflow_id):
+        return store.WorkflowMetadata(
+            workflow_id=workflow_id,
+            input_schema=[],
+            created_at="now",
+            updated_at="now",
+            resources={
+                "output_schema": [{"name": "price", "label": "Fiyat", "format": "currency"}]
+            },
+        )
+
+    async def fake_activate(_workflow_id):
+        return None
+
+    async def fake_update_workflow(**kwargs):
+        return SimpleNamespace(id=kwargs["workflow_id"])
+
+    async def fake_get_workflow(_workflow_id):
+        return {
+            "id": "wf_1",
+            "name": "Price workflow",
+            "active": True,
+            "nodes": [
+                {
+                    "name": "Webhook",
+                    "type": "n8n-nodes-base.webhook",
+                    "parameters": {"path": "p", "httpMethod": "POST"},
+                }
+            ],
+        }
+
+    async def fake_call_webhook(path, payload):
+        return httpx.Response(200, json={"price": 67000})
+
+    async def fake_list_executions(*_args, **_kwargs):
+        return [SimpleNamespace(id="exec_1")]
+
+    async def fake_get_execution_detail(_execution_id):
+        return {
+            "id": "exec_1",
+            "workflowId": "wf_1",
+            "status": "success",
+            "data": {"resultData": {"runData": {}}},
+        }
+
+    monkeypatch.setattr(
+        "src.agent.tools.store.get_workflow_metadata", fake_get_workflow_metadata
+    )
+    monkeypatch.setattr("src.agent.tools.n8n_client.activate_workflow", fake_activate)
+    monkeypatch.setattr("src.agent.tools.n8n_client.update_workflow", fake_update_workflow)
+    monkeypatch.setattr("src.agent.tools.n8n_client.get_workflow", fake_get_workflow)
+    monkeypatch.setattr("src.agent.tools.n8n_client.call_webhook", fake_call_webhook)
+    monkeypatch.setattr("src.agent.tools.n8n_client.list_executions", fake_list_executions)
+    monkeypatch.setattr(
+        "src.agent.tools.n8n_client.get_execution_detail", fake_get_execution_detail
+    )
+    monkeypatch.setattr("src.agent.tools.registry.get_node_schema", lambda _t: None)
+
+    result = await run_workflow_with_input(
+        {
+            "id": "wf_1",
+            "name": "Price workflow",
+            "active": True,
+            "nodes": [
+                {
+                    "name": "Webhook",
+                    "type": "n8n-nodes-base.webhook",
+                    "parameters": {"path": "p", "httpMethod": "POST"},
+                }
+            ],
+        },
+        user_id="user_1",
+        input_payload={},
+    )
+
+    assert result.presentation is not None
+    assert result.presentation.fields[0].label == "Fiyat"
+    assert result.presentation.fields[0].value == 67000
