@@ -84,6 +84,22 @@ class WorkflowInputField(BaseModel):
     placeholder: str | None = None
 
 
+class WorkflowOutputField(BaseModel):
+    name: str
+    label: str
+    format: Literal[
+        "text",
+        "longtext",
+        "number",
+        "currency",
+        "datetime",
+        "url",
+        "email",
+        "boolean",
+        "list",
+    ] = "text"
+
+
 class WorkflowTriggerSpec(BaseModel):
     """Small workflow intent trigger representation compiled into n8n JSON."""
 
