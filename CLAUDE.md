@@ -98,6 +98,14 @@ conduut/
 
 ## Geliştirme durumu (son güncelleme: 2026-06-28)
 
+### Son oturum özeti (2026-06-28c) — Dashboard Artifacts "yüklenemiyor" fix (batch-run origin)
+
+**Bağlam:** Kullanıcı Artifacts sekmesinde "yüklenemiyor" hatası alıyordu; yalnız Sheets geliyor, Gmail patlıyordu. Kullanıcı logları işaret etti. systematic-debugging ile kök neden bulundu.
+
+**Kök neden (logla kanıtlı):** Batch workflow run'ları (ADR-0007) artifact'i `origin.kind="workflow_batch_run"` ile kaydediyor (`routes/workflows.py:88`); read-side `ArtifactOriginOut.kind` yalnız `Literal["chat","workflow_run"]` kabul ediyordu. `GET /api/artifacts` tüm listeyi serialize ederken bu **tek** Gmail batch artifact'inde `ValidationError`→500 atıyordu (`1 validation error for ArtifactOriginOut / kind / input_value='workflow_batch_run'`). `?service=google_sheets` filtresi çalışıyordu çünkü kötü kayıt Gmail'di → "yalnız Sheets geliyor" tam olarak bunu açıklıyor.
+
+**Fix (`routes/artifacts.py`, TDD):** (1) read-path origin-kind normalizasyonu — `_ORIGIN_KIND_ALIASES` ile `workflow_batch_run`→`workflow_run`, bilinmeyen kind→`chat` fallback (`_artifact_origin`). (2) Defense-in-depth: liste serileştirmesi artık kayıt-bazlı `try/except ValidationError`; tek bozuk kayıt (örn. beklenmeyen `service`/`type` Literal'i) `artifact_serialize_skipped` uyarısıyla atlanır, tüm sayfayı 500'lemez. Mevcut + gelecekteki batch artifact'larını düzeltir; frontend `workflow_run`'ı zaten doğru etiketler (FE değişikliği yok). Write tarafı `workflow_batch_run`'ı (zengin `batchRunId`/`rowNumber`) kasıtlı korur. Yeni testler: `test_list_artifacts_normalizes_batch_run_origin`, `test_list_artifacts_skips_unserializable_artifact`. **Backend 388 passed (5 ön-mevcut Windows-tmp), ruff temiz.** Canlı doğrulama: agent restart/reload sonrası dashboard Artifacts (All + Gmail) yüklenmeli. (bkz. [[artifacts]])
+
 ### Çalışan servisler (docker compose up)
 - `conduut-agent` — FastAPI agent servisi, port 8000
 - `conduut-n8n` — n8n instance, port 5678

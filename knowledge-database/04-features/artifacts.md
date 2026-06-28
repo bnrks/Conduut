@@ -55,6 +55,29 @@ baglamina yazilir; takip eden get/mark/archive/trash/label action'i bos
 `message_id` tasirsa bu context kullanilir, context de yoksa Google API'ye
 bos id ile gidilmeden `missing_input` doner.
 
+2026-06-28'de Dashboard `Artifacts` sayfasinin "yuklenemiyor" hatasi (yalniz
+Sheets geliyor, Gmail patliyor) cozuldu. Kok neden: batch workflow run'lari
+(ADR-0007) artifact'i `origin.kind="workflow_batch_run"` ile kaydediyor
+(`routes/workflows.py:88`), ama read-side response modeli
+`ArtifactOriginOut.kind` yalnizca `Literal["chat","workflow_run"]` kabul
+ediyordu. `GET /api/artifacts` tum listeyi serialize ederken bu tek kayitta
+`ValidationError` firlatip 500 donuyordu; `?service=google_sheets` filtresi
+calistigi icin (kotu kayit bir Gmail batch artifact'iydi) yalniz Sheets
+geliyordu. Loglarda kanit: `1 validation error for ArtifactOriginOut / kind /
+Input should be 'chat' or 'workflow_run' [input_value='workflow_batch_run']`.
+Fix (`routes/artifacts.py`, TDD): (1) read-path origin-kind normalizasyonu —
+`workflow_batch_run` → `workflow_run` alias'i (batch run, batch alanlarini
+zaten gostermeyen kontrat icin sade bir workflow run'dir); bilinmeyen kind →
+`chat` fallback. (2) Defense-in-depth: liste serileştirmesi artik kayit-bazli
+`try/except ValidationError`; tek bozuk kayit (orn. beklenmeyen `service`)
+`artifact_serialize_skipped` uyarisiyla atlanir, tum sayfayi 500'lemez. Hem
+mevcut hem gelecekteki batch artifact'lari duzeltir; frontend `workflow_run`'i
+zaten dogru etiketler (degisiklik gerekmedi). Yeni testler:
+`test_list_artifacts_normalizes_batch_run_origin`,
+`test_list_artifacts_skips_unserializable_artifact`. **Backend 388 passed
+(5 on-mevcut Windows-tmp), ruff temiz.** Not: write tarafi `workflow_batch_run`'i
+(zengin `batchRunId`/`rowNumber` ile) kasitli olarak korur.
+
 ## V1 Kapsami
 
 - Ilk kapsam Google Sheets ve Gmail icindir.
