@@ -22,17 +22,17 @@ function getBreadcrumb(pathname: string): string {
 
 export function DashboardHeader() {
   const pathname = usePathname();
-  const { toggleSidebar } = useUIStore();
+  const { setMobileNavOpen } = useUIStore();
   const breadcrumb = getBreadcrumb(pathname);
 
   return (
-    <header className="h-14 border-b border-border flex items-center justify-between px-6 bg-card shrink-0">
+    <header className="h-14 border-b border-border flex items-center justify-between px-4 sm:px-6 bg-card shrink-0">
       {/* Left */}
       <div className="flex items-center gap-3">
         <button
-          onClick={toggleSidebar}
-          className="md:hidden flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-          aria-label="Toggle sidebar"
+          onClick={() => setMobileNavOpen(true)}
+          className="lg:hidden flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+          aria-label="Open navigation"
         >
           <Menu className="h-4 w-4" />
         </button>

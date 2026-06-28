@@ -40,7 +40,7 @@ export default function RootLayout({
       className={`${inter.variable} ${mono.variable} h-full antialiased`}
       suppressHydrationWarning
     >
-      <body className="min-h-full min-w-[1024px] flex flex-col bg-background text-foreground">
+      <body className="min-h-full flex flex-col bg-background text-foreground">
         <Providers>{children}</Providers>
         <Toaster
           position="top-right"

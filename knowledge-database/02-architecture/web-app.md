@@ -195,10 +195,45 @@ bunlari kompakt "Conduut asked for details" ozeti olarak render eder; boylece
 kullanici once hangi sorularin soruldugunu gorebilir ama aktif clarification
 paneliyle cift gorunum olusmaz.
 
+## Responsive Layout
+
+Platform `>=768px` (tablet, laptop, masaustu) destekler; `<768px` (telefon)
+hedef degil ama kirilmaz (graceful). Eski `app/layout.tsx` `<body>` uzerindeki
+`min-w-[1024px]` sabit tabani **kaldirildi** — bu, sekme daraltildiginda cikan
+yatay scrollbar'in kok nedeniydi. `overflow-x-hidden` ile maskelenmedi; gercek
+tasma kaynaklari duzeltildi.
+
+Breakpoint esigi `lg` (1024px):
+
+- `>=1024px`: kalici sidebar (mevcut daraltma toggle'i korunur).
+- `768-1023px` (ve altinda graceful): sidebar **overlay drawer**'a doner;
+  icerik tam genislik.
+
+Mekanizma:
+
+- `hooks/use-media-query.ts` (`useMediaQuery(query, defaultValue=true)`):
+  masaustu tespiti. Ilk render `defaultValue` doner (SSR/hydration uyumu;
+  masaustunde flash olmamasi icin `true`), mount sonrasi gercek degere gecer.
+- `ui-store.ts`: kalici `sidebarCollapsed` (masaustu daraltma) + yeni
+  `mobileNavOpen`/`setMobileNavOpen`/`toggleMobileNav` (dar-ekran drawer).
+- Dashboard (`components/layout/sidebar.tsx`) ve chat
+  (`components/chat/conversation-sidebar.tsx`) sidebar'lari `isDesktop`'a gore
+  iki mod render eder; mobilde `fixed` overlay + framer `x` slide. Drawer
+  route degisiminde, backdrop tikinda ve `Escape` ile kapanir.
+- Layout'lar (`(dashboard)/layout.tsx`, `(chat)/layout.tsx`) `lg:hidden`
+  backdrop + hamburger acar; daraltma toggle butonu `hidden lg:flex`. `<main>`
+  dolgu `p-4 sm:p-6`; chat ana icerik flex cocuguna `min-w-0` (genis kod
+  blogu/icerik tasmasini onler).
+- Marketing/auth zaten `md:`/`lg:` responsive sinifli; body tabani kalkinca
+  devreye girer.
+
+Spec: `docs/superpowers/specs/2026-06-28-responsive-layout-design.md`.
+
 ## UI State
 
 - `chat-store.ts`: conversation sidebar state.
-- `ui-store.ts`: sidebar collapse gibi UI state.
+- `ui-store.ts`: `sidebarCollapsed` (masaustu sidebar daraltma) + `mobileNavOpen`
+  (dar-ekran overlay drawer) UI state.
 - `use-model-selector.ts`: provider, model ve favorite model secimi. Backend
   eski aktif `settings/llm` kaydini provider fallback'i olarak dondurdugu icin
   yeni chat selector'i sadece yeni provider collection'i dolu olan

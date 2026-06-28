@@ -1,8 +1,8 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Logo } from "@/components/ui/logo";
 import { Avatar } from "@/components/ui/avatar";
@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { DASHBOARD_NAV } from "@/config/navigation";
 import { useUIStore } from "@/lib/stores/ui-store";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { cn } from "@/lib/utils";
 
 const MOCK_USER = {
@@ -20,20 +21,45 @@ const MOCK_USER = {
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { sidebarCollapsed, toggleSidebar } = useUIStore();
+  const { sidebarCollapsed, mobileNavOpen, setMobileNavOpen } = useUIStore();
+  const isDesktop = useMediaQuery("(min-width: 1024px)", true);
+
+  // Etiketleri göster: masaüstünde daraltılmamışsa, mobil drawer'da her zaman.
+  const showLabels = !isDesktop || !sidebarCollapsed;
+
+  // Route değişiminde mobil drawer'ı kapat.
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [pathname, setMobileNavOpen]);
+
+  // Escape ile mobil drawer'ı kapat.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileNavOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [setMobileNavOpen]);
 
   return (
     <motion.aside
-      animate={{ width: sidebarCollapsed ? 64 : 256 }}
+      animate={
+        isDesktop
+          ? { width: sidebarCollapsed ? 64 : 256, x: 0 }
+          : { width: 256, x: mobileNavOpen ? 0 : -264 }
+      }
       transition={{ duration: 0.2, ease: "easeInOut" }}
-      className="relative flex flex-col h-full border-r border-border bg-card shrink-0 overflow-hidden"
+      className={cn(
+        "flex flex-col h-full border-r border-border bg-card overflow-hidden",
+        isDesktop ? "relative shrink-0" : "fixed inset-y-0 left-0 z-40"
+      )}
     >
       {/* Logo */}
       <div className="flex h-14 items-center px-4 shrink-0">
         <Link href="/" className="flex items-center gap-2 min-w-0">
           <Logo variant="icon" className="h-8 w-8 shrink-0" />
           <AnimatePresence>
-            {!sidebarCollapsed && (
+            {showLabels && (
               <motion.div
                 initial={{ opacity: 0, width: 0 }}
                 animate={{ opacity: 1, width: "auto" }}
@@ -70,7 +96,7 @@ export function Sidebar() {
                       ? "bg-conduut-50 text-conduut-700"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   )}
-                  title={sidebarCollapsed ? item.label : undefined}
+                  title={isDesktop && sidebarCollapsed ? item.label : undefined}
                 >
                   <Icon
                     className={cn(
@@ -79,7 +105,7 @@ export function Sidebar() {
                     )}
                   />
                   <AnimatePresence>
-                    {!sidebarCollapsed && (
+                    {showLabels && (
                       <motion.span
                         initial={{ opacity: 0, width: 0 }}
                         animate={{ opacity: 1, width: "auto" }}
@@ -105,7 +131,7 @@ export function Sidebar() {
         <div
           className={cn(
             "flex items-center gap-3 rounded-lg px-2 py-2",
-            sidebarCollapsed ? "justify-center" : ""
+            isDesktop && sidebarCollapsed ? "justify-center" : ""
           )}
         >
           <Avatar
@@ -114,7 +140,7 @@ export function Sidebar() {
             className="shrink-0"
           />
           <AnimatePresence>
-            {!sidebarCollapsed && (
+            {showLabels && (
               <motion.div
                 initial={{ opacity: 0, width: 0 }}
                 animate={{ opacity: 1, width: "auto" }}
@@ -135,7 +161,6 @@ export function Sidebar() {
           </AnimatePresence>
         </div>
       </div>
-
     </motion.aside>
   );
 }

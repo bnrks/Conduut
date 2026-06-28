@@ -11,19 +11,31 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { sidebarCollapsed, toggleSidebar } = useUIStore();
+  const { sidebarCollapsed, toggleSidebar, mobileNavOpen, setMobileNavOpen } =
+    useUIStore();
 
   return (
     <AuthGuard mode="protected">
     <div className="flex h-screen overflow-hidden bg-background">
-      {/* Sidebar wrapper — relative + overflow-visible so the toggle button can poke out */}
-      <div className="relative shrink-0" style={{ zIndex: 20 }}>
+      {/* Mobile drawer backdrop */}
+      {mobileNavOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/40 lg:hidden"
+          onClick={() => setMobileNavOpen(false)}
+          aria-hidden
+        />
+      )}
+
+      {/* Sidebar wrapper — relative (NO z-index: must not create a stacking context,
+          else the mobile drawer's fixed z-40 gets trapped below the z-30 backdrop).
+          The toggle button carries its own z-30 to sit above the main content. */}
+      <div className="relative shrink-0">
         <Sidebar />
 
-        {/* Floating circular toggle — positioned on the sidebar's right edge */}
+        {/* Floating circular toggle — desktop only (sidebar is a drawer below lg) */}
         <button
           onClick={toggleSidebar}
-          className="absolute top-[3.25rem] -right-3 z-30 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm hover:bg-muted hover:text-foreground transition-colors"
+          className="absolute top-[3.25rem] -right-3 z-30 hidden h-6 w-6 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm hover:bg-muted hover:text-foreground transition-colors lg:flex"
           aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {sidebarCollapsed ? (
@@ -37,7 +49,7 @@ export default function DashboardLayout({
       {/* Main area */}
       <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
         <DashboardHeader />
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6">{children}</main>
       </div>
     </div>
     </AuthGuard>

@@ -215,6 +215,22 @@ Faz 5 — Production            → Monitoring + Stripe + Marketing sayfası
 
 ---
 
+### Son oturum özeti (2026-06-28b) — Platform responsive yapı (frontend)
+
+**Bağlam:** Platform masaüstü-only kurulmuştu; sekme/tarayıcı 1024px altına kısılınca **yatay scrollbar** çıkıyor, responsive yok. Kullanıcı talebi: mobil hariç tüm görünümler (tablet/laptop/masaüstü) düzgün desteklensin. brainstorming → spec → direkt implementasyon.
+
+**Kök neden:** `apps/web/src/app/layout.tsx` `<body>`'de `min-w-[1024px]` sabit tabanı → sayfa 1024px altına daralamıyor. **Canlı doğrulandı:** render edilen body artık `min-h-full flex flex-col ...` (min-w kalktı).
+
+**Karar:** Desteklenen aralık ≥768px (telefon <768 hedef değil ama kırılmaz). Breakpoint eşiği `lg`=1024px: ≥1024 kalıcı sidebar, <1024 **overlay drawer**. `overflow-x-hidden` ile maskelenmedi; gerçek taşma kaynakları düzeltildi.
+
+**Eklenen/değişen:** `app/layout.tsx` (min-w kaldır), `hooks/use-media-query.ts` (**yeni**: `useMediaQuery(query, defaultValue)`, SSR/hydration-güvenli, masaüstü default `true`), `lib/stores/ui-store.ts` (`mobileNavOpen`/`setMobileNavOpen`/`toggleMobileNav` — kalıcı `sidebarCollapsed`'tan ayrı), `components/layout/sidebar.tsx` + `app/(dashboard)/layout.tsx` + `components/layout/dashboard-header.tsx` (dashboard sidebar: masaüstü kalıcı / mobil `fixed` overlay drawer + backdrop + hamburger `lg:hidden`, toggle `hidden lg:flex`, `<main>` `p-4 sm:p-6`), `components/chat/conversation-sidebar.tsx` + `app/(chat)/layout.tsx` (chat sidebar aynı drawer paterni + chat ana içeriğe `min-w-0`). Drawer route değişiminde + backdrop tıkında + `Escape` ile kapanır.
+
+**Canlı bulgu + fix (z-index stacking):** Kullanıcı testinde dashboard'da hamburger'a basınca **tüm ekran (sidebar dahil) kararıyordu**. Kök neden: sidebar wrapper'ında `style={{ zIndex: 20 }}` (`relative`+z-index) bir *stacking context* oluşturuyor; mobil drawer'ın `fixed z-40`'ı bu context'e hapsoluyor ve kök katmandaki backdrop (`z-30`) wrapper'ın (z-20) üstüne binip sidebar'ı da karartıyordu. **Fix:** wrapper'dan `zIndex:20` kaldırıldı → drawer'ın z-40'ı kök katmana çıkıp backdrop'un üstünde kalıyor (toggle kendi z-30'unu taşır). Chat layout'unda sorun yoktu (sidebar kök flex'in doğrudan çocuğu).
+
+**Doğrulama:** `tsc --noEmit` exit 0; `eslint` temiz (yalnız önceden var olan `<img>` uyarıları); kök fix canlı HTML ile teyit; `/chat` + `/dashboard/workflows` 200 (derleme hatası yok). z-index fix sonrası kullanıcının görsel teyidi bekleniyor (Chrome eklentisi bağlı değil → tarayıcı otomasyonu yapılamadı; dev server `localhost:3007`). Spec: `docs/superpowers/specs/2026-06-28-responsive-layout-design.md`. (bkz. [[web-app]] §Responsive Layout)
+
+---
+
 ### Son oturum özeti (2026-06-27) — Segmented agent messages + internal-context leak fix (ADR-0016)
 
 **Bağlam:** DeepSeek-pro her tool-call turunda "şimdi şunu yapıyorum" diye ara-anlatı yazıyor; `runner.py` `full_content = "".join(text_chunks)` ile **tüm turların metnini tek balona yapıştırıyordu** → süreç narrasyonu sızmış gibi görünen tek çirkin balon (glue-mark: `kontrol edeyim.Anthropic`). Kullanıcı tespit etti.
