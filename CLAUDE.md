@@ -211,7 +211,7 @@ Faz 5 — Production            → Monitoring + Stripe + Marketing sayfası
 
 **Bilinen V1 sınırı (ertelendi):** currency hardcoded USD; datetime epoch parse etmez; sticky output_schema (update'te `[]` ile temizleme yok); teknik-anahtar adı çakışması; çok-satır tablo + batch presentation + kullanıcı düzenleme kapsam dışı.
 
-**Sonuç:** Backend 386 passed (5 ön-mevcut Windows-tmp), ruff temiz; frontend tsc 0 / lint 0. **Canlı uçtan-uca doğrulama BEKLIYOR** (manuel: veri-döndüren workflow → dashboard Run → temiz kart + "Ham veriyi gör"). (bkz. [[adr-0017-workflow-result-presentation]])
+**Sonuç:** Backend 386 passed (5 ön-mevcut Windows-tmp), ruff temiz; frontend tsc 0 / lint 0. **Canlı doğrulandı (2026-06-28, kullanıcı): dashboard run → temiz kart çalışıyor.** **main'e merge + push edildi.** (bkz. [[adr-0017-workflow-result-presentation]])
 
 ---
 

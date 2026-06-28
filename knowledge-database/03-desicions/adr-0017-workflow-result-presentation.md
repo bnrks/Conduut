@@ -6,8 +6,8 @@ Merkez: [[index]]
 
 Accepted - 2026-06-28. Implementasyon + review tamam (subagent-driven, 7 task +
 final review + 1 Important fix). Backend 386 passed (5 ön-mevcut Windows-tmp),
-ruff temiz; frontend tsc 0 / lint 0. **Canlı uçtan-uca doğrulama bekliyor
-(manuel)** — n8n + agent + web açıkken veri-döndüren bir workflow ile.
+ruff temiz; frontend tsc 0 / lint 0. **Canlı doğrulandı (2026-06-28, kullanıcı):**
+dashboard'dan run → ham JSON yerine temiz kart çalışıyor. main'e merge edildi.
 
 ## Bağlam
 
