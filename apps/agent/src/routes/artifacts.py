@@ -2,13 +2,22 @@
 
 from typing import Any, Literal
 
+import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from src import store
 from src.auth import get_user_id
 
 router = APIRouter()
+log = structlog.get_logger()
+
+# Origin kinds persisted in storage that map onto the public contract. Batch
+# workflow runs (ADR-0007) save origin.kind="workflow_batch_run"; the artifact
+# list does not expose batch-specific fields, so a batch run is surfaced as a
+# plain workflow_run instead of failing the response model.
+_ORIGIN_KIND_ALIASES = {"workflow_batch_run": "workflow_run"}
+_ALLOWED_ORIGIN_KINDS = {"chat", "workflow_run"}
 
 
 class ArtifactOriginOut(BaseModel):
@@ -36,6 +45,16 @@ class ArtifactListOut(BaseModel):
     artifacts: list[ArtifactOut]
 
 
+def _artifact_origin(origin: dict[str, Any]) -> ArtifactOriginOut:
+    data = dict(origin)
+    kind = str(data.get("kind") or "chat")
+    kind = _ORIGIN_KIND_ALIASES.get(kind, kind)
+    if kind not in _ALLOWED_ORIGIN_KINDS:
+        kind = "chat"
+    data["kind"] = kind
+    return ArtifactOriginOut(**data)
+
+
 def _artifact_payload(artifact: store.ArtifactRecord) -> ArtifactOut:
     return ArtifactOut(
         id=artifact.id,
@@ -47,7 +66,7 @@ def _artifact_payload(artifact: store.ArtifactRecord) -> ArtifactOut:
         source=artifact.source,
         table=artifact.table,
         message=artifact.message,
-        origin=ArtifactOriginOut(**artifact.origin),
+        origin=_artifact_origin(artifact.origin),
         createdAt=artifact.created_at,
     )
 
@@ -62,7 +81,19 @@ async def list_artifacts(
 
     user_id = get_user_id(request)
     artifacts = await store.list_artifacts(user_id, limit=limit, service=service)
-    return ArtifactListOut(artifacts=[_artifact_payload(artifact) for artifact in artifacts])
+    payloads: list[ArtifactOut] = []
+    for artifact in artifacts:
+        try:
+            payloads.append(_artifact_payload(artifact))
+        except ValidationError as exc:
+            # Never let one malformed record take down the whole artifacts page.
+            log.warning(
+                "artifact_serialize_skipped",
+                artifact_id=artifact.id,
+                service=artifact.service,
+                error=str(exc),
+            )
+    return ArtifactListOut(artifacts=payloads)
 
 
 @router.delete("/artifacts/{artifact_id}", status_code=204)
