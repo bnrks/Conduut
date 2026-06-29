@@ -24,6 +24,9 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
 - [[system-architecture]] - MVP mimarisi ve uzun vadeli hedef mimari.
 - [[web-app]] - Next.js frontend, route yapisi, auth ve BFF API route'lari.
 - [[agent-service]] - FastAPI agent, SSE chat flow, LiteLLM ve Firestore.
+- [[agent-platform-self-awareness]] - agent'in platform oz-farkindaligi: statik
+  oz-bilgi profili (platform_profile.py) + dinamik kullanici durumu
+  (platform_state.py) + disclosure/proaktiflik politikasi.
 - [[n8n-registry]] - n8n node/template bilgisi ve lookup-first workflow uretimi.
 - [[chat-workflow-generation]] - chat deneyimi ve workflow olusturma akisi.
 - [[artifacts]] - Sheets sonuc onizleme kartlari ve gelecekteki artifact modeli.
