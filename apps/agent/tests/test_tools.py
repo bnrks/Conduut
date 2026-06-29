@@ -2841,9 +2841,7 @@ async def test_run_workflow_with_input_builds_presentation_from_output_schema(mo
             "data": {"resultData": {"runData": {}}},
         }
 
-    monkeypatch.setattr(
-        "src.agent.tools.store.get_workflow_metadata", fake_get_workflow_metadata
-    )
+    monkeypatch.setattr("src.agent.tools.store.get_workflow_metadata", fake_get_workflow_metadata)
     monkeypatch.setattr("src.agent.tools.n8n_client.activate_workflow", fake_activate)
     monkeypatch.setattr("src.agent.tools.n8n_client.update_workflow", fake_update_workflow)
     monkeypatch.setattr("src.agent.tools.n8n_client.get_workflow", fake_get_workflow)

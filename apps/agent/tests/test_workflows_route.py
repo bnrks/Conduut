@@ -454,9 +454,7 @@ async def test_run_workflow_returns_presentation(monkeypatch):
             summary="ok",
             presentation=WorkflowResultPresentation(
                 fields=[
-                    WorkflowResultPresentationField(
-                        label="Fiyat", format="currency", value=67000
-                    )
+                    WorkflowResultPresentationField(label="Fiyat", format="currency", value=67000)
                 ]
             ),
         )

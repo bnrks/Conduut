@@ -204,9 +204,7 @@ async def run_workflow(workflow_id: str, request: Request, body: WorkflowRunRequ
             "outputs": result.outputs,
             "artifacts": [artifact.model_dump(exclude_none=True) for artifact in result.artifacts],
             "presentation": (
-                result.presentation.model_dump(exclude_none=True)
-                if result.presentation
-                else None
+                result.presentation.model_dump(exclude_none=True) if result.presentation else None
             ),
         }
     except ValueError as e:
