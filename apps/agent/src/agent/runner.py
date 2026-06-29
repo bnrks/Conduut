@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
 
 from src import store
 from src.agent.model_registry import resolve
+from src.agent.platform_state import gather_user_state
 from src.agent.provider_factory import build_model, build_model_settings, classify_provider_error
 from src.agent.reliability_guard import (
     CONDUUT_TOOL_NAMES,
@@ -316,7 +317,10 @@ async def run(
     conversation_workflows = _conversation_workflows_from_messages(messages)
     user_prompt, message_history = _history_from_store_messages(messages)
 
-    tier = await classify_tier(user_prompt, message_history)
+    tier, platform_state = await asyncio.gather(
+        classify_tier(user_prompt, message_history),
+        gather_user_state(user_id),
+    )
     choice = resolve(tier)
     bind_log_context(
         tier=tier.value,
@@ -346,6 +350,7 @@ async def run(
             event_queue=asyncio.Queue(),
             platform_resources=platform_resources,
             conversation_workflows=conversation_workflows,
+            platform_state=platform_state,
         )
 
     if settings.enable_reliability_guard and choice.provider == "deepseek":
