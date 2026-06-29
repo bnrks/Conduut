@@ -53,7 +53,15 @@ Tasarım/plan: `docs/superpowers/specs/2026-06-29-agent-platform-self-awareness-
 [[adr-0007-batch-workflow-runs]], [[adr-0011-conduut-managed-tiered-models]].
 
 ## Durum
-- [ ] Canlı uçtan-uca doğrulama (agent + n8n açık): "neler yapabilirsin" →
-  jargonsuz yapılı özet; "Slack'i bağla" → token-credential yolu; bağlı
-  servisler doğru yansıyor; çok-satır işi → dashboard batch'e yönlendirme;
-  disclosure (içsel mekanizma sızmıyor) ve dengeli proaktiflik gözlemi.
+- [x] **Canlı doğrulandı (2026-06-29).** Kullanıcı tüm senaryoları 2 ayrı chat'te
+  denedi, sorun görmedi (kimlik/yetenek, sınırlar, dinamik durum, disclosure,
+  proaktiflik). Bağımsız log incelemesi (agent bugün 12:03 UTC restart, yeni kod
+  canlı): 11 chat → 11 run başladı/bitti/kaydedildi (1:1:1:1), `gather_user_state`
+  4 kaynak 11 run'da da başarılı (`platform_state_source_failed`=0), 11
+  `reliability_guard_clean`, 0 unhandled hata/usage-limit/retry. Profil DeepSeek —
+  öz-farkındalık katmanı DeepSeek tier'ında da sorunsuz. (Disclosure/proaktiflik
+  *metni* Firestore mesajlarında kullanıcı tarafından onaylandı; log'lar makineyi
+  doğruladı.)
+- Feature-dışı gözlem: aynı oturumda 1 `needs_attention` (sandbox gate, ADR-0014
+  tasarlanmış dürüst bildirim) + 1 handled `execute_workflow` hatası (gerçek n8n
+  çalıştırması başarısız → temiz mesaj). Öz-farkındalık yüzeyinde değil.
