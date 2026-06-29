@@ -14,7 +14,10 @@ RUN pip install --no-cache-dir -e .
 # Uygulama kaynak kodunu kopyala
 COPY apps/agent/src/ ./src/
 
-# Registry verilerini kopyala (nodes.json ve templates.json varsa dahil edilir)
+# Registry verilerini kopyala. nodes.json + credentials.json gitignored ve
+# container-specific: build ÖNCESİ scripts/fetch_nodes.py + fetch_credentials.py
+# çalıştırılmazsa node registry / credential katalogu boş gelir (ADR-0015).
+# templates.json repoda tracked.
 COPY packages/n8n-registry/data/ ./data/
 
 EXPOSE 8000
