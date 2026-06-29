@@ -1,0 +1,228 @@
+"""App connections, OAuth states, and platform action audit."""
+
+from dataclasses import dataclass, field
+
+import src.store as _pkg_store
+
+
+@dataclass
+class OAuthState:
+    id: str
+    user_id: str
+    provider: str
+    service: str
+    code_verifier: str
+    return_to: str
+    expires_at: str
+    used: bool
+    requested_capabilities: list[str] = field(default_factory=list)
+    permission_pack: str | None = None
+
+
+@dataclass
+class AppConnection:
+    id: str
+    provider: str
+    service: str
+    account_email: str
+    google_sub: str
+    credential_type: str
+    n8n_credential_id: str
+    n8n_credential_name: str
+    status: str
+    scopes: list[str]
+    created_at: str
+    updated_at: str
+    capabilities: list[str] = field(default_factory=list)
+    permission_packs: list[str] = field(default_factory=list)
+    direct_api_enabled: bool = False
+    encrypted_refresh_token: str = ""
+
+
+def _connection_ref(user_id: str, connection_id: str):
+    return _pkg_store._user_ref(user_id).collection("connections").document(connection_id)
+
+
+def _oauth_state_ref(state_id: str):
+    return _pkg_store.db.collection("oauth_states").document(state_id)
+
+
+async def save_oauth_state(
+    state_id: str,
+    *,
+    user_id: str,
+    provider: str,
+    service: str,
+    code_verifier: str,
+    return_to: str,
+    expires_at: str,
+    requested_capabilities: list[str] | None = None,
+    permission_pack: str | None = None,
+) -> OAuthState:
+    data = {
+        "user_id": user_id,
+        "provider": provider,
+        "service": service,
+        "code_verifier": code_verifier,
+        "return_to": return_to,
+        "expires_at": expires_at,
+        "used": False,
+        "requested_capabilities": requested_capabilities or [],
+        "permission_pack": permission_pack,
+    }
+    await _pkg_store._run(lambda: _oauth_state_ref(state_id).set(data))
+    return OAuthState(id=state_id, **data)
+
+
+async def get_oauth_state(state_id: str) -> OAuthState | None:
+    doc = await _pkg_store._run(lambda: _oauth_state_ref(state_id).get())
+    if not doc.exists:
+        return None
+    data = doc.to_dict() or {}
+    return OAuthState(
+        id=doc.id,
+        user_id=data.get("user_id", ""),
+        provider=data.get("provider", ""),
+        service=data.get("service", ""),
+        code_verifier=data.get("code_verifier", ""),
+        return_to=data.get("return_to", "/dashboard/connections"),
+        expires_at=data.get("expires_at", ""),
+        used=bool(data.get("used", False)),
+        requested_capabilities=list(data.get("requested_capabilities") or []),
+        permission_pack=data.get("permission_pack"),
+    )
+
+
+async def mark_oauth_state_used(state_id: str) -> None:
+    await _pkg_store._run(
+        lambda: _oauth_state_ref(state_id).update({"used": True, "used_at": _pkg_store._now_iso()})
+    )
+
+
+async def get_connection(user_id: str, connection_id: str) -> AppConnection | None:
+    doc = await _pkg_store._run(lambda: _connection_ref(user_id, connection_id).get())
+    if not doc.exists:
+        return None
+    data = doc.to_dict() or {}
+    return AppConnection(
+        id=doc.id,
+        provider=data.get("provider", ""),
+        service=data.get("service", ""),
+        account_email=data.get("account_email", ""),
+        google_sub=data.get("google_sub", ""),
+        credential_type=data.get("credential_type", ""),
+        n8n_credential_id=data.get("n8n_credential_id", ""),
+        n8n_credential_name=data.get("n8n_credential_name", ""),
+        status=data.get("status", "error"),
+        scopes=list(data.get("scopes") or []),
+        created_at=data.get("created_at", ""),
+        updated_at=data.get("updated_at", ""),
+        capabilities=list(data.get("capabilities") or []),
+        permission_packs=list(data.get("permission_packs") or []),
+        direct_api_enabled=bool(data.get("direct_api_enabled", False)),
+        encrypted_refresh_token=str(data.get("encrypted_refresh_token") or ""),
+    )
+
+
+async def list_connections(user_id: str) -> list[AppConnection]:
+    docs = await _pkg_store._run(
+        lambda: list(_pkg_store._user_ref(user_id).collection("connections").stream())
+    )
+    connections: list[AppConnection] = []
+    for doc in docs:
+        data = doc.to_dict() or {}
+        connections.append(
+            AppConnection(
+                id=doc.id,
+                provider=data.get("provider", ""),
+                service=data.get("service", ""),
+                account_email=data.get("account_email", ""),
+                google_sub=data.get("google_sub", ""),
+                credential_type=data.get("credential_type", ""),
+                n8n_credential_id=data.get("n8n_credential_id", ""),
+                n8n_credential_name=data.get("n8n_credential_name", ""),
+                status=data.get("status", "error"),
+                scopes=list(data.get("scopes") or []),
+                created_at=data.get("created_at", ""),
+                updated_at=data.get("updated_at", ""),
+                capabilities=list(data.get("capabilities") or []),
+                permission_packs=list(data.get("permission_packs") or []),
+                direct_api_enabled=bool(data.get("direct_api_enabled", False)),
+                encrypted_refresh_token=str(data.get("encrypted_refresh_token") or ""),
+            )
+        )
+    return connections
+
+
+async def save_connection(
+    user_id: str,
+    connection_id: str,
+    *,
+    provider: str,
+    service: str,
+    account_email: str,
+    google_sub: str,
+    credential_type: str,
+    n8n_credential_id: str,
+    n8n_credential_name: str,
+    scopes: list[str],
+    capabilities: list[str] | None = None,
+    permission_packs: list[str] | None = None,
+    direct_api_enabled: bool = False,
+    encrypted_refresh_token: str = "",
+) -> AppConnection:
+    existing = await get_connection(user_id, connection_id)
+    now = _pkg_store._now_iso()
+    data = {
+        "provider": provider,
+        "service": service,
+        "account_email": account_email,
+        "google_sub": google_sub,
+        "credential_type": credential_type,
+        "n8n_credential_id": n8n_credential_id,
+        "n8n_credential_name": n8n_credential_name,
+        "status": "connected",
+        "scopes": scopes,
+        "capabilities": capabilities or [],
+        "permission_packs": permission_packs or [],
+        "direct_api_enabled": direct_api_enabled,
+        "encrypted_refresh_token": encrypted_refresh_token,
+        "created_at": existing.created_at if existing else now,
+        "updated_at": now,
+    }
+    await _pkg_store._run(lambda: _connection_ref(user_id, connection_id).set(data))
+    return AppConnection(id=connection_id, **data)
+
+
+async def delete_connection(user_id: str, connection_id: str) -> AppConnection | None:
+    existing = await get_connection(user_id, connection_id)
+    if existing is None:
+        return None
+    await _pkg_store._run(lambda: _connection_ref(user_id, connection_id).delete())
+    return existing
+
+
+async def save_platform_action_audit(
+    user_id: str,
+    *,
+    conversation_id: str | None,
+    service: str,
+    action: str,
+    capability: str,
+    status: str,
+    target_resource: str | None = None,
+    error: str | None = None,
+) -> None:
+    data = {
+        "conversation_id": conversation_id,
+        "service": service,
+        "action": action,
+        "capability": capability,
+        "status": status,
+        "target_resource": target_resource,
+        "error": error,
+        "created_at": _pkg_store._now_iso(),
+    }
+    await _pkg_store._run(
+        lambda: _pkg_store._user_ref(user_id).collection("platform_action_audit").add(data)
+    )
