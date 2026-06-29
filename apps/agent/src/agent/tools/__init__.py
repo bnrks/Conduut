@@ -1,6 +1,7 @@
 """Conduut agent tool package."""
 
 from src import n8n_client, store
+from src.agent.tools.build_pipeline import _validated_runtime_workflow, _validated_workflow
 from src.agent.tools.execution import _summarize_execution
 from src.agent.tools.factory import create_agent
 from src.agent.tools.readiness import analyze_workflow_readiness_payload
@@ -11,7 +12,6 @@ from src.agent.tools.runtime_inputs import (
     _validated_workflow_input,
     _workflow_input_schema_from_metadata,
 )
-from src.agent.tools.validation import _validated_runtime_workflow, _validated_workflow
 from src.agent.tools.workflow_runner import (
     _workflow_with_conduut_webhook_trigger,
     _workflow_with_post_webhook_trigger,

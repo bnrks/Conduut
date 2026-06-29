@@ -23,6 +23,7 @@ from src.agent.schemas import (
     WorkflowPreviewData,
     dump_workflow_nodes,
 )
+from src.agent.tools.build_pipeline import _validated_runtime_workflow
 from src.agent.tools.common import (
     _credential_suggestion_instruction,
     _missing_credentials_instruction,
@@ -49,7 +50,6 @@ from src.agent.tools.runtime_inputs import (
     _validated_workflow_input,
     _workflow_input_schema_from_metadata,
 )
-from src.agent.tools.validation import _validated_runtime_workflow
 from src.agent.tools.workflow_runner import execution_retry_guard, run_workflow_with_input
 from src.platforms.actions import run_platform_action_payload
 from src.registry import registry

@@ -1,4 +1,8 @@
-"""Workflow validation and normalization helpers for tool inputs."""
+"""Workflow build pipeline: normalize -> repair -> apply runtime inputs -> validate.
+
+Wraps the core validators in ``src.agent.validation`` and raises ``ModelRetry`` on
+failure. Renamed from ``tools/validation.py`` to disambiguate from the core
+``agent/validation.py`` library it builds on (they are layered, not duplicated)."""
 
 from typing import Any
 
@@ -13,6 +17,7 @@ from src.agent.tools.runtime_inputs import (
     _normalized_input_schema,
 )
 from src.agent.validation import (
+    _iter_connection_targets,
     normalize_workflow_connections,
     normalize_workflow_nodes,
     validate_workflow_payload,
@@ -111,14 +116,3 @@ def _normalize_conduut_webhook_methods(nodes: list[WorkflowNode]) -> None:
             continue
         node.parameters.setdefault("multipleMethods", False)
         node.parameters.setdefault("httpMethod", "POST")
-
-
-def _iter_connection_targets(value: Any):
-    if isinstance(value, dict):
-        if "node" in value:
-            yield value
-        for nested in value.values():
-            yield from _iter_connection_targets(nested)
-    elif isinstance(value, list):
-        for nested in value:
-            yield from _iter_connection_targets(nested)
