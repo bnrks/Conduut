@@ -13,6 +13,7 @@ from pydantic_ai.messages import (
 
 from src.agent import runner
 from src.agent.model_registry import Tier
+from src.agent.platform_state import ConnectionSummary, UserPlatformState
 from src.agent.schemas import (
     AgentDeps,
     ArtifactPreviewAttachment,
@@ -144,6 +145,16 @@ def _parse_sse(raw: str):
         if line.startswith("data:"):
             data = json.loads(line.removeprefix("data:").strip())
     return event, data
+
+
+@pytest.fixture(autouse=True)
+def _stub_platform_state(monkeypatch):
+    """Keep runner tests offline: never hit real Firestore/n8n for user state."""
+
+    async def _empty(*_a, **_k):
+        return UserPlatformState()
+
+    monkeypatch.setattr(runner, "gather_user_state", _empty)
 
 
 @pytest.mark.asyncio
@@ -813,3 +824,48 @@ async def test_buffered_path_strips_echoed_internal_context(monkeypatch):
     assert token_text == "Hazır, ne yapmak istersin?"
     assert "[Conduut internal context" not in saved["content"]  # persisted content stripped
     assert saved["content"] == "Hazır, ne yapmak istersin?"
+
+
+@pytest.mark.asyncio
+async def test_runner_injects_gathered_state_into_deps(monkeypatch):
+    captured = {}
+
+    async def fake_classify(*_a, **_k):
+        return Tier.MEDIUM
+
+    async def fake_add_message(*_a, **_k):
+        return None
+
+    state = UserPlatformState(
+        connections=[
+            ConnectionSummary(service="gmail", account_email="u@x.com", status="connected")
+        ]
+    )
+
+    async def fake_gather(*_a, **_k):
+        return state
+
+    class CapturingAgent(FakeStreamingAgent):
+        def iter(self, _prompt, *, deps, message_history, model_settings, usage_limits):
+            captured["platform_state"] = deps.platform_state
+            return super().iter(
+                _prompt,
+                deps=deps,
+                message_history=message_history,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+            )
+
+    monkeypatch.setattr(runner.settings, "model_profile", "default")
+    monkeypatch.setattr(runner, "classify_tier", fake_classify)
+    monkeypatch.setattr(runner, "gather_user_state", fake_gather)  # overrides autouse stub
+    monkeypatch.setattr(runner, "key_for_provider", lambda *_a: "key")
+    monkeypatch.setattr(runner, "build_model", lambda *_a: object())
+    monkeypatch.setattr(runner, "create_agent", lambda _m: CapturingAgent(_text_events("ok")))
+    monkeypatch.setattr(runner.store, "add_message", fake_add_message)
+    _recognize_fake_model_node(monkeypatch)
+
+    _ = [raw async for raw in runner.run("u1", "c1", [{"role": "user", "content": "hi"}])]
+
+    assert captured["platform_state"] is state
+    assert captured["platform_state"].connections[0].service == "gmail"

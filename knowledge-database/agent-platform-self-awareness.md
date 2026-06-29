@@ -1,0 +1,48 @@
+# Agent Platform Öz-Farkındalığı
+
+Agent'ın Conduut platformu hakkındaki öz-farkındalığı (ölçüm: ~%53 "kısmi" →
+hedef yüksek). İki katman, statik prompt + tool docstring dışında agent'a ilk
+kez dinamik bağlam enjekte edilir.
+
+- **Statik öz-bilgi** — `apps/agent/src/agent/platform_profile.py` (TEK KAYNAK):
+  `PLATFORM_IDENTITY` + `CAPABILITY_CATALOG` + `BOUNDARIES` +
+  `DISCLOSURE_AND_PROACTIVITY`; `render_static_profile()` ile
+  `tools/factory.base_instructions()` üzerinden `create_agent` constructor
+  instructions'ına gömülür (sabit, cache-dostu önek).
+  **Yeni özellik/sınır değişiminde önce burası güncellenir.**
+- **Dinamik durum** — `apps/agent/src/agent/platform_state.py`: bağlı servisler
+  + kayıtlı credential'lar + workflow'lar, `gather_user_state` ile her run
+  PARALEL + best-effort toplanır (her kaynak `_safe` ile izole; biri patlarsa
+  diğerleri gelir, fonksiyon asla raise etmez), `@agent.instructions`
+  (`ctx.deps.platform_state`) ile run-anında `render_user_state` olarak enjekte.
+
+**Wiring:** `runner.run` durumu `classify_tier` ile `asyncio.gather` ile paralel
+toplar (ek gecikme ~0) ve `AgentDeps.platform_state`'e koyar (hem live hem
+DeepSeek buffered yolu aynı snapshot'ı alır). **`create_agent` imzası
+değişmedi** — mevcut test stub'ları korundu (statik=constructor,
+dinamik=`@agent.instructions`).
+
+**Disclosure politikası:** içsel sınırlar (shared instance, model tier,
+n8n/node jargonu) kullanıcıya SÖYLENMEZ; kullanıcıyı etkileyen sınırlar (yalnız
+Google OAuth, batch dashboard'dan, schedule chat'ten test edilemez) SÖYLENİR.
+`CAPABILITY_CATALOG` jargonsuz (test'le zorlanır).
+
+**Proaktiflik:** dengeli — doğal bitişte tek ilgili sonraki adım; istenmeden
+reklam yok.
+
+**Sonuç:** Backend 398 passed (5 ön-mevcut Windows-tmp, alakasız), ruff temiz.
+Her task subagent-driven TDD + per-task review (hepsi Approved, 0 Critical/
+Important; 2 Minor kozmetik — `tag` boş host+tip → `'label' []`, ve
+credential "none" satırı yok).
+
+Tasarım/plan: `docs/superpowers/specs/2026-06-29-agent-platform-self-awareness-design.md`,
+`docs/superpowers/plans/2026-06-29-agent-platform-self-awareness.md`.
+
+İlgili: [[agent-service]], [[adr-0006-platform-capability-layer]],
+[[adr-0007-batch-workflow-runs]], [[adr-0011-conduut-managed-tiered-models]].
+
+## Durum
+- [ ] Canlı uçtan-uca doğrulama (agent + n8n açık): "neler yapabilirsin" →
+  jargonsuz yapılı özet; "Slack'i bağla" → token-credential yolu; bağlı
+  servisler doğru yansıyor; çok-satır işi → dashboard batch'e yönlendirme;
+  disclosure (içsel mekanizma sızmıyor) ve dengeli proaktiflik gözlemi.

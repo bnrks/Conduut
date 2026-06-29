@@ -96,7 +96,17 @@ conduut/
 
 ---
 
-## Geliştirme durumu (son güncelleme: 2026-06-28)
+## Geliştirme durumu (son güncelleme: 2026-06-29)
+
+### Son oturum özeti (2026-06-29) — Agent platform öz-farkındalığı
+
+**Bağlam:** Kullanıcı agent'ın "platform hakkında ne kadar öz-farkındalığı var" sorusunu sordu; ölçtük (~%53 "kısmi": kendi tool'larını iyi biliyor ama platform-yüzeyi (batch/dashboard), sınırlar ve kullanıcı-durumu zayıftı). Statik prompt + tool docstring dışında agent'a hiç dinamik bağlam enjekte edilmiyordu. Kullanıcı "yüksek öz-farkındalık ekle" dedi (artık yeni özellik değil, profesyonel SaaS deneyimi yönü).
+
+**Çözüm (brainstorm → spec → plan → subagent-driven TDD, 5 task):** İki katman. (1) **Statik öz-bilgi** — yeni `agent/platform_profile.py` (TEK KAYNAK: kimlik + yetenek kataloğu + sınırlar + disclosure/proaktiflik kuralı), `render_static_profile()` `tools/factory.base_instructions()` ile `create_agent` constructor instructions'ına gömülür (sabit, cache-dostu önek). (2) **Dinamik durum** — yeni `agent/platform_state.py`: bağlı servisler + credential'lar + workflow'lar her run PARALEL + best-effort (`gather_user_state`, her kaynak `_safe`-izole, asla raise etmez), `@agent.instructions` ile `ctx.deps.platform_state`'ten `render_user_state` olarak enjekte. `runner.run` durumu `classify_tier` ile `asyncio.gather` ile paralel toplar (gecikme ~0) ve `AgentDeps.platform_state`'e koyar (live + DeepSeek buffered aynı snapshot). **`create_agent` imzası değişmedi** (statik=constructor, dinamik=decorator → ~9 mevcut test stub'ı korundu; runner testlerine autouse `_stub_platform_state` fixture'ı eklendi).
+
+**Disclosure politikası:** içsel sınırlar (shared instance, model tier, n8n/node jargonu) kullanıcıya SÖYLENMEZ; kullanıcıyı etkileyen sınırlar (yalnız Google OAuth, batch dashboard'dan, schedule chat'ten test edilemez) SÖYLENİR. `CAPABILITY_CATALOG` jargonsuz (test'le zorlanır). Proaktiflik **dengeli**.
+
+**Sonuç:** Backend **398 passed** (5 ön-mevcut Windows-tmp, alakasız), ruff check + format temiz. Her task per-task review (hepsi Approved, 0 Critical/Important; 2 Minor kozmetik). **Canlı uçtan-uca doğrulama BEKLIYOR.** (bkz. [[agent-platform-self-awareness]])
 
 ### Son oturum özeti (2026-06-28c) — Dashboard Artifacts "yüklenemiyor" fix (batch-run origin)
 
@@ -494,6 +504,8 @@ python packages/n8n-registry/scripts/fetch_nodes.py
 - `apps/agent/src/agent/step_assembler.py` — **segment çıkarımı** (`StepAssembler`/`build_steps`): SSE event akışından (`token↔tool_call`) sıralı `steps` (`text`/`activity`) üretir; saf/I/O'suz, hem live hem buffered runner yolu besler. `runner.py` ayrıca `strip_internal_context()` ile model'in taklit ettiği `[Conduut internal context ...]` scaffolding'ini çıktıdan siler (ADR-0016)
 - `apps/agent/src/agent/tools/factory.py` — Pydantic AI tool kayıtları + `create_agent`
 - `apps/agent/src/agent/tools/prompt.py` — system prompt
+- `apps/agent/src/agent/platform_profile.py` — **statik platform öz-bilgisi** (TEK KAYNAK): `PLATFORM_IDENTITY` + `CAPABILITY_CATALOG` + `BOUNDARIES` + `DISCLOSURE_AND_PROACTIVITY`; `render_static_profile()` → `tools/factory.base_instructions()` ile `create_agent` instructions öneki. Yeni özellik/sınır değişiminde önce burası güncellenir (2026-06-29, [[agent-platform-self-awareness]])
+- `apps/agent/src/agent/platform_state.py` — **dinamik kullanıcı durumu**: `gather_user_state` (PARALEL + best-effort `_safe`-izole, asla raise etmez) bağlı servis/credential/workflow özetini toplar; `render_user_state` + `platform_state_instructions` `@agent.instructions` ile `deps.platform_state`'ten run-anında enjekte edilir (2026-06-29)
 - `apps/agent/src/agent/repair.py` — **onarıcı normalizer** (`repair_workflow`): kompakt JSON → boilerplate doldur + lineer wiring + sub-node `ai_*` port + `$json.body`/`{{input.x}}` onarımı + e-posta node'larında `options.appendAttribution=false` (n8n "sent automatically with n8n" footer'ını kapatır) + **resourceLocator normalizasyonu** (googleSheets `documentId`/`sheetName` düz string → `{__rl, mode, value}`; aksi halde n8n value/mode'u undefined okur, "Can not get sheet 'undefined'" hatası) + **webhook `responseMode=lastNode`** (varsayılan "onReceived" anında ack'leyip execution verisi döndürmüyor → "n8n'den cevap gelmedi"; lastNode senkron sonuç döndürür) (ADR-0010, tek JSON yüzeyinin kalbi)
 - `apps/agent/src/agent/tools/graph_compiler.py` — WorkflowGraph → n8n JSON compiler (curated + generic, port çıkarımı, ADR-0009; **artık dahili kütüphane**, model yüzeyinde değil)
 - `apps/agent/src/agent/tools/blocks.py` — declarative `Block`/`ParamRule` registry + `BLOCKS` curated kind kataloğu + `ROLE_PORTS`

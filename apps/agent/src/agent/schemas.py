@@ -399,6 +399,11 @@ class AgentDeps:
     # True once a real external action (workflow execution / platform action) has
     # run this attempt — the reliability guard must not retry from scratch then.
     real_action_executed: bool = False
+    # Per-conversation platform self-awareness state (connected services, saved
+    # credentials, existing automations). Set by runner.run; read by the agent's
+    # dynamic @instructions. Typed Any to avoid a schemas<->platform_state import
+    # cycle; concretely a platform_state.UserPlatformState | None.
+    platform_state: Any = None
 
     async def emit_tool_call(self, tool: str) -> None:
         log.info(
