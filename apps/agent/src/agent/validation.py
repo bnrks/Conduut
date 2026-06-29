@@ -87,8 +87,7 @@ def _validate_input_expressions(node: Mapping[str, Any], label: str) -> list[str
                 f"Node '{label}' uses an invalid expression with bare 'input.' (e.g. "
                 "{{input.field}}). 'input' is not an n8n variable, so the value resolves to "
                 "empty. Reference runtime input as $('<TriggerNodeName>').first().json.body."
-                "<field>, or build the workflow with create_workflow_from_graph using "
-                "{ref: 'input.<field>'}."
+                "<field>."
             ]
     return []
 
