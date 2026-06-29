@@ -45,6 +45,9 @@ async def test_gather_is_best_effort_one_source_failing(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_gather_flags_runtime_inputs(monkeypatch):
+    # Both workflows are in this user's metadata so the user-scoping filter keeps them.
+    # wf_a has an empty input_schema → has_runtime_inputs=False.
+    # wf_b has a non-empty input_schema → has_runtime_inputs=True.
     async def conns(*_a, **_k):
         return []
 
@@ -58,7 +61,10 @@ async def test_gather_flags_runtime_inputs(monkeypatch):
         ]
 
     async def metas(*_a, **_k):
-        return {"wf_b": SimpleNamespace(input_schema=[{"name": "company"}])}
+        return {
+            "wf_a": SimpleNamespace(input_schema=[]),  # user owns it; no runtime inputs
+            "wf_b": SimpleNamespace(input_schema=[{"name": "company"}]),  # has inputs
+        }
 
     monkeypatch.setattr(platform_state.store, "list_connections", conns)
     monkeypatch.setattr(platform_state.store, "list_custom_credentials", creds)
@@ -69,6 +75,40 @@ async def test_gather_flags_runtime_inputs(monkeypatch):
     by_name = {w.name: w for w in state.workflows}
     assert by_name["Daily BTC"].has_runtime_inputs is False
     assert by_name["Proposals"].has_runtime_inputs is True
+
+
+@pytest.mark.asyncio
+async def test_gather_excludes_workflows_without_user_metadata(monkeypatch):
+    """Workflows from the shared n8n instance that have NO per-user metadata entry
+    must NOT appear in this user's state — they belong to other users."""
+
+    async def conns(*_a, **_k):
+        return []
+
+    async def creds(*_a, **_k):
+        return []
+
+    async def wfs(*_a, **_k):
+        # Two workflows from shared n8n; only "wf_mine" is in this user's metadata.
+        return [
+            SimpleNamespace(id="wf_mine", name="My Workflow", active=True),
+            SimpleNamespace(id="wf_other", name="Someone Elses Workflow", active=False),
+        ]
+
+    async def metas(*_a, **_k):
+        # Only "wf_mine" belongs to this user.
+        return {"wf_mine": SimpleNamespace(input_schema=[])}
+
+    monkeypatch.setattr(platform_state.store, "list_connections", conns)
+    monkeypatch.setattr(platform_state.store, "list_custom_credentials", creds)
+    monkeypatch.setattr(platform_state.n8n_client, "list_workflows", wfs)
+    monkeypatch.setattr(platform_state.store, "get_all_workflow_metadata", metas)
+
+    state = await gather_user_state("u1")
+    names = {w.name for w in state.workflows}
+
+    assert "My Workflow" in names, "user's own workflow must appear"
+    assert "Someone Elses Workflow" not in names, "other user's workflow must be excluded"
 
 
 def test_render_empty_state():

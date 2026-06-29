@@ -82,6 +82,13 @@ async def gather_user_state(user_id: str) -> UserPlatformState:
             for c in credentials
         ]
     if workflows:
+        # n8n is a shared MVP instance — list_workflows() returns ALL users' workflows
+        # (same situation as routes/workflows.py, which carries a per-user-filter TODO
+        # on its own list_workflows() call). Intersect with per-user metadata so only
+        # THIS user's automations appear in their agent instructions.
+        # Fail-closed: if the metadata fetch failed, meta == {} and NO workflows are
+        # shown — privacy over completeness; the `metadata or {}` guard above handles
+        # the None case.
         meta = metadata or {}
         state.workflows = [
             WorkflowSummary(
@@ -90,6 +97,7 @@ async def gather_user_state(user_id: str) -> UserPlatformState:
                 has_runtime_inputs=bool(meta.get(w.id) and meta[w.id].input_schema),
             )
             for w in workflows
+            if w.id in meta  # exclude workflows that belong to other users
         ]
     return state
 
