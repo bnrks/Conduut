@@ -4,6 +4,15 @@ Merkez: [[index]]
 
 `apps/agent` FastAPI tabanli Conduut agent servisidir.
 
+> **Guncelleme (2026-06-30, [[workspace-refactor]] Faz 3):** Bu not bazi yerlerde
+> tarihseldir. IR compiler'lar (`graph_compiler`/`spec_compiler`/`blocks`,
+> `WorkflowPlan`/`WorkflowSpec` IR'lari ve `create_workflow_from_plan`/`_spec`
+> tool'lari) **kaldirildi** — ADR-0010 zaten model yuzeyinden cikarmisti, Faz 3
+> olu kodu sildi. Tek yuzey `create_workflow`/`update_workflow` + `agent/repair.py`.
+> Ayrica `store.py`→`store/` paketi, `tools/validation.py`→`tools/build_pipeline.py`,
+> runner history blogu→`agent/history.py`. Asagidaki compiler / BYO-provider /
+> settings-favorites bolumleri (ADR-0011 oncesinden) tam reconcile bekliyor.
+
 ## Stack
 
 - Python 3.12.
@@ -183,11 +192,11 @@ moduller:
 - `workflow_runner.py`: Conduut'tan workflow run hazirligi ve execution.
 - `readiness.py`: credential/readiness analizi ve managed Gmail connection
   attach davranisi.
-- `validation.py`: create/update oncesi workflow normalize/validate akisi.
+- `build_pipeline.py`: create/update oncesi workflow normalize → repair →
+  runtime-input → validate akisi (eski adi `validation.py`; Faz 3'te rename).
 - `execution.py`: execution output ozetleme.
-- `spec_compiler.py`: yeni `WorkflowPlan` action graph IR'larini ve eski
-  `WorkflowSpec` pilot IR'larini deterministic n8n node/connection/input schema
-  payload'una ceviren compiler.
+- `history.py`: konusma gecmisini Pydantic AI mesaj gecmisine ceviren saf
+  fonksiyonlar (Faz 3'te runner.py'den cikarildi).
 - `src/platforms/*`: platform capability registry, permission pack mapping,
   encrypted Google token kullanimi, direct Gmail/Sheets client'lari ve platform
   action audit kaydi.
@@ -197,9 +206,9 @@ moduller:
 Kayitli tool'lar:
 
 - Registry: `search_n8n_nodes`, `get_node_schema`, `find_workflow_template`.
-- Workflow CRUD: `list_workflows`, `get_workflow`, `create_workflow_from_plan`,
-  `create_workflow_from_spec`, `create_workflow`, `update_workflow`,
-  `delete_workflow`.
+- Workflow CRUD: `list_workflows`, `get_workflow`, `create_workflow`,
+  `update_workflow`, `delete_workflow`. (IR tool'lari
+  `create_workflow_from_plan`/`_spec` Faz 3'te kaldirildi — ADR-0010.)
 - Runtime: `activate_workflow`, `deactivate_workflow`, `execute_workflow`,
   `list_executions`, `analyze_workflow_readiness`, `inspect_execution`.
 - Platform direct action: `run_platform_action`.
@@ -561,7 +570,8 @@ cevirir. Aksi halde n8n workflow'u API'den kabul etse bile editor
 
 ## Persistence
 
-`src/store.py` Firestore kullanir:
+`src/store/` paketi (Faz 3'te `store.py`'den koleksiyon-bazli bolundu; re-export
+`__init__` ile ayni public yuzey) Firestore kullanir:
 
 - `users/{uid}/settings/llm`
 - `users/{uid}/providers/{provider}`
