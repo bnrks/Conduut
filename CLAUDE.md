@@ -106,7 +106,7 @@ conduut/
 
 **Disclosure politikası:** içsel sınırlar (shared instance, model tier, n8n/node jargonu) kullanıcıya SÖYLENMEZ; kullanıcıyı etkileyen sınırlar (yalnız Google OAuth, batch dashboard'dan, schedule chat'ten test edilemez) SÖYLENİR. `CAPABILITY_CATALOG` jargonsuz (test'le zorlanır). Proaktiflik **dengeli**.
 
-**Sonuç:** Backend **398 passed** (5 ön-mevcut Windows-tmp, alakasız), ruff check + format temiz. Her task per-task review (hepsi Approved, 0 Critical/Important; 2 Minor kozmetik). **Canlı uçtan-uca doğrulama BEKLIYOR.** (bkz. [[agent-platform-self-awareness]])
+**Sonuç:** Backend **400 passed** (5 ön-mevcut Windows-tmp, alakasız), ruff check + format temiz. Her task per-task review temiz; final whole-branch review (opus) 2 Important yakaladı ve düzeltildi: (a) `@agent.instructions` seam'i uçtan uca test edilmemişti → gerçek-agent (FunctionModel) instructions testi eklendi; (b) `gather_user_state` shared MVP'de `list_workflows()` ile TÜM kullanıcıların workflow'larını "senin otomasyonların" diye sunuyordu (cross-user sızıntı) → per-user metadata kesişimi (`w.id in meta`, fail-closed) ile user-scope'landı. **Yerel main'e merge edildi (`4f7b1ef`); push EDİLMEDİ (kullanıcı tercihi: yerel kalsın); canlı uçtan-uca doğrulama BEKLIYOR.** (bkz. [[agent-platform-self-awareness]])
 
 ### Son oturum özeti (2026-06-28c) — Dashboard Artifacts "yüklenemiyor" fix (batch-run origin)
 

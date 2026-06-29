@@ -30,10 +30,21 @@ Google OAuth, batch dashboard'dan, schedule chat'ten test edilemez) SÖYLENİR.
 **Proaktiflik:** dengeli — doğal bitişte tek ilgili sonraki adım; istenmeden
 reklam yok.
 
-**Sonuç:** Backend 398 passed (5 ön-mevcut Windows-tmp, alakasız), ruff temiz.
-Her task subagent-driven TDD + per-task review (hepsi Approved, 0 Critical/
-Important; 2 Minor kozmetik — `tag` boş host+tip → `'label' []`, ve
-credential "none" satırı yok).
+**Sonuç:** Backend 400 passed (5 ön-mevcut Windows-tmp, alakasız), ruff temiz.
+Her task subagent-driven TDD + per-task review temiz. Final whole-branch review
+(opus) 2 Important yakaladı, ikisi de düzeltildi:
+- **Cross-user sızıntı (önemli):** `gather_user_state` shared MVP n8n'de
+  `list_workflows()` ile TÜM kullanıcıların workflow'larını çekip "senin
+  otomasyonların" diye sunuyordu. Fix: per-user metadata ile kesişim
+  (`w.id in meta`, fail-closed — metadata yoksa workflow gösterilmez).
+  `routes/workflows.py` aynı `list_workflows()` çağrısını TODO ile taşıyor;
+  per-user izolasyon gelince ikisi de gerçek user-filtreye dönecek.
+- **Seam testi:** `@agent.instructions` decorator'ı gerçek bir agent'a karşı
+  test edilmemişti → `FunctionModel` ile gerçek-agent instructions testi eklendi
+  (hem statik profil hem dinamik durum modele ulaşıyor mu, falsifiye-edilebilir).
+Kalan 2 Minor kozmetik (`tag` boş host+tip → `'label' []`, credential "none"
+satırı yok) — bloklamıyor. **Yerel main'e merge edildi (`4f7b1ef`); push
+edilmedi (kullanıcı: yerel kalsın).**
 
 Tasarım/plan: `docs/superpowers/specs/2026-06-29-agent-platform-self-awareness-design.md`,
 `docs/superpowers/plans/2026-06-29-agent-platform-self-awareness.md`.
