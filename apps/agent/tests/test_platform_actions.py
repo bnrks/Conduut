@@ -1,5 +1,4 @@
 import asyncio
-from types import SimpleNamespace
 
 import pytest
 
@@ -7,11 +6,7 @@ from src import store
 from src.agent.schemas import (
     AgentDeps,
     PlatformActionPlan,
-    WorkflowActionSpec,
-    WorkflowPlan,
-    WorkflowTriggerSpec,
 )
-from src.agent.tools.spec_compiler import create_workflow_from_plan_payload
 from src.config import settings
 from src.platforms.actions import run_platform_action_payload
 from src.platforms.capabilities import (
@@ -542,110 +537,3 @@ async def test_sheets_read_direct_action_returns_table_artifact(monkeypatch):
     assert result.artifacts[0].table is not None
     assert result.artifacts[0].table.columns == ["Email", "Status"]
     assert result.artifacts[0].table.rows == [{"Email": "person@example.com", "Status": "Sent"}]
-
-
-@pytest.mark.asyncio
-async def test_workflow_plan_provisions_spreadsheet_when_title_is_given(monkeypatch):
-    schemas = {
-        "n8n-nodes-base.webhook": {"type": "n8n-nodes-base.webhook", "typeVersion": 2.1},
-        "n8n-nodes-base.gmail": {
-            "type": "n8n-nodes-base.gmail",
-            "typeVersion": 2.1,
-        },
-        "n8n-nodes-base.googleSheets": {
-            "type": "n8n-nodes-base.googleSheets",
-            "typeVersion": 4.7,
-        },
-        "n8n-nodes-base.set": {"type": "n8n-nodes-base.set", "typeVersion": 3.4},
-    }
-    created: dict = {}
-    saved: dict = {}
-
-    monkeypatch.setattr(
-        "src.agent.tools.registry.get_node_schema",
-        lambda node_type: schemas.get(node_type),
-    )
-
-    async def fake_provision(_deps, *, title: str, sheet_name: str | None, action_id: str):
-        return {
-            "action_id": action_id,
-            "spreadsheet_id": "created_sheet",
-            "spreadsheet_url": "https://sheet.test",
-            "title": title,
-            "sheet_name": sheet_name,
-        }
-
-    async def fake_create_workflow(name: str, nodes: list[dict], connections: dict):
-        created["name"] = name
-        created["nodes"] = nodes
-        created["connections"] = connections
-        return SimpleNamespace(id="wf_1", name=name, active=False)
-
-    async def fake_get_workflow(_workflow_id: str):
-        return {
-            "id": "wf_1",
-            "name": created["name"],
-            "nodes": created["nodes"],
-            "connections": created["connections"],
-        }
-
-    async def fake_save_workflow_metadata(
-        user_id: str,
-        workflow_id: str,
-        input_schema: list[dict],
-        resources: dict | None = None,
-    ):
-        saved["user_id"] = user_id
-        saved["workflow_id"] = workflow_id
-        saved["input_schema"] = input_schema
-        saved["resources"] = resources
-
-    async def fake_get_connection(_user_id: str, _connection_id: str):
-        return None
-
-    monkeypatch.setattr(
-        "src.agent.tools.spec_compiler.provision_spreadsheet_for_workflow",
-        fake_provision,
-    )
-    monkeypatch.setattr("src.agent.tools.n8n_client.create_workflow", fake_create_workflow)
-    monkeypatch.setattr("src.agent.tools.n8n_client.get_workflow", fake_get_workflow)
-    monkeypatch.setattr("src.agent.tools.store.save_workflow_metadata", fake_save_workflow_metadata)
-    monkeypatch.setattr("src.agent.tools.store.get_connection", fake_get_connection)
-
-    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
-    result = await create_workflow_from_plan_payload(
-        deps,
-        "Send and log",
-        WorkflowPlan(
-            trigger=WorkflowTriggerSpec(kind="on_demand"),
-            actions=[
-                WorkflowActionSpec(
-                    id="send",
-                    action="gmail.send",
-                    params={
-                        "to": {"ref": "input.to"},
-                        "subject": {"ref": "input.subject"},
-                        "message": {"ref": "input.message"},
-                    },
-                ),
-                WorkflowActionSpec(
-                    id="log",
-                    action="sheets.row.append",
-                    after="send",
-                    params={
-                        "spreadsheet_title": "Sent Mail Log",
-                        "sheet_name": "Log",
-                        "columns": {
-                            "To": {"ref": "input.to"},
-                            "Subject": {"ref": "input.subject"},
-                        },
-                    },
-                ),
-            ],
-        ),
-    )
-
-    append = next(node for node in created["nodes"] if node["name"] == "Google Sheets Append")
-    assert result["id"] == "wf_1"
-    assert append["parameters"]["documentId"]["value"] == "created_sheet"
-    assert saved["resources"]["log.spreadsheet"]["spreadsheet_id"] == "created_sheet"

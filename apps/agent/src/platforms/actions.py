@@ -489,31 +489,3 @@ async def run_platform_action_payload(
         riskLevel=capability_risk(capability),
         artifacts=artifacts,
     )
-
-
-async def provision_spreadsheet_for_workflow(
-    deps: AgentDeps,
-    *,
-    title: str,
-    sheet_name: str | None,
-    action_id: str,
-) -> dict[str, Any]:
-    result = await run_platform_action_payload(
-        deps,
-        PlatformActionPlan(
-            action="sheets.spreadsheet.create",
-            params={"title": title, "sheet_name": sheet_name},
-        ),
-    )
-    if not result.success:
-        raise PlatformActionError(result.error or "Could not create Google Sheet.")
-    spreadsheet_id = str((result.data or {}).get("spreadsheetId") or "")
-    if not spreadsheet_id:
-        raise PlatformActionError("Google Sheets create did not return a spreadsheet id.")
-    return {
-        "action_id": action_id,
-        "spreadsheet_id": spreadsheet_id,
-        "spreadsheet_url": (result.data or {}).get("spreadsheetUrl"),
-        "title": title,
-        "sheet_name": sheet_name,
-    }
