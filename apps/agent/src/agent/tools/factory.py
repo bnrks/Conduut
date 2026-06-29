@@ -7,6 +7,8 @@ import structlog
 from pydantic_ai import Agent, ModelRetry, RunContext
 
 from src import n8n_client, store
+from src.agent.platform_profile import render_static_profile
+from src.agent.platform_state import platform_state_instructions
 from src.agent.schemas import (
     AgentDeps,
     ArtifactPreviewAttachment,
@@ -183,6 +185,13 @@ def _normalized_user_input_request(
     )
 
 
+def base_instructions() -> str:
+    """SYSTEM_PROMPT plus the static platform self-knowledge — a constant,
+    cache-friendly instructions prefix. The dynamic per-user state is added
+    separately by the agent's @instructions hook."""
+    return SYSTEM_PROMPT + "\n\n" + render_static_profile()
+
+
 def create_agent(model: Any) -> Agent[AgentDeps, str]:
     """Create a Conduut Pydantic AI agent with all n8n tools registered."""
 
@@ -190,12 +199,17 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         model,
         deps_type=AgentDeps,
         output_type=str,
-        instructions=SYSTEM_PROMPT,
+        instructions=base_instructions(),
         # Headroom: validation ModelRetry + the bounded sandbox test ModelRetry
         # (real bound: workflow_test_attempts, max 2) must not trip this limit.
         retries=4,
         tool_timeout=60.0,
     )
+
+    @agent.instructions
+    def _platform_state_instructions(ctx: RunContext[AgentDeps]) -> str:
+        """Inject the per-conversation user state (best-effort, may be empty)."""
+        return platform_state_instructions(ctx.deps.platform_state)
 
     @agent.tool
     async def search_n8n_nodes(
