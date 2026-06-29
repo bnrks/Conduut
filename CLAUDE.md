@@ -98,6 +98,14 @@ conduut/
 
 ## Geliştirme durumu (son güncelleme: 2026-06-29)
 
+### Son oturum özeti (2026-06-29b) — Workspace refactor Faz 1: root dizin temizliği
+
+**Bağlam:** Kullanıcı workspace genelinde **dışardan-içe** refactor + temizlik kararı aldı; root dizinden başlandı. Root analiz edildi; binary kalemler için strateji = **git geçmişine dokunmadan takipten çıkar** (history rewrite YOK), bu tur yalnız dosya/dizin temizliği + `.gitignore`; agent-yönerge konsolidasyonu bilinçli ertelendi.
+
+**Yapılanlar:** `conduut1..5.png` (~24 MB) → `git rm --cached` + `brand/concepts/`'e taşındı; `workflow-batch-run-test.xlsx` (hiçbir otomatik test kullanmıyor) → `apps/agent/tests/fixtures/`'e taşındı; `conduut-claude-code-config.tar.gz` → takipten çıktı, kökte bırakıldı. `.gitignore`'a: `.ruff_cache/`, `brand/concepts/`, `*.xlsx`, `*.tar.gz`. 7 binary takipten çıktı (staged), **commit EDİLMEDİ** (kullanıcı onayına bırakıldı).
+
+**Ertelenenler (sonraki turlar):** agent-yönerge konsolidasyonu (CLAUDE.md 544 satır şişkinlik, çift `copilot-instructions.md`, dağınık agent tanımları); riskli `.gitignore` `*.md` blanket kuralı (agent-doc turuyla); boş `README.md`; `apps/agent/apps`+`apps/web/apps` boş iç-içe dizinler (apps/ turunda); `docs/superpowers/` tracking tutarsızlığı. (bkz. [[workspace-refactor]])
+
 ### Son oturum özeti (2026-06-29) — Agent platform öz-farkındalığı
 
 **Bağlam:** Kullanıcı agent'ın "platform hakkında ne kadar öz-farkındalığı var" sorusunu sordu; ölçtük (~%53 "kısmi": kendi tool'larını iyi biliyor ama platform-yüzeyi (batch/dashboard), sınırlar ve kullanıcı-durumu zayıftı). Statik prompt + tool docstring dışında agent'a hiç dinamik bağlam enjekte edilmiyordu. Kullanıcı "yüksek öz-farkındalık ekle" dedi (artık yeni özellik değil, profesyonel SaaS deneyimi yönü).

@@ -21,6 +21,8 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
 
 - [[project-overview]] - urun fikri, hedef kitle, deger onerisi.
 - [[current-state]] - mevcut repo gercegi, calisan ve eksik kisimlar.
+- [[workspace-refactor]] - disardan-ice workspace refactor/temizlik turlari ve
+  ertelenen kalemler (Faz 1: root dizin temizligi).
 - [[system-architecture]] - MVP mimarisi ve uzun vadeli hedef mimari.
 - [[web-app]] - Next.js frontend, route yapisi, auth ve BFF API route'lari.
 - [[agent-service]] - FastAPI agent, SSE chat flow, LiteLLM ve Firestore.

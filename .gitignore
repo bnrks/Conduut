@@ -37,3 +37,16 @@ knowledge-database/.trash/
 knowledge-database/CLAUDE.md
 
 .env
+
+# --- Refactor cleanup (2026-06-29): caches & binaries out of git ---
+# Ruff cache
+.ruff_cache/
+
+# Brand concept images (large AI-generated mockups, local-only)
+brand/concepts/
+
+# Excel / sample data files (manual test inputs)
+*.xlsx
+
+# Local config backups
+*.tar.gz
