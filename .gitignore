@@ -13,6 +13,9 @@ dist/
 
 # Superpowers brainstorm mockups (local)
 .superpowers/
+# Superpowers spec/plan çalışma dosyaları yerel kalır (eski *.md kuralının
+# kapsadığı niyet; 6 dosya kural öncesi commit'lenmiş, tracking temizliği ayrı iş)
+docs/superpowers/
 
 # Python
 __pycache__/
@@ -21,19 +24,14 @@ __pycache__/
 pytest-cache-files-*/
 *.pyc
 
-# Copilot
-copilot-instructions.md
+# Secrets / service accounts
 apps/agent/serviceAccount.json
 
 # Obsidian local workspace state
 knowledge-database/.obsidian/workspace.json
 knowledge-database/.obsidian/workspaces.json
 knowledge-database/.trash/
-*.md
-
-# Knowledge database notlarını izle (yukarıdaki *.md kuralından muaf tut)
-!knowledge-database/**/*.md
-# ...ama claude-mem'in otomatik ürettiği boş stub'ı izleme
+# claude-mem'in otomatik ürettiği boş stub'ı izleme (markdown artık genelde izlenir)
 knowledge-database/CLAUDE.md
 
 .env

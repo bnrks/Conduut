@@ -22,22 +22,42 @@ Yapilanlar:
   Kullanici config yedegi; silinmedi.
 - `.gitignore`'a eklendi: `.ruff_cache/`, `brand/concepts/`, `*.xlsx`, `*.tar.gz`.
 
-Sonuc: kok dizinden 7 binary takipten cikti (commit edilince repo yeni commit'lerde
-temiz; geçmis hala tasir — kullanici tercihi). Degisiklikler staged, **commit
-EDILMEDI** (kullanici onayina birakildi).
+Sonuc: kok dizinden 7 binary takipten cikti. Yerel main'e commit + ff-merge
+edildi (`0d6f973`); push EDILMEDI.
+
+## Faz 2 — Agent-yonerge konsolidasyonu (2026-06-29) ✅
+
+Karar: **AGENTS.md tek kanonik kaynak + CLAUDE.md ince pointer + history arsive**;
+ayrica cift/stale dosyalari sil ve `.gitignore *.md` blanket kuralini duzelt.
+
+Yapilanlar:
+- **AGENTS.md** (root) tum coding agent'lar icin kanonik rehbere donustu
+  (Codex'e ozel cerceve genellestirildi). Stale gercekler duzeltildi: silinen
+  `.github` referansi, BYO LLM/providers/favorites (ADR-0011 ile kaldirilmisti),
+  eklenen `fetch_credentials.py` operasyonel adimi. **Artik git'te izleniyor**
+  (`*.md` kurali kalkinca).
+- **CLAUDE.md** 553 satir → ~55 satir **ince pointer**: AGENTS.md +
+  knowledge-database'e yonlendirir, zorunlu hafiza kurali + hizli dogrulama
+  komutlari. Tam eski icerik arsivde:
+  `knowledge-database/99-archive/claude-md-snapshot-2026-06-29.md` (552 satir,
+  hicbir sey kaybolmadi). CLAUDE.md artik "son oturum ozeti" gunlugu tutmaz.
+- **Silindi:** root `copilot-instructions.md` (stale, Copilot terk edildi;
+  `.github/copilot-instructions.md`'yi kullanici zaten silmisti) ve `.agents/skills/`
+  (`.claude/skills/`'in 6/6 birebir kopyasi). Her ikisi untracked'ti.
+- **`.gitignore`:** riskli `*.md` blanket + `!knowledge-database/**` negasyonu +
+  `copilot-instructions.md` kurali kaldirildi; `serviceAccount.json`, Obsidian
+  workspace ve claude-mem stub ignore'lari korundu.
+- Meta-haritalar guncellendi: `05-agents/agent-instructions.md` (yeniden yazildi),
+  vault `knowledge-database/AGENTS.md`.
+
+Not (ertelenen mikro-is): eski "Onemli dosyalar" dosya-haritasi (CLAUDE.md'de
+~45 satir) simdilik yalniz arsivde; istenirse [[agent-service]] notuna canli
+referans olarak tasinabilir.
 
 ## Ertelenen kalemler (sonraki turlar)
 
-- **Agent-yonerge konsolidasyonu** (ayri tur): `CLAUDE.md` 544 satir / 72 KB
-  sismis (cogu eski oturum ozeti, her oturum context'e yukleniyor); kok
-  `copilot-instructions.md` ile `.github/copilot-instructions.md` **iki FARKLI**
-  untracked kopya; agent tanimlari uc yerde dagilmis (`.claude/agents/*.md`,
-  `.codex/agents/*.toml`, `.agents/skills/`). Tek dogruluk kaynagi + harita gerek.
-- **`.gitignore` satir 32 `*.md` blanket kurali** (riskli): knowledge-database
-  haric TUM markdown'i yok sayiyor → `AGENTS.md`/copilot dosyalari izlenmiyor,
-  gelecekte eklenecek herhangi bir `.md` (docs/ADR) **sessizce kaybolur**. Bu
-  kurali degistirmek dogrudan agent-yonerge dosyalarinin tracking'ini etkiledigi
-  icin agent-doc turuyla birlikte ele alinacak.
+- ~~Agent-yonerge konsolidasyonu~~ ✅ Faz 2'de yapildi (yukari bak).
+- ~~`.gitignore` `*.md` blanket kurali~~ ✅ Faz 2'de kaldirildi.
 - **`README.md` bos** (sadece `# Conduut`) — icerik turu, temizlik degil; ertelendi.
 - **Ic-katman bos dizinler**: `apps/agent/apps/` ve `apps/web/apps/` bos ic-ice
   dizinler (CLAUDE.md eksikler #13) — `apps/` turunda silinecek.

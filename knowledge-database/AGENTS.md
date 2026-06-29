@@ -16,5 +16,5 @@ Bu klasor Conduut projesinin Obsidian tabanli kalici hafizasidir.
 
 ## Dikkat
 
-Root `AGENTS.md` Codex'in ana repo rehberidir. Bu dosya sadece vault icinde
-calisirken local yonlendirme saglar.
+Root `AGENTS.md` **tum coding agent'lar** (Claude Code, Codex, ...) icin kanonik
+repo rehberidir. Bu dosya sadece vault icinde calisirken local yonlendirme saglar.
