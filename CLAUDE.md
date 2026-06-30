@@ -25,8 +25,8 @@ Conduut, kullanıcıların AI agent ile sohbet ederek n8n workflow'ları oluştu
 
 Her önemli değişiklikten (feature, bug fix, mimari karar, test sonucu, config) sonra
 ilgili `knowledge-database` notunu **aynı görevde** güncelle. Gerekirse yeni not aç ve
-Obsidian wikilink (`[[not-adı]]`) ile `index.md`'ye bağla. Yeni ADR'leri mevcut
-yanlış-yazımlı `03-desicions/` klasörüne ekle (klasörü yeniden adlandırma).
+Obsidian wikilink (`[[not-adı]]`) ile `index.md`'ye bağla. Yeni ADR'leri
+`03-decisions/` klasörüne ekle.
 Notlar Türkçe öncelikli, teknik tanımlayıcılar İngilizce.
 
 **Bu dosya artık oturum-oturum "son oturum özeti" günlüğü TUTMAZ.** O kronoloji ve
@@ -50,7 +50,7 @@ tekrar şişirme.
 ## Referans dokümanlar
 
 - **`AGENTS.md`** — kanonik agent rehberi (önce bunu oku).
-- `knowledge-database/` — kalıcı proje hafızası: ADR'ler (`03-desicions/`),
+- `knowledge-database/` — kalıcı proje hafızası: ADR'ler (`03-decisions/`),
   feature notları, mimari, mevcut durum. Merkez: `knowledge-database/index.md`.
 - `PROJECT.md` — uzun vadeli ürün/mimari vizyon (DB şeması, akışlar, maliyet).
 - `BRAND.md` — renk paleti, font, logo.

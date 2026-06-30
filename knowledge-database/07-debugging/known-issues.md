@@ -502,7 +502,8 @@ agent-kurdugu AI workflow'lari elle credential baglamadan calisiyor.
 gelince broker'a evrilecek (kullanicinin kendi `ProviderConnection` key'ini kendi
 container'ina enjekte). Secenekler: (A) credential broker'i API-key'lere genislet,
 (B) app provider key'ini n8n'e enjekte et, (C) n8n OpenAI node yerine Conduut LLM
-katmani. Bkz. [[issue-backlog]], [[per-user-container-credentials]] (memory).
+katmani. Bkz. [[issue-backlog]]; per-user container + credential saklama Claude
+memory'sinde (`per-user-container-credentials`).
 
 ## Mock Dashboard Areas
 

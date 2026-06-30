@@ -125,8 +125,8 @@ memory across sessions:
 - Start at `knowledge-database/index.md`.
 - Use `index.md` as the central graph hub, then navigate to the task-relevant
   note before editing.
-- Add new decisions under `03-desicions` using the existing misspelled folder
-  name; do not rename the folder without a dedicated migration.
+- Add new decisions under `03-decisions` (renamed from the old misspelled
+  `03-desicions` in the 2026-06-30 knowledge-database cleanup).
 - Keep notes Turkish-first, while preserving technical identifiers in English.
 - Prefer Obsidian wikilinks such as `[[system-architecture]]` to keep the graph
   connected.

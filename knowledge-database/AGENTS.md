@@ -11,8 +11,8 @@ Bu klasor Conduut projesinin Obsidian tabanli kalici hafizasidir.
   guncelle.
 - Teknik isimleri oldugu gibi koru; aciklama dili Turkish-first olabilir.
 - Obsidian graph icin mevcut not adlarina wikilink kullan.
-- `03-desicions` klasor adini simdilik oldugu gibi kullan; typo'yu ayri bir
-  temizlik task'i olmadan rename etme.
+- ADR'ler `03-decisions/` altinda (2026-06-30 temizliginde yanlis-yazimli
+  `03-desicions`'dan rename edildi).
 
 ## Dikkat
 
