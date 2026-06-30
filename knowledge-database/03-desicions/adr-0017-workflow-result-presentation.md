@@ -107,6 +107,3 @@ TDD, subagent-driven (7 task, her biri spec+quality review; haiku/sonnet tier-se
 final whole-branch review opus). Final review en yüksek-riskli seam'i (resources merge
 / test_status iki-yönlü koruma) doğru buldu; tek Important (preview-truncation) yakalandı
 ve düzeltildi.
-
-Spec: `docs/superpowers/specs/2026-06-28-workflow-result-presentation-design.md`.
-Plan: `docs/superpowers/plans/2026-06-28-workflow-result-presentation.md`.

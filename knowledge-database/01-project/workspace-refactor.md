@@ -105,6 +105,22 @@ Windows izin-kilidi yuzunden silinemedi (gitignored, zararsiz). Subagent-driven:
 B1 + C1 backend subagent'lara devredildi (kesin spec + pytest-gate), sonuclar
 re-export/isim-diff ile **bagimsiz dogrulandi** + her faz yerel pytest ile teyit.
 
+## Faz 4 — docs/ turu (2026-06-30) ✅
+
+Karar: `docs/superpowers/` spec+plan dosyalari **tamamlanmis calisma taslagi**;
+kalici karar zaten ADR'lerde → git'e alinmaz (kullanici onayi). docs/ disinda
+baska icerik yok.
+
+Yapilanlar:
+- Kural-oncesi commit'lenmis **6 spec/plan dosyasi takipten cikarildi**
+  (`git rm --cached`); `docs/superpowers/` Faz 2 ignore kuralinda kaldi → 20
+  dosyanin tamami uniform yerel. Yerel kopyalar diskte korundu.
+- **Dangling ADR/not linkleri sadelestirildi**: adr-0016, adr-0017, [[web-app]],
+  [[agent-platform-self-awareness]], [[model-cost-research-2026-06]]'daki
+  `Spec:/Plan: docs/...` pointer'lari kaldirildi (artik git'te olmayan dosyalara
+  isaret ediyorlardi; karar ADR govdesinde duruyor). 99-archive snapshot'ina
+  dokunulmadi (donmus tarihsel kayit).
+
 ## Ertelenen kalemler (sonraki turlar)
 
 - ~~Agent-yonerge konsolidasyonu~~ ✅ Faz 2'de yapildi (yukari bak).
@@ -117,7 +133,6 @@ re-export/isim-diff ile **bagimsiz dogrulandi** + her faz yerel pytest ile teyit
   + somut tool/persistence listesi duzeltildi, tam reconcile ayri is.
 - **Ic-katman bos dizinler**: `apps/agent/apps/` **zaten yok** (Faz 3'te dogrulandi);
   `apps/web/apps/` web turunda kontrol edilecek (CLAUDE.md eksikler #13).
-- **`docs/superpowers/` tracking tutarsizligi**: 6 spec/plan git'te izleniyor ama
-  bazi CLAUDE.md notlari bunlari "gitignored/local" sayiyor — netlestirilecek.
+- ~~`docs/superpowers/` tracking tutarsizligi~~ ✅ Faz 4'te cozuldu (uniform yerel).
 
 Ilgili: [[current-state]], [[known-issues]], [[agent-instructions]].

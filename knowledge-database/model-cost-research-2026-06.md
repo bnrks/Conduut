@@ -228,7 +228,7 @@ guard** kullanıyor (`reliability_guard.py` + `runner._run_buffered_with_retry`)
 
 **UX değişimi:** DeepSeek MEDIUM/HARD run'larında artık build sırasında "çalışıyor"
 (keep-alive) görünür, sonra cevap toptan replay edilir (stream hissiyle). **319 passed,
-ruff temiz.** Spec/plan: `docs/superpowers/{specs,plans}/2026-06-25-deepseek-reliability-guard*`.
+ruff temiz.**
 
 **Canlı doğrulama (2026-06-26, conv b67f6d20):** #5 IF/branch (eski #1244 kaosunun senaryosu)
 tertemiz geçti — her iki turda `reliability_guard_clean attempt=1`, garbage yok, false-positive

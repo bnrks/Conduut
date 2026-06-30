@@ -77,6 +77,3 @@ Backend 366 passed (5 on-mevcut Windows-tmp), ruff temiz; frontend tsc 0 / lint 
 Final whole-branch review (opus) iki Critical seam-bug yakaladi (C1/C2) — task
 review'larin yapisal olarak goremedigi; ikisi de duzeltildi. Canli: interleaved
 balonlar + aktivite satirlari, DeepSeek artik yapistirmıyor, leak yok.
-
-Spec: `docs/superpowers/specs/2026-06-27-segmented-agent-messages-design.md`.
-Plan: `docs/superpowers/plans/2026-06-27-segmented-agent-messages.md`.

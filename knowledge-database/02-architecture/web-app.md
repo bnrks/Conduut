@@ -227,8 +227,6 @@ Mekanizma:
 - Marketing/auth zaten `md:`/`lg:` responsive sinifli; body tabani kalkinca
   devreye girer.
 
-Spec: `docs/superpowers/specs/2026-06-28-responsive-layout-design.md`.
-
 ## UI State
 
 - `chat-store.ts`: conversation sidebar state.

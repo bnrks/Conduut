@@ -46,9 +46,6 @@ Kalan 2 Minor kozmetik (`tag` boş host+tip → `'label' []`, credential "none"
 satırı yok) — bloklamıyor. **Yerel main'e merge edildi (`4f7b1ef`); push
 edilmedi (kullanıcı: yerel kalsın).**
 
-Tasarım/plan: `docs/superpowers/specs/2026-06-29-agent-platform-self-awareness-design.md`,
-`docs/superpowers/plans/2026-06-29-agent-platform-self-awareness.md`.
-
 İlgili: [[agent-service]], [[adr-0006-platform-capability-layer]],
 [[adr-0007-batch-workflow-runs]], [[adr-0011-conduut-managed-tiered-models]].
 
