@@ -1,4 +1,4 @@
-from .models import NodeInfo, WorkflowTemplate
+from .models import CredentialTypeInfo, NodeInfo, WorkflowTemplate
 from .registry import NodeRegistry
 
-__all__ = ["NodeInfo", "NodeRegistry", "WorkflowTemplate"]
+__all__ = ["CredentialTypeInfo", "NodeInfo", "NodeRegistry", "WorkflowTemplate"]

@@ -34,11 +34,6 @@ class NodeRegistry:
         self._nodes: list[NodeInfo] = []
         self._templates: list[WorkflowTemplate] = []
         self._credentials: list[CredentialTypeInfo] = []
-        self._loaded: bool = False
-
-    @property
-    def is_loaded(self) -> bool:
-        return self._loaded
 
     @property
     def node_count(self) -> int:
@@ -119,24 +114,8 @@ class NodeRegistry:
         else:
             log.warning("No credentials loaded — credentials.json not found")
 
-        self._loaded = True
-
-    def load_from_files(
-        self,
-        nodes_path: str | Path,
-        templates_path: str | Path | None = None,
-        credentials_path: str | Path | None = None,
-    ) -> None:
-        """Daha önce kaydedilmiş dosyalardan yükler (test / offline kullanım)."""
-        self._nodes = load_nodes_from_file(nodes_path)
-        if templates_path:
-            self._templates = load_templates_from_file(templates_path)
-        if credentials_path:
-            self._credentials = load_credentials_from_file(credentials_path)
-        self._loaded = True
-
     # ------------------------------------------------------------------
-    # Search API (tools.py tarafından çağrılır)
+    # Search API (agent tools paketi tarafından çağrılır)
     # ------------------------------------------------------------------
 
     def search_nodes(self, query: str, limit: int = 20) -> list[dict]:

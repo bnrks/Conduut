@@ -156,6 +156,23 @@ tamamdi — bitirdim/dogruladim):
 Not: `.claude/settings.local.json`'daki eski `03-desicions/**` Read-permission
 glob'u local/gitignored — dokunulmadi (en fazla bir kez yeniden izin sorar).
 
+## Faz 6 — packages/ turu (2026-07-01) ✅
+
+Kapsam: `packages/n8n-registry` (tek paket; planlanan `packages/shared` yok).
+Paket zaten saglikli/iyi-yapili (1331 satir, 9 test yesil) → cleanup minor:
+- **Clutter:** `.ruff_cache` + stale `src/n8n_registry.egg-info` silindi (ignored;
+  `pytest-cache-files-*` Windows izin-kilitli, birakildi).
+- **Olu kod (~18 satir):** `NodeRegistry.is_loaded` property + `_loaded` field +
+  `load_from_files` metodu kaldirildi. Hicbir cagiran yoktu (agent
+  `initialize_from_n8n` kullaniyor; `load_from_files` docstring'i "test/offline"
+  diyordu ama testler de kullanmiyordu). Monorepo-ici paket → kullanilmayan
+  public API = olu.
+- **Tutarlilik:** `CredentialTypeInfo` `__init__.__all__`'a eklendi (agent zaten
+  `n8n_registry.models`'den import ediyordu); stale `tools.py` yorumu → `tools paketi`.
+- Not: `data/credentials.json` gitignore boslugu zaten Faz 3'te kapatilmisti.
+
+Dogrulama: n8n-registry 9 passed, agent 381 passed (bagimli suite), ruff temiz.
+
 ## Ertelenen kalemler (sonraki turlar)
 
 - ~~Agent-yonerge konsolidasyonu~~ ✅ Faz 2'de yapildi (yukari bak).
