@@ -267,7 +267,7 @@ function MessageBase({ message, hideInputRequests = false, isStreaming = false }
                 className={cn(
                   "px-4 py-2.5 text-[15px] leading-relaxed break-words",
                   isUser
-                    ? "bg-conduut-50 text-foreground rounded-2xl rounded-br-md whitespace-pre-wrap"
+                    ? "bg-conduut-50 text-conduut-900 rounded-2xl rounded-br-md whitespace-pre-wrap"
                     : "bg-card border border-border text-foreground rounded-2xl rounded-bl-md"
                 )}
               >
