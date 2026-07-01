@@ -261,7 +261,9 @@ class WorkflowBatchRowResultData(BaseModel):
     executionId: str | None = None
     summary: str | None = None
     error: str | None = None
+    outputs: list[dict[str, Any]] = Field(default_factory=list)
     artifacts: list[ArtifactPreviewData] = Field(default_factory=list)
+    presentation: WorkflowResultPresentation | None = None
 
 
 class WorkflowBatchRunResultData(BaseModel):

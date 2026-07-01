@@ -55,7 +55,11 @@ def _batch_row_payload(row: WorkflowBatchRowResultData) -> dict[str, Any]:
         "execution_id": row.executionId,
         "summary": row.summary,
         "error": row.error,
+        "outputs": row.outputs,
         "artifacts": [artifact.model_dump(exclude_none=True) for artifact in row.artifacts],
+        "presentation": (
+            row.presentation.model_dump(exclude_none=True) if row.presentation else None
+        ),
     }
 
 
