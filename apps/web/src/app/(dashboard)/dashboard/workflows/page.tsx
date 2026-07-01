@@ -6,6 +6,7 @@ import Link from "next/link";
 import {
   Activity,
   CheckCircle2,
+  CheckSquare,
   ChevronRight,
   Plus,
   Search,
@@ -23,8 +24,10 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { WorkflowCard } from "@/components/dashboard/workflow-card";
+import { BulkActionBar } from "@/components/dashboard/bulk-action-bar";
 import { WorkflowRunningOverlay } from "@/components/dashboard/workflow-running-overlay";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { useMultiSelect } from "@/hooks/use-multi-select";
 import { useAuth } from "@/hooks/use-auth";
 import type { ArtifactPreviewData } from "@/types/artifact";
 import type { Workflow, WorkflowInputField, WorkflowResultPresentation, WorkflowStatus } from "@/types/workflow";
@@ -401,6 +404,8 @@ function RunOutputsDetails({ outputs }: { outputs: WorkflowRunOutput[] }) {
 export default function WorkflowsPage() {
   const { user, loading: authLoading } = useAuth();
   const confirm = useConfirm();
+  const selection = useMultiSelect();
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -818,35 +823,55 @@ export default function WorkflowsPage() {
     }
   };
 
-  const handleDelete = async (workflow: Workflow) => {
-    if (!user) return;
+  const handleBulkDelete = async (targets: Workflow[]) => {
+    if (!user || targets.length === 0) return;
+    const single = targets.length === 1;
     const confirmed = await confirm({
-      title: "Delete workflow?",
-      description: `"${workflow.name}" will be permanently removed.`,
+      title: single ? "Delete workflow?" : "Delete workflows?",
+      description: single
+        ? `"${targets[0].name}" will be permanently removed.`
+        : `${targets.length} workflows will be permanently removed.`,
       confirmLabel: "Delete",
       cancelLabel: "Cancel",
       tone: "danger",
     });
     if (!confirmed) return;
 
+    const ids = new Set(targets.map((wf) => wf.id));
     // Optimistic update
-    setWorkflows((prev) => prev.filter((wf) => wf.id !== workflow.id));
+    setWorkflows((prev) => prev.filter((wf) => !ids.has(wf.id)));
+    setBulkDeleting(true);
     try {
       const token = await user.getIdToken();
-      const response = await fetch(
-        `/api/workflows/${encodeURIComponent(workflow.id)}`,
-        {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${token}` },
-        }
+      const results = await Promise.allSettled(
+        targets.map((wf) =>
+          fetch(`/api/workflows/${encodeURIComponent(wf.id)}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${token}` },
+          }).then((response) => {
+            if (!response.ok) throw new Error("Delete failed");
+          })
+        )
       );
-      if (!response.ok) throw new Error("Delete failed");
-      toast.success(`"${workflow.name}" deleted.`);
+      const failures = results.filter((result) => result.status === "rejected").length;
+      if (failures > 0) {
+        toast.error(`${targets.length - failures} deleted, ${failures} failed.`);
+        void fetchWorkflows(); // resync truth from server
+      } else {
+        toast.success(
+          single ? `"${targets[0].name}" deleted.` : `${targets.length} workflows deleted.`
+        );
+      }
     } catch {
-      toast.error("Could not delete workflow.");
+      toast.error("Could not delete workflows.");
       void fetchWorkflows(); // revert
+    } finally {
+      setBulkDeleting(false);
+      selection.exit();
     }
   };
+
+  const handleDelete = (workflow: Workflow) => handleBulkDelete([workflow]);
 
   const submitWorkflowRun = async (workflow: Workflow, input: Record<string, string>) => {
     if (!user) return;
@@ -1113,7 +1138,35 @@ export default function WorkflowsPage() {
             </button>
           ))}
         </div>
+        <div className="ml-auto">
+          <Button
+            type="button"
+            variant={selection.selecting ? "default" : "outline"}
+            size="sm"
+            onClick={() => (selection.selecting ? selection.exit() : selection.enter())}
+            disabled={filtered.length === 0}
+            className="gap-1.5"
+          >
+            <CheckSquare className="h-4 w-4" />
+            {selection.selecting ? "Done" : "Select"}
+          </Button>
+        </div>
       </div>
+
+      {selection.selecting && (
+        <BulkActionBar
+          count={selection.selectedCount}
+          total={filtered.length}
+          allSelected={filtered.length > 0 && selection.selectedCount === filtered.length}
+          busy={bulkDeleting}
+          onSelectAll={() => selection.selectAll(filtered.map((wf) => wf.id))}
+          onClear={selection.clear}
+          onCancel={selection.exit}
+          onDelete={() =>
+            void handleBulkDelete(filtered.filter((wf) => selection.isSelected(wf.id)))
+          }
+        />
+      )}
 
       {/* Content */}
       {loading ? (
@@ -1127,6 +1180,9 @@ export default function WorkflowsPage() {
               key={wf.id}
               workflow={wf}
               isRunning={runningWorkflowId === wf.id}
+              selectable={selection.selecting}
+              selected={selection.isSelected(wf.id)}
+              onToggleSelect={(w) => selection.toggle(w.id)}
               onRun={(w) => handleRun(w)}
               onToggle={(w) => void handleToggle(w)}
               onDelete={(w) => void handleDelete(w)}
