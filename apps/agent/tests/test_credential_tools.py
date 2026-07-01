@@ -1,9 +1,9 @@
 """Tests for the credential agent tool payloads + readiness emit wiring."""
 
-import asyncio
 from dataclasses import dataclass
 
-from src.agent.schemas import AgentDeps
+import pytest
+
 from src.agent.tools import credentials as cred_tools
 from src.agent.tools import readiness
 
@@ -23,8 +23,9 @@ class _Cred:
     n8n_credential_name: str = "Cred"
 
 
-def _deps():
-    return AgentDeps(user_id="u1", conversation_id="c1", event_queue=asyncio.Queue())
+@pytest.fixture
+def _deps(make_agent_deps):
+    return make_agent_deps(user_id="u1", conversation_id="c1")
 
 
 class _Ctx:
@@ -32,7 +33,7 @@ class _Ctx:
         self.deps = deps
 
 
-async def test_list_credentials_payload_flags_host_match(monkeypatch):
+async def test_list_credentials_payload_flags_host_match(monkeypatch, _deps):
     async def fake_list(_uid):
         return [
             _Cred("c1", "Stripe", "httpHeaderAuth", "api.stripe.com"),
@@ -40,14 +41,14 @@ async def test_list_credentials_payload_flags_host_match(monkeypatch):
         ]
 
     monkeypatch.setattr(cred_tools.store, "list_custom_credentials", fake_list)
-    res = await cred_tools.list_credentials_payload(_deps(), url="https://api.stripe.com/v1")
+    res = await cred_tools.list_credentials_payload(_deps, url="https://api.stripe.com/v1")
     by_id = {c["id"]: c for c in res["credentials"]}
     assert by_id["c1"]["matches_host"] is True
     assert by_id["c2"]["matches_host"] is False
     assert "n8n_credential_id" not in by_id["c1"]
 
 
-async def test_attach_credential_payload_attaches_with_generic_auth(monkeypatch):
+async def test_attach_credential_payload_attaches_with_generic_auth(monkeypatch, _deps):
     calls: dict = {}
 
     async def fake_get(_uid, _cid):
@@ -61,12 +62,12 @@ async def test_attach_credential_payload_attaches_with_generic_auth(monkeypatch)
     monkeypatch.setattr(cred_tools.store, "get_custom_credential", fake_get)
     monkeypatch.setattr(cred_tools.n8n_client, "attach_credential_to_workflow", fake_attach)
 
-    res = await cred_tools.attach_credential_payload(_deps(), "wf1", "HTTP Request", "c1")
+    res = await cred_tools.attach_credential_payload(_deps, "wf1", "HTTP Request", "c1")
     assert res["success"] is True
     assert calls["kwargs"]["generic_auth_type"] == "httpHeaderAuth"
 
 
-async def test_attach_credential_payload_unknown_id(monkeypatch):
+async def test_attach_credential_payload_unknown_id(monkeypatch, _deps):
     called = {"attach": False}
 
     async def fake_get(_uid, _cid):
@@ -78,12 +79,12 @@ async def test_attach_credential_payload_unknown_id(monkeypatch):
     monkeypatch.setattr(cred_tools.store, "get_custom_credential", fake_get)
     monkeypatch.setattr(cred_tools.n8n_client, "attach_credential_to_workflow", fake_attach)
 
-    res = await cred_tools.attach_credential_payload(_deps(), "wf1", "n", "missing")
+    res = await cred_tools.attach_credential_payload(_deps, "wf1", "n", "missing")
     assert "error" in res
     assert called["attach"] is False
 
 
-async def test_emit_missing_credentials_returns_reuse_candidates(monkeypatch):
+async def test_emit_missing_credentials_returns_reuse_candidates(monkeypatch, _deps):
     monkeypatch.setattr(readiness.registry, "get_node_schema", lambda _t: _HTTP_SCHEMA)
 
     async def fake_list(_uid):
@@ -101,14 +102,13 @@ async def test_emit_missing_credentials_returns_reuse_candidates(monkeypatch):
         },
     }
     workflow = {"id": "wf1", "name": "WF", "nodes": [node]}
-    deps = _deps()
-    res = await readiness._emit_missing_credentials(_Ctx(deps), workflow)
+    res = await readiness._emit_missing_credentials(_Ctx(_deps), workflow)
     assert res["missing_count"] == 0
     assert len(res["reuse_candidates"]) == 1
-    assert deps.awaiting_user_input is False  # suggestions never block on their own
+    assert _deps.awaiting_user_input is False  # suggestions never block on their own
 
 
-async def test_list_credentials_payload_flags_type_match(monkeypatch):
+async def test_list_credentials_payload_flags_type_match(monkeypatch, _deps):
     from src import store
 
     async def fake_list(user_id):
@@ -128,11 +128,11 @@ async def test_list_credentials_payload_flags_type_match(monkeypatch):
         ]
 
     monkeypatch.setattr(cred_tools.store, "list_custom_credentials", fake_list)
-    result = await cred_tools.list_credentials_payload(_deps(), credential_type="openAiApi")
+    result = await cred_tools.list_credentials_payload(_deps, credential_type="openAiApi")
     assert result["credentials"][0]["matches_type"] is True
 
 
-async def test_add_service_credential_known_type_returns_card(monkeypatch):
+async def test_add_service_credential_known_type_returns_card(monkeypatch, _deps):
     from n8n_registry.models import CredentialTypeInfo
 
     monkeypatch.setattr(
@@ -155,7 +155,7 @@ async def test_add_service_credential_known_type_returns_card(monkeypatch):
         ],
     )
     monkeypatch.setattr(cred_tools.registry, "get_credential_definition", lambda t: definition)
-    result = await cred_tools.add_service_credential_payload(_deps(), "Anthropic")
+    result = await cred_tools.add_service_credential_payload(_deps, "Anthropic")
     assert result["status"] == "card"
     assert result["credentialType"] == "anthropicApi"
     assert result["card"].data.matchKind == "type"
@@ -163,13 +163,13 @@ async def test_add_service_credential_known_type_returns_card(monkeypatch):
     assert result["card"].data.fields[0].name == "apiKey"
 
 
-async def test_add_service_credential_unknown_returns_not_found(monkeypatch):
+async def test_add_service_credential_unknown_returns_not_found(monkeypatch, _deps):
     monkeypatch.setattr(cred_tools.registry, "list_credential_catalog", lambda q=None: [])
-    result = await cred_tools.add_service_credential_payload(_deps(), "nonexistent-svc")
+    result = await cred_tools.add_service_credential_payload(_deps, "nonexistent-svc")
     assert result["status"] == "not_found"
 
 
-async def test_add_service_credential_oauth_rejected(monkeypatch):
+async def test_add_service_credential_oauth_rejected(monkeypatch, _deps):
     from n8n_registry.models import CredentialTypeInfo
 
     monkeypatch.setattr(
@@ -182,5 +182,5 @@ async def test_add_service_credential_oauth_rejected(monkeypatch):
         "get_credential_definition",
         lambda t: CredentialTypeInfo(name="slackOAuth2Api", display_name="Slack", is_oauth=True),
     )
-    result = await cred_tools.add_service_credential_payload(_deps(), "Slack")
+    result = await cred_tools.add_service_credential_payload(_deps, "Slack")
     assert result["status"] == "not_found"

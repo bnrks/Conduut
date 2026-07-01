@@ -179,8 +179,12 @@ Dogrulama: n8n-registry 9 passed, agent 381 passed (bagimli suite), ruff temiz.
 - ~~`.gitignore` `*.md` blanket kurali~~ ✅ Faz 2'de kaldirildi.
 - ~~`README.md` bos~~ ✅ Yazildi (ozlu Ingilizce giris noktasi: ne oldugu +
   monorepo yapisi + setup/verification + kanonik dokumanlara linkler; tekrar etmez).
-- **Phase C2 (test-helper dedup)** — Faz 3'te bilincli ertelendi (yukari bak);
-  dusuk-getiri/yuksek-churn, gelecek tur icin acik.
+- **Phase C2 (test-helper dedup)** — kismen yapildi (2026-07-01): `make_agent_deps`
+  factory fixture (conftest) eklendi ve 19 kirilgan `AgentDeps(...)` *positional*
+  kurulumu migrate edildi (alan-sirasi degisimine dayanikli hale geldi). Geri
+  kalan bilincli **birakildi** (62× n8n/store monkeypatch, 22× auth stub, 3 SSE
+  parser): bunlar idiomatik/amaca-uygun per-test kurulum — test-yerel tekrar prod
+  tekrarindan farklidir, zorla DRY testleri okunmaz/kirilgan yapardi.
 - ~~`agent-service.md` derin reconcile~~ ✅ Faz 5 (KB-3)'te tamamlandi.
 - **Ic-katman bos dizinler**: `apps/agent/apps/` **zaten yok** (Faz 3'te dogrulandi);
   `apps/web/apps/` web turunda kontrol edilecek (CLAUDE.md eksikler #13).

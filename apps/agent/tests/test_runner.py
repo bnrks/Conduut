@@ -1,4 +1,3 @@
-import asyncio
 import json
 
 import pytest
@@ -15,7 +14,6 @@ from src.agent import runner
 from src.agent.model_registry import Tier
 from src.agent.platform_state import ConnectionSummary, UserPlatformState
 from src.agent.schemas import (
-    AgentDeps,
     ArtifactPreviewAttachment,
     ArtifactPreviewData,
     ArtifactPreviewTable,
@@ -158,8 +156,8 @@ def _stub_platform_state(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_agent_deps_deduplicates_identical_attachments():
-    deps = AgentDeps(user_id="user_1", conversation_id="conv_1", event_queue=asyncio.Queue())
+async def test_agent_deps_deduplicates_identical_attachments(make_agent_deps):
+    deps = make_agent_deps()
     attachment = WorkflowPreviewAttachment(
         data=WorkflowPreviewData(
             id="wf_1",
@@ -176,8 +174,8 @@ async def test_agent_deps_deduplicates_identical_attachments():
     assert deps.event_queue.qsize() == 1
 
 
-def test_agent_deps_real_action_flag_defaults_false():
-    deps = AgentDeps(user_id="u", conversation_id="c", event_queue=asyncio.Queue())
+def test_agent_deps_real_action_flag_defaults_false(make_agent_deps):
+    deps = make_agent_deps(user_id="u", conversation_id="c")
     assert deps.real_action_executed is False
 
 

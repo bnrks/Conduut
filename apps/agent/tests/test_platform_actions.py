@@ -1,10 +1,7 @@
-import asyncio
-
 import pytest
 
 from src import store
 from src.agent.schemas import (
-    AgentDeps,
     PlatformActionPlan,
 )
 from src.config import settings
@@ -74,7 +71,9 @@ def test_connection_secret_encryption_roundtrip(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_platform_action_emits_oauth_prompt_when_permission_missing(monkeypatch):
+async def test_platform_action_emits_oauth_prompt_when_permission_missing(
+    monkeypatch, make_agent_deps
+):
     async def fake_get_connection(_user_id: str, _connection_id: str):
         return None
 
@@ -83,7 +82,7 @@ async def test_platform_action_emits_oauth_prompt_when_permission_missing(monkey
 
     monkeypatch.setattr("src.platforms.google_clients.store.get_connection", fake_get_connection)
     monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
-    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+    deps = make_agent_deps()
 
     result = await run_platform_action_payload(
         deps,
@@ -101,7 +100,9 @@ async def test_platform_action_emits_oauth_prompt_when_permission_missing(monkey
 
 
 @pytest.mark.asyncio
-async def test_platform_action_emits_oauth_prompt_when_reconnect_required(monkeypatch):
+async def test_platform_action_emits_oauth_prompt_when_reconnect_required(
+    monkeypatch, make_agent_deps
+):
     async def fake_get_connection(_user_id: str, _connection_id: str):
         return _connection(direct_api_enabled=False, encrypted_refresh_token="")
 
@@ -110,7 +111,7 @@ async def test_platform_action_emits_oauth_prompt_when_reconnect_required(monkey
 
     monkeypatch.setattr("src.platforms.google_clients.store.get_connection", fake_get_connection)
     monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
-    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+    deps = make_agent_deps()
 
     result = await run_platform_action_payload(
         deps,
@@ -129,7 +130,9 @@ async def test_platform_action_emits_oauth_prompt_when_reconnect_required(monkey
 
 
 @pytest.mark.asyncio
-async def test_sheets_create_direct_action_uses_encrypted_refresh_token(monkeypatch):
+async def test_sheets_create_direct_action_uses_encrypted_refresh_token(
+    monkeypatch, make_agent_deps
+):
     monkeypatch.setattr(settings, "connection_encryption_key", "dev-secret-key")
     encrypted = encrypt_connection_secret("refresh_token")
 
@@ -155,7 +158,7 @@ async def test_sheets_create_direct_action_uses_encrypted_refresh_token(monkeypa
     monkeypatch.setattr("src.platforms.google_clients._refresh_access_token", fake_refresh)
     monkeypatch.setattr("src.platforms.google_clients._google_request", fake_google_request)
     monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
-    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+    deps = make_agent_deps()
 
     result = await run_platform_action_payload(
         deps,
@@ -173,7 +176,9 @@ async def test_sheets_create_direct_action_uses_encrypted_refresh_token(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_sheets_write_uses_spreadsheet_created_earlier_in_same_agent_turn(monkeypatch):
+async def test_sheets_write_uses_spreadsheet_created_earlier_in_same_agent_turn(
+    monkeypatch, make_agent_deps
+):
     async def fake_create_spreadsheet(_self, *, title: str, sheet_title: str | None = None):
         assert title == "Conduut Artifacts V1 Test"
         assert sheet_title == "Leads"
@@ -209,7 +214,7 @@ async def test_sheets_write_uses_spreadsheet_created_earlier_in_same_agent_turn(
     monkeypatch.setattr("src.platforms.actions.SheetsClient.ensure_sheet", fake_ensure_sheet)
     monkeypatch.setattr("src.platforms.actions.SheetsClient.update_range", fake_update_range)
     monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
-    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+    deps = make_agent_deps()
 
     create_result = await run_platform_action_payload(
         deps,
@@ -238,7 +243,9 @@ async def test_sheets_write_uses_spreadsheet_created_earlier_in_same_agent_turn(
 
 
 @pytest.mark.asyncio
-async def test_sheets_action_rejects_missing_spreadsheet_id_before_google_request(monkeypatch):
+async def test_sheets_action_rejects_missing_spreadsheet_id_before_google_request(
+    monkeypatch, make_agent_deps
+):
     async def fail_if_called(*_args, **_kwargs):
         raise AssertionError("Google Sheets client should not be called without spreadsheet_id")
 
@@ -247,7 +254,7 @@ async def test_sheets_action_rejects_missing_spreadsheet_id_before_google_reques
 
     monkeypatch.setattr("src.platforms.actions.SheetsClient.read_range", fail_if_called)
     monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
-    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+    deps = make_agent_deps()
 
     result = await run_platform_action_payload(
         deps,
@@ -260,7 +267,7 @@ async def test_sheets_action_rejects_missing_spreadsheet_id_before_google_reques
 
 
 @pytest.mark.asyncio
-async def test_sheets_append_direct_action_emits_artifact_preview(monkeypatch):
+async def test_sheets_append_direct_action_emits_artifact_preview(monkeypatch, make_agent_deps):
     ensured: dict = {}
 
     async def fake_ensure_sheet(_self, *, spreadsheet_id: str, title: str):
@@ -281,7 +288,7 @@ async def test_sheets_append_direct_action_emits_artifact_preview(monkeypatch):
     monkeypatch.setattr("src.platforms.actions.SheetsClient.ensure_sheet", fake_ensure_sheet)
     monkeypatch.setattr("src.platforms.actions.SheetsClient.append_row", fake_append_row)
     monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
-    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+    deps = make_agent_deps()
 
     result = await run_platform_action_payload(
         deps,
@@ -306,7 +313,9 @@ async def test_sheets_append_direct_action_emits_artifact_preview(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_gmail_send_direct_action_emits_message_artifact_preview(monkeypatch):
+async def test_gmail_send_direct_action_emits_message_artifact_preview(
+    monkeypatch, make_agent_deps
+):
     async def fake_send(_self, *, to: str, subject: str, message: str):
         assert to == "person@example.com"
         assert subject == "Hello"
@@ -318,7 +327,7 @@ async def test_gmail_send_direct_action_emits_message_artifact_preview(monkeypat
 
     monkeypatch.setattr("src.platforms.actions.GmailClient.send", fake_send)
     monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
-    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+    deps = make_agent_deps()
 
     result = await run_platform_action_payload(
         deps,
@@ -346,7 +355,7 @@ async def test_gmail_send_direct_action_emits_message_artifact_preview(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_gmail_get_uses_latest_search_message_context(monkeypatch):
+async def test_gmail_get_uses_latest_search_message_context(monkeypatch, make_agent_deps):
     async def fake_search(_self, *, query: str = "", limit: int = 10):
         assert query == "in:inbox"
         return {
@@ -375,7 +384,7 @@ async def test_gmail_get_uses_latest_search_message_context(monkeypatch):
     monkeypatch.setattr("src.platforms.actions.GmailClient.search", fake_search)
     monkeypatch.setattr("src.platforms.actions.GmailClient.get", fake_get)
     monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
-    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+    deps = make_agent_deps()
 
     search_result = await run_platform_action_payload(
         deps,
@@ -399,7 +408,9 @@ async def test_gmail_get_uses_latest_search_message_context(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_gmail_get_without_message_context_returns_missing_input(monkeypatch):
+async def test_gmail_get_without_message_context_returns_missing_input(
+    monkeypatch, make_agent_deps
+):
     async def fail_if_called(*_args, **_kwargs):
         raise AssertionError("Gmail get should not be called without a message_id.")
 
@@ -408,7 +419,7 @@ async def test_gmail_get_without_message_context_returns_missing_input(monkeypat
 
     monkeypatch.setattr("src.platforms.actions.GmailClient.get", fail_if_called)
     monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
-    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+    deps = make_agent_deps()
 
     result = await run_platform_action_payload(
         deps,
@@ -421,7 +432,7 @@ async def test_gmail_get_without_message_context_returns_missing_input(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_sheets_sheet_create_direct_action_is_idempotent(monkeypatch):
+async def test_sheets_sheet_create_direct_action_is_idempotent(monkeypatch, make_agent_deps):
     async def fake_ensure_sheet(_self, *, spreadsheet_id: str, title: str):
         assert spreadsheet_id == "sheet_123"
         assert title == "Leads"
@@ -436,7 +447,7 @@ async def test_sheets_sheet_create_direct_action_is_idempotent(monkeypatch):
 
     monkeypatch.setattr("src.platforms.actions.SheetsClient.ensure_sheet", fake_ensure_sheet)
     monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
-    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+    deps = make_agent_deps()
 
     result = await run_platform_action_payload(
         deps,
@@ -453,7 +464,9 @@ async def test_sheets_sheet_create_direct_action_is_idempotent(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_sheets_range_update_ensures_named_sheet_and_uses_header_artifact(monkeypatch):
+async def test_sheets_range_update_ensures_named_sheet_and_uses_header_artifact(
+    monkeypatch, make_agent_deps
+):
     ensured: dict = {}
 
     async def fake_ensure_sheet(_self, *, spreadsheet_id: str, title: str):
@@ -476,7 +489,7 @@ async def test_sheets_range_update_ensures_named_sheet_and_uses_header_artifact(
     monkeypatch.setattr("src.platforms.actions.SheetsClient.ensure_sheet", fake_ensure_sheet)
     monkeypatch.setattr("src.platforms.actions.SheetsClient.update_range", fake_update_range)
     monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
-    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+    deps = make_agent_deps()
 
     result = await run_platform_action_payload(
         deps,
@@ -508,7 +521,7 @@ async def test_sheets_range_update_ensures_named_sheet_and_uses_header_artifact(
 
 
 @pytest.mark.asyncio
-async def test_sheets_read_direct_action_returns_table_artifact(monkeypatch):
+async def test_sheets_read_direct_action_returns_table_artifact(monkeypatch, make_agent_deps):
     async def fake_read_range(_self, *, spreadsheet_id: str, range: str):
         assert spreadsheet_id == "sheet_123"
         assert range == "Log!A1:B3"
@@ -522,7 +535,7 @@ async def test_sheets_read_direct_action_returns_table_artifact(monkeypatch):
 
     monkeypatch.setattr("src.platforms.actions.SheetsClient.read_range", fake_read_range)
     monkeypatch.setattr("src.platforms.actions.store.save_platform_action_audit", fake_audit)
-    deps = AgentDeps("user_1", "conv_1", asyncio.Queue())
+    deps = make_agent_deps()
 
     result = await run_platform_action_payload(
         deps,

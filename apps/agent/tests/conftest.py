@@ -1,10 +1,13 @@
 """Shared pytest fixtures and Windows temp-dir isolation for the agent suite."""
 
+import asyncio
 import logging
 import os
 import tempfile
 
 import pytest
+
+from src.agent.schemas import AgentDeps
 
 # Isolate pytest's temp root from the shared system ``pytest-of-<user>`` dir.
 # On Windows that shared dir can get permission-locked by a leaked file handle
@@ -17,6 +20,26 @@ os.environ.setdefault(
 )
 # pytest does not create the temp root's parent; ensure it exists.
 os.makedirs(os.environ["PYTEST_DEBUG_TEMPROOT"], exist_ok=True)
+
+
+@pytest.fixture
+def make_agent_deps():
+    """Factory fixture: returns a callable that builds an AgentDeps with sensible defaults.
+
+    Each call produces a fresh AgentDeps (and a fresh asyncio.Queue) so tests
+    that call it multiple times stay isolated.  Override any field via kwargs.
+    """
+
+    def _make(**overrides):
+        params: dict = {
+            "user_id": "user_1",
+            "conversation_id": "conv_1",
+            "event_queue": asyncio.Queue(),
+        }
+        params.update(overrides)
+        return AgentDeps(**params)
+
+    return _make
 
 
 @pytest.fixture(autouse=True)

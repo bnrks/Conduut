@@ -1,7 +1,6 @@
 """Tests that factory.py wires the static self-knowledge profile and the dynamic
 per-conversation platform state into the agent's instructions."""
 
-import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,7 +8,6 @@ from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from src.agent.platform_state import ConnectionSummary, UserPlatformState
-from src.agent.schemas import AgentDeps
 from src.agent.tools.factory import base_instructions
 
 
@@ -20,22 +18,17 @@ def test_base_instructions_merges_system_prompt_and_static_profile():
     assert "batch" in text and "dashboard" in text  # capability anchors
 
 
-def test_agent_deps_accepts_platform_state():
+def test_agent_deps_accepts_platform_state(make_agent_deps):
     state = UserPlatformState()
-    deps = AgentDeps(
-        user_id="u",
-        conversation_id="c",
-        event_queue=asyncio.Queue(),
-        platform_state=state,
-    )
+    deps = make_agent_deps(user_id="u", conversation_id="c", platform_state=state)
     assert deps.platform_state is state
     # default stays None when not provided
-    deps2 = AgentDeps(user_id="u", conversation_id="c", event_queue=asyncio.Queue())
+    deps2 = make_agent_deps(user_id="u", conversation_id="c")
     assert deps2.platform_state is None
 
 
 @pytest.mark.asyncio
-async def test_dynamic_instructions_reach_model_via_real_agent():
+async def test_dynamic_instructions_reach_model_via_real_agent(make_agent_deps):
     """End-to-end seam: the @agent.instructions decorator on the REAL pydantic-ai Agent
     must forward the per-user platform state into the instructions the model receives.
 
@@ -67,12 +60,7 @@ async def test_dynamic_instructions_reach_model_via_real_agent():
             ConnectionSummary(service="gmail", account_email="u@x.com", status="connected")
         ]
     )
-    deps = AgentDeps(
-        user_id="u",
-        conversation_id="c",
-        event_queue=asyncio.Queue(),
-        platform_state=state,
-    )
+    deps = make_agent_deps(user_id="u", conversation_id="c", platform_state=state)
 
     await agent.run("hello", deps=deps)
 

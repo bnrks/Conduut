@@ -1,10 +1,10 @@
 """Tests for prepare_api_credential_payload (research -> draft -> secret card)."""
 
-import asyncio
 from dataclasses import dataclass, field
 
+import pytest
+
 from src.agent import research
-from src.agent.schemas import AgentDeps
 from src.agent.tools import credentials as cred_tools
 
 
@@ -24,8 +24,9 @@ class _Cred:
     pending_node_name: str = ""
 
 
-def _deps():
-    return AgentDeps(user_id="u1", conversation_id="c1", event_queue=asyncio.Queue())
+@pytest.fixture
+def _deps(make_agent_deps):
+    return make_agent_deps(user_id="u1", conversation_id="c1")
 
 
 def _patch_research(monkeypatch, result):
@@ -35,19 +36,19 @@ def _patch_research(monkeypatch, result):
     monkeypatch.setattr(cred_tools, "research_api_auth", fake_research)
 
 
-async def test_prepare_existing_ready_credential(monkeypatch):
+async def test_prepare_existing_ready_credential(monkeypatch, _deps):
     async def fake_list(_uid):
         return [_Cred("c1", "API Ninjas", "httpHeaderAuth", "api.api-ninjas.com", status="ready")]
 
     monkeypatch.setattr(cred_tools.store, "list_custom_credentials", fake_list)
 
     res = await cred_tools.prepare_api_credential_payload(
-        _deps(), "https://api.api-ninjas.com/v1/quotes"
+        _deps, "https://api.api-ninjas.com/v1/quotes"
     )
     assert res["status"] == "exists"
 
 
-async def test_prepare_researches_and_creates_draft(monkeypatch):
+async def test_prepare_researches_and_creates_draft(monkeypatch, _deps):
     saved: dict = {}
 
     async def fake_list(_uid):
@@ -82,7 +83,7 @@ async def test_prepare_researches_and_creates_draft(monkeypatch):
     )
 
     res = await cred_tools.prepare_api_credential_payload(
-        _deps(), "https://api.api-ninjas.com/v1/quotes", workflow_id="wf1", node_name="HTTP"
+        _deps, "https://api.api-ninjas.com/v1/quotes", workflow_id="wf1", node_name="HTTP"
     )
 
     assert res["status"] == "draft_created"
@@ -98,7 +99,7 @@ async def test_prepare_researches_and_creates_draft(monkeypatch):
     assert card.data.allowedTypes == []  # pre-determined, no picker
 
 
-async def test_prepare_low_confidence_needs_manual(monkeypatch):
+async def test_prepare_low_confidence_needs_manual(monkeypatch, _deps):
     called = {"save": False}
 
     async def fake_list(_uid):
@@ -111,17 +112,17 @@ async def test_prepare_low_confidence_needs_manual(monkeypatch):
     monkeypatch.setattr(cred_tools.store, "save_draft_credential", fake_save)
     _patch_research(monkeypatch, research.AuthResearchResult(scheme="header", confidence="low"))
 
-    res = await cred_tools.prepare_api_credential_payload(_deps(), "https://api.weird.test/x")
+    res = await cred_tools.prepare_api_credential_payload(_deps, "https://api.weird.test/x")
     assert res["status"] == "needs_manual"
     assert called["save"] is False
 
 
-async def test_prepare_no_auth(monkeypatch):
+async def test_prepare_no_auth(monkeypatch, _deps):
     async def fake_list(_uid):
         return []
 
     monkeypatch.setattr(cred_tools.store, "list_custom_credentials", fake_list)
     _patch_research(monkeypatch, research.AuthResearchResult(scheme="none", confidence="high"))
 
-    res = await cred_tools.prepare_api_credential_payload(_deps(), "https://public.test/x")
+    res = await cred_tools.prepare_api_credential_payload(_deps, "https://public.test/x")
     assert res["status"] == "no_auth"
