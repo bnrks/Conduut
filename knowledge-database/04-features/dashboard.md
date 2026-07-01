@@ -35,11 +35,17 @@ Webpack dev server tercih edilir.
 - Run formu backend'e `{ input, source: "dashboard" }` payload'i gonderir ve
   ayni Conduut run endpoint'ini agent ile paylasir.
 - `inputSchema` olan workflow'larda Run modalinda `Run once` ve `Run batch`
-  modlari vardir. Batch modunda kullanici `.xlsx`, `.xls` veya `.csv` dosyasi
-  yukler; browser tarafinda `xlsx` ile sheet, header row, data row araligi ve
-  workflow input field -> dosya kolonu/sabit deger eslemesi secilir. Backend'e
-  dosyanin kendisi degil, en fazla 50 mapped `{ rowNumber, input }` satiri
-  gonderilir.
+  modlari vardir. Batch modunun iki kaynagi vardir (`File | Manual entry`
+  alt-sekmesi):
+  - **File** (varsayilan): kullanici `.xlsx`, `.xls` veya `.csv` dosyasi
+    yukler; browser tarafinda `xlsx` ile sheet, header row, data row araligi ve
+    workflow input field -> dosya kolonu/sabit deger eslemesi secilir.
+  - **Manual entry**: kullanici degerleri elle, duzenlenebilir bir tabloda tek
+    tek girer (sutunlar `inputSchema` alanlari, her satir bir calistirma; `Add
+    row` / satir sil; 1 bos satirla baslar). Tamamen bos satirlar calistirma
+    oncesi elenir; required alan dogrulamasi satir bazlidir.
+  Her iki kaynak da ayni `{ rowNumber, input }` satir listesini (max 50) uretir
+  ve ayni stream akisini kullanir; backend degismez (frontend-only).
 - Batch run BFF payload'i `POST /api/workflows/{workflowId}?action=batch-run`
   uzerinden agent `POST /api/workflows/{workflow_id}/batch-run` endpoint'ine
   gider. Agent satirlari sequential calistirir, required input'u bos satirlari
@@ -52,6 +58,11 @@ Webpack dev server tercih edilir.
   progress bar'i ve client tarafinda uretilen kisa row input onizlemesini
   gosterir. Stream tamamlaninca mevcut batch sonuc modalina gecilir; stream
   hatasinda progress paneli hata durumunda kalir.
+- Batch sonuc modalindaki her satir **genisletilebilir**: presentation veya ham
+  cikti olan satirlara tiklaninca (chevron) satir acilir ve run once'daki gibi
+  `WorkflowResultView` presentation karti + `RunOutputsDetails` (ham veri) inline
+  gosterilir. Backend satir sonucu artik `presentation` + `outputs` tasir
+  ([[adr-0017-workflow-result-presentation]] 2026-07-01 eki).
 - Run sonucu Google Sheets artifact'i dondururse dashboard toast'a ek olarak
   sonuc panelinde `ArtifactPreview` karti gosterir. Bu kart kucuk tablo
   snapshot'i ve Google Sheets linki tasir; tam Sheets editoru degildir.
@@ -85,7 +96,7 @@ Workflow run
   -> optional artifacts[] response
 
 Workflow batch run
-  -> browser parses XLSX/CSV and maps rows
+  -> browser builds rows from XLSX/CSV mapping OR manual-entry table
   -> /api/workflows/{workflowId}?action=batch-run-stream
   -> agent /api/workflows/{workflow_id}/batch-run/stream
   -> workflow_metadata input validation per row

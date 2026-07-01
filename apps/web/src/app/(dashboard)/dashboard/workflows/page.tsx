@@ -1,16 +1,18 @@
 "use client";
 
 import type { ChangeEvent, FormEvent } from "react";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { Fragment, useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import {
   Activity,
   CheckCircle2,
+  ChevronRight,
   Plus,
   Search,
   Table2,
   Upload,
   Workflow as WorkflowIcon,
+  X,
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -29,6 +31,7 @@ import type { Workflow, WorkflowInputField, WorkflowResultPresentation, Workflow
 
 type StatusFilter = "all" | WorkflowStatus;
 type RunMode = "single" | "batch";
+type BatchSource = "file" | "manual";
 type BatchMappingSource = "column" | "fixed" | "none";
 
 interface WorkflowRunOutput {
@@ -64,7 +67,9 @@ interface BatchRunRowResult {
   execution_id?: string;
   summary?: string;
   error?: string;
+  outputs?: WorkflowRunOutput[];
   artifacts?: ArtifactPreviewData[];
+  presentation?: WorkflowResultPresentation | null;
 }
 
 interface WorkflowBatchRunResult {
@@ -367,6 +372,32 @@ function BatchRunProgressDialog({
   );
 }
 
+// Run once ve batch (genişletilmiş satır) sonuçlarında ortak "ham veriyi gör"
+// bloğu — n8n node çıktılarını JSON olarak açılır-kapanır gösterir.
+function RunOutputsDetails({ outputs }: { outputs: WorkflowRunOutput[] }) {
+  if (!outputs.length) return null;
+  return (
+    <details className="rounded-md border border-border bg-muted/30">
+      <summary className="cursor-pointer px-3 py-2 text-[12px] font-medium text-muted-foreground">
+        Ham veriyi gör
+      </summary>
+      <div className="flex flex-col gap-2 px-3 pb-3">
+        {outputs.map((output, index) => (
+          <div key={`out-${index}`} className="rounded-md border border-border bg-background p-3">
+            <p className="mb-1.5 text-[12px] font-medium text-muted-foreground">
+              {output.nodeName}
+              {output.itemCount > 1 ? ` · ${output.itemCount} items` : ""}
+            </p>
+            <pre className="overflow-x-auto whitespace-pre-wrap break-words text-[12.5px] text-foreground">
+              {JSON.stringify(output.items, null, 2)}
+            </pre>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 export default function WorkflowsPage() {
   const { user, loading: authLoading } = useAuth();
   const confirm = useConfirm();
@@ -383,10 +414,13 @@ export default function WorkflowsPage() {
   const [dataStartRow, setDataStartRow] = useState(2);
   const [dataEndRow, setDataEndRow] = useState(2);
   const [batchMappings, setBatchMappings] = useState<Record<string, BatchMapping>>({});
+  const [batchSource, setBatchSource] = useState<BatchSource>("file");
+  const [manualRows, setManualRows] = useState<Record<string, string>[]>([]);
   const [runningWorkflowId, setRunningWorkflowId] = useState<string | null>(null);
   const [batchRunProgress, setBatchRunProgress] = useState<BatchRunProgress | null>(null);
   const [runResult, setRunResult] = useState<WorkflowRunResult | null>(null);
   const [batchResult, setBatchResult] = useState<WorkflowBatchRunResult | null>(null);
+  const [expandedBatchRows, setExpandedBatchRows] = useState<Set<number>>(new Set());
   const [runningOverlay, setRunningOverlay] = useState<{ workflowName: string } | null>(null);
 
   const fetchWorkflows = useCallback(async () => {
@@ -442,6 +476,8 @@ export default function WorkflowsPage() {
     setDataStartRow(2);
     setDataEndRow(2);
     setBatchMappings({});
+    setBatchSource("file");
+    setManualRows([]);
   };
 
   const inferBatchMappings = (schema: WorkflowInputField[], nextHeaders: string[]) => {
@@ -587,15 +623,76 @@ export default function WorkflowsPage() {
     );
   };
 
+  const makeEmptyManualRow = (workflow: Workflow): Record<string, string> =>
+    Object.fromEntries((workflow.inputSchema ?? []).map((field) => [field.name, ""]));
+
+  const isManualRowEmpty = (workflow: Workflow, row: Record<string, string>): boolean =>
+    (workflow.inputSchema ?? []).every((field) => !(row[field.name] ?? "").trim());
+
+  const selectBatchSource = (source: BatchSource) => {
+    setBatchSource(source);
+    if (source === "manual" && runWorkflow) {
+      setManualRows((prev) => (prev.length ? prev : [makeEmptyManualRow(runWorkflow)]));
+    }
+  };
+
+  const addManualRow = () => {
+    if (!runWorkflow) return;
+    setManualRows((prev) =>
+      prev.length >= MAX_BATCH_ROWS ? prev : [...prev, makeEmptyManualRow(runWorkflow)]
+    );
+  };
+
+  const removeManualRow = (index: number) => {
+    setManualRows((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const updateManualCell = (index: number, name: string, value: string) => {
+    setManualRows((prev) =>
+      prev.map((row, i) => (i === index ? { ...row, [name]: value } : row))
+    );
+  };
+
+  // Boş satırları (tüm alanları boş) elemekle birlikte tablo sırasını koru: her
+  // çalıştırmanın rowNumber'ı tablodaki 1-tabanlı satır konumudur, böylece
+  // ilerleme/sonuç ve doğrulama uyarıları kullanıcının gördüğü satırla eşleşir.
+  const buildManualRows = (workflow: Workflow): BatchRunRowPayload[] =>
+    manualRows
+      .map((row, index) => ({ index, row }))
+      .filter(({ row }) => !isManualRowEmpty(workflow, row))
+      .map(({ index, row }) => ({
+        rowNumber: index + 1,
+        input: Object.fromEntries(
+          (workflow.inputSchema ?? []).map((field) => [field.name, (row[field.name] ?? "").trim()])
+        ),
+      }));
+
+  const manualBatchError = (workflow: Workflow): string | null => {
+    const rows = manualRows
+      .map((row, index) => ({ index, row }))
+      .filter(({ row }) => !isManualRowEmpty(workflow, row));
+    if (!rows.length) return "Add at least one value to run.";
+    if (rows.length > MAX_BATCH_ROWS) return `Add ${MAX_BATCH_ROWS} values or fewer.`;
+    for (const { index, row } of rows) {
+      for (const field of workflow.inputSchema ?? []) {
+        if (field.required && !(row[field.name] ?? "").trim()) {
+          return `${field.label} is required (row ${index + 1}).`;
+        }
+      }
+    }
+    return null;
+  };
+
   const submitWorkflowBatchRun = async (workflow: Workflow) => {
     if (!user) return;
-    const error = batchMappingError(workflow);
+    const error =
+      batchSource === "manual" ? manualBatchError(workflow) : batchMappingError(workflow);
     if (error) {
       toast.error(error);
       return;
     }
     setRunningWorkflowId(workflow.id);
-    const rows = buildBatchRows(workflow);
+    const rows = batchSource === "manual" ? buildManualRows(workflow) : buildBatchRows(workflow);
     const rowPreviews = buildBatchRowPreviews(workflow, rows);
     setBatchRunProgress({
       workflowId: workflow.id,
@@ -662,6 +759,7 @@ export default function WorkflowsPage() {
           if (event.event === "completed") {
             const result = event.data as unknown as Omit<WorkflowBatchRunResult, "workflowName">;
             setBatchRunProgress(null);
+            setExpandedBatchRows(new Set());
             setBatchResult({ ...result, workflowName: workflow.name });
             toast.success(
               `Batch completed: ${result.succeeded} succeeded, ${result.failed + result.skipped} need attention.`
@@ -856,6 +954,26 @@ export default function WorkflowsPage() {
     );
   };
 
+  const renderManualCell = (field: WorkflowInputField, index: number) => {
+    const value = manualRows[index]?.[field.name] ?? "";
+    const commonProps = {
+      value,
+      placeholder: field.placeholder,
+      onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+        updateManualCell(index, field.name, event.target.value),
+    };
+    if (field.type === "textarea") {
+      return <Textarea {...commonProps} rows={1} className="min-h-9 text-[14px]" />;
+    }
+    return (
+      <Input
+        {...commonProps}
+        type={field.type === "email" ? "email" : "text"}
+        className="h-9 text-[14px]"
+      />
+    );
+  };
+
   const renderBatchMappingField = (field: WorkflowInputField) => {
     const mapping = batchMappings[field.name] ?? { source: field.required ? "column" : "none" };
     const selectValue =
@@ -919,6 +1037,33 @@ export default function WorkflowsPage() {
         </div>
       </div>
     );
+  };
+
+  const toggleBatchRow = (rowNumber: number) => {
+    setExpandedBatchRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(rowNumber)) next.delete(rowNumber);
+      else next.add(rowNumber);
+      return next;
+    });
+  };
+
+  const batchRowHasDetail = (row: BatchRunRowResult): boolean =>
+    Boolean(row.presentation?.fields?.length || row.outputs?.length);
+
+  const batchRowSummary = (row: BatchRunRowResult): string => {
+    if (row.error) return row.error;
+    const field = row.presentation?.fields?.[0];
+    if (field) {
+      const value =
+        field.value == null
+          ? ""
+          : typeof field.value === "object"
+            ? JSON.stringify(field.value)
+            : String(field.value);
+      return `${field.label}: ${value}`;
+    }
+    return row.summary || row.execution_id || "-";
   };
 
   const filtered = workflows.filter((wf) => {
@@ -1068,6 +1213,25 @@ export default function WorkflowsPage() {
               </div>
             ) : (
               <div className="flex flex-col gap-4">
+                <div className="inline-flex self-start rounded-lg border border-border bg-muted/40 p-1">
+                  {(["file", "manual"] as const).map((source) => (
+                    <button
+                      key={source}
+                      type="button"
+                      onClick={() => selectBatchSource(source)}
+                      className={`rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors ${
+                        batchSource === source
+                          ? "bg-card text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {source === "file" ? "File" : "Manual entry"}
+                    </button>
+                  ))}
+                </div>
+
+                {batchSource === "file" ? (
+                <>
                 <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
                   <label className="flex flex-col gap-1.5">
                     <span className="text-[13px] font-medium text-foreground">File</span>
@@ -1194,6 +1358,67 @@ export default function WorkflowsPage() {
                     </div>
                   </>
                 )}
+                </>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    <div className="rounded-md border border-border">
+                      <div className="max-h-80 overflow-auto">
+                        <table className="w-full min-w-[520px] text-left text-[13px]">
+                          <thead className="bg-muted/60 text-muted-foreground">
+                            <tr>
+                              <th className="w-12 px-3 py-2 font-medium">#</th>
+                              {(runWorkflow.inputSchema ?? []).map((field) => (
+                                <th key={field.name} className="px-3 py-2 font-medium">
+                                  {field.label}
+                                </th>
+                              ))}
+                              <th className="w-12 px-3 py-2" />
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {manualRows.map((_row, index) => (
+                              <tr key={index} className="border-t border-border align-top">
+                                <td className="px-3 py-3 text-muted-foreground">{index + 1}</td>
+                                {(runWorkflow.inputSchema ?? []).map((field) => (
+                                  <td key={field.name} className="min-w-[160px] px-2 py-2">
+                                    {renderManualCell(field, index)}
+                                  </td>
+                                ))}
+                                <td className="px-2 py-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => removeManualRow(index)}
+                                    disabled={manualRows.length <= 1}
+                                    aria-label="Remove row"
+                                    className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                  >
+                                    <X className="h-4 w-4" />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={addManualRow}
+                        disabled={manualRows.length >= MAX_BATCH_ROWS}
+                        className="gap-1.5"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Add row
+                      </Button>
+                      <span className="text-[12px] text-muted-foreground">
+                        {manualRows.length}/{MAX_BATCH_ROWS}
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1267,29 +1492,7 @@ export default function WorkflowsPage() {
               {(runResult.artifacts ?? []).map((artifact, index) => (
                 <ArtifactPreview key={index} data={artifact} />
               ))}
-              {(runResult.outputs ?? []).length > 0 && (
-                <details className="rounded-md border border-border bg-muted/30">
-                  <summary className="cursor-pointer px-3 py-2 text-[12px] font-medium text-muted-foreground">
-                    Ham veriyi gör
-                  </summary>
-                  <div className="flex flex-col gap-2 px-3 pb-3">
-                    {(runResult.outputs ?? []).map((output, index) => (
-                      <div
-                        key={`out-${index}`}
-                        className="rounded-md border border-border bg-background p-3"
-                      >
-                        <p className="mb-1.5 text-[12px] font-medium text-muted-foreground">
-                          {output.nodeName}
-                          {output.itemCount > 1 ? ` · ${output.itemCount} items` : ""}
-                        </p>
-                        <pre className="overflow-x-auto whitespace-pre-wrap break-words text-[12.5px] text-foreground">
-                          {JSON.stringify(output.items, null, 2)}
-                        </pre>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              )}
+              <RunOutputsDetails outputs={runResult.outputs ?? []} />
               {!runResult.presentation?.fields.length &&
                 !(runResult.outputs ?? []).length &&
                 !(runResult.artifacts ?? []).length && (
@@ -1308,7 +1511,10 @@ export default function WorkflowsPage() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="workflow-batch-result-title"
-          onClick={() => setBatchResult(null)}
+          onClick={() => {
+            setBatchResult(null);
+            setExpandedBatchRows(new Set());
+          }}
         >
           <div
             className="w-full max-w-4xl rounded-lg border border-border bg-card p-5 shadow-xl"
@@ -1327,7 +1533,14 @@ export default function WorkflowsPage() {
                   {batchResult.skipped} skipped
                 </p>
               </div>
-              <Button size="sm" variant="outline" onClick={() => setBatchResult(null)}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setBatchResult(null);
+                  setExpandedBatchRows(new Set());
+                }}
+              >
                 Close
               </Button>
             </div>
@@ -1335,21 +1548,57 @@ export default function WorkflowsPage() {
               <table className="w-full min-w-[640px] text-left text-[13px]">
                 <thead className="bg-muted/60 text-muted-foreground">
                   <tr>
+                    <th className="w-10 px-3 py-2" />
                     <th className="w-20 px-3 py-2 font-medium">Row</th>
                     <th className="w-28 px-3 py-2 font-medium">Status</th>
-                    <th className="px-3 py-2 font-medium">Summary</th>
+                    <th className="px-3 py-2 font-medium">Result</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {batchResult.results.map((row) => (
-                    <tr key={row.rowNumber} className="border-t border-border">
-                      <td className="px-3 py-2 text-muted-foreground">{row.rowNumber}</td>
-                      <td className="px-3 py-2 capitalize">{row.status}</td>
-                      <td className="px-3 py-2 text-muted-foreground">
-                        {row.error || row.summary || row.execution_id || "-"}
-                      </td>
-                    </tr>
-                  ))}
+                  {batchResult.results.map((row) => {
+                    const hasDetail = batchRowHasDetail(row);
+                    const expanded = expandedBatchRows.has(row.rowNumber);
+                    return (
+                      <Fragment key={row.rowNumber}>
+                        <tr
+                          className={`border-t border-border ${
+                            hasDetail ? "cursor-pointer hover:bg-muted/40" : ""
+                          }`}
+                          onClick={hasDetail ? () => toggleBatchRow(row.rowNumber) : undefined}
+                        >
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {hasDetail && (
+                              <ChevronRight
+                                className={`h-4 w-4 transition-transform ${
+                                  expanded ? "rotate-90" : ""
+                                }`}
+                              />
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">{row.rowNumber}</td>
+                          <td className="px-3 py-2 capitalize">{row.status}</td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            <span className="block max-w-[420px] truncate">
+                              {batchRowSummary(row)}
+                            </span>
+                          </td>
+                        </tr>
+                        {hasDetail && expanded && (
+                          <tr className="border-t border-border bg-muted/20">
+                            <td />
+                            <td colSpan={3} className="px-3 py-3">
+                              <div className="flex flex-col gap-3">
+                                {row.presentation && row.presentation.fields.length > 0 && (
+                                  <WorkflowResultView presentation={row.presentation} />
+                                )}
+                                <RunOutputsDetails outputs={row.outputs ?? []} />
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
               {batchResult.results.some((row) => row.artifacts?.length) && (

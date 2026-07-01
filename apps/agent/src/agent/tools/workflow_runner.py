@@ -239,7 +239,9 @@ async def iter_workflow_batch_with_input(
                 executionId=row_result.executionId,
                 summary=row_result.summary,
                 error=row_result.error,
+                outputs=row_result.outputs,
                 artifacts=row_result.artifacts,
+                presentation=row_result.presentation,
             )
         )
         yield "row_finished", results[-1]

@@ -31,6 +31,15 @@ Agent `POST /api/workflows/{workflow_id}/batch-run` endpoint'inde:
 - Artifact origin bilgisini `workflow_batch_run`, `batchRunId`, `rowNumber` ve
   `executionId` ile saklar.
 
+2026-07-01 guncellemesi: Batch girisi artik iki kaynakli. Dosyaya (xlsx/csv)
+ek olarak dashboard'da `Run batch` icinde `Manual entry` alt-sekmesi eklendi:
+kullanici degerleri duzenlenebilir bir tabloda elle tek tek girer (her satir bir
+calistirma). Ikinci kaynak ayni `{ rowNumber, input }` satir listesini (max 50)
+uretir ve mevcut `batch-run/stream` akisini kullanir; **backend/endpoint contract
+degismez, degisiklik tamamen frontend** (`apps/web/.../workflows/page.tsx`). Bos
+satirlar elenir, required dogrulama satir bazlidir. Spec:
+`docs/superpowers/specs/2026-07-01-manual-batch-run-input-design.md`.
+
 2026-05-31 guncellemesi: Dashboard UX icin ayni davranisin streaming yuzeyi de
 eklendi. `POST /api/workflows/{workflow_id}/batch-run/stream`, batch baslangici,
 satir baslangici, satir sonucu ve tamamlanma event'lerini SSE olarak dondurur.

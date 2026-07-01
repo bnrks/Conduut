@@ -9,6 +9,17 @@ final review + 1 Important fix). Backend 386 passed (5 ön-mevcut Windows-tmp),
 ruff temiz; frontend tsc 0 / lint 0. **Canlı doğrulandı (2026-06-28, kullanıcı):**
 dashboard'dan run → ham JSON yerine temiz kart çalışıyor. main'e merge edildi.
 
+2026-07-01 eki: Presentation ilk sürümde yalnız tekli run (`/run`) sonucuna
+bağlıydı; batch run satır sonuçları (`WorkflowBatchRowResultData`) `presentation`
++ `outputs` taşımıyordu, dashboard batch tablosunda satır başına sadece generic
+"Workflow run completed with N output item(s)." görünüyordu. Bu eksik giderildi:
+batch runner satır sonucuna `presentation` + `outputs` kopyalar
+(`workflow_runner.py`), `_batch_row_payload` bunları döndürür, dashboard batch
+sonuç tablosunda her satır **genişletilebilir** — açılınca aynı `WorkflowResultView`
+kartı + ham çıktı gösterilir (run once ile aynı). Karar B'nin reddi (run-time
+LLM narrator, batch'te ≤50 çağrı) hâlâ geçerli; build-time presentation batch'te
+de sıfır ek LLM maliyetiyle çalışır.
+
 ## Bağlam
 
 Bir workflow Conduut **chat**'ten çalıştırıldığında sonuç güzel görünüyor: agent'ın
