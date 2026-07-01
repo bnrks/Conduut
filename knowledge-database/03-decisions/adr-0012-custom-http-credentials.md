@@ -64,7 +64,7 @@ HTTP Request tip-secici kart, ki `generic_auth_type` gonderir) icin host
 zorunlu. Eski reaktif per-workflow yol (orn. Webhook basic auth) host gerektirmez.
 
 **Yuzeyler:** dashboard `/dashboard/credentials` (proaktif kutuphane: ekle/sil)
-+ chat-ici reaktif kart. Yeni tool'lar: `list_credentials(url?)` (secret yok,
+ve chat-ici reaktif kart. Yeni tool'lar: `list_credentials(url?)` (secret yok,
 host-eslesme bayrakli), `attach_credential`. Yeni route'lar: `POST /credentials`
 (library create + opsiyonel attach), `GET /credentials`, `GET /credentials/types`,
 `DELETE /credentials/{id}`.

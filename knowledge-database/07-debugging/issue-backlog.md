@@ -47,9 +47,17 @@ Ornek format:
 
 <!-- Triage sonrasi bug olarak dogrulanan maddeler buraya tasinir. -->
 
-- [ ] Kompleks teklif otomasyonu istegi agent lookup dongusunde request limit'e
+- [x] Kompleks teklif otomasyonu istegi agent lookup dongusunde request limit'e
   takiliyor - Etkilenen alan: [[chat-workflow-generation]] /
   [[agent-service]] / [[n8n-registry]].
+  ✅ Eskidi (2026-06-30, Faz 3): Kok-neden olarak gosterilen `WorkflowPlan` IR'i,
+  sinirli aksiyon seti (`gmail.send`/`sheets.*`/`core.filter`) ve
+  `create_workflow_from_plan` tool'u tamamen kaldirildi; canli yol genel kompakt
+  n8n JSON yuzeyi (`create_workflow`/`update_workflow`) + `repair.py`
+  ([[adr-0010-json-surface-repair-normalizer]]). Registry Gmail operation loader
+  fix'i (asagida) gecerli kaldi. Bu IR-yolu lookup-dongusu sorunu gecersiz;
+  request-limit dongusu tekrar gorulurse kompakt-JSON yoluna gore yeniden triage
+  edilmeli. Tarihsel kayit asagida korunur.
   Not: 2026-06-04 gercek dunya testi: kullanici runtime input olarak firma
   ismi, firma maili, firma ozeti ve teklif verilebilecek servisleri alip her
   firma icin AI ile ozel teklif metni hazirlayan ve Gmail ile gonderen otomatik
@@ -97,8 +105,9 @@ Ornek format:
   Not: 2026-06-15 canli testte AI workflow'u (OpenAI Chat Model) calistirilirken
   n8n node'u kendi `openAiApi` credential'ina ihtiyac duydu; kullanici elle
   bagladi ("missing credential"). Bu credential, agent'in workflow'u KURMAK icin
-  kullandigi app-side LLM provider key'inden (store.py `ProviderConnection`)
-  ayridir. Gmail/Sheets icin OAuth broker var (ADR-0003) ama LLM/API-key node'lari
+  kullandigi app-side LLM key'inden (artik Conduut-yonetimli env key'leri + tier
+  router, [[adr-0011-conduut-managed-tiered-models]]; eski BYO `ProviderConnection`
+  kaldirildi) ayridir. Gmail/Sheets icin OAuth broker var (ADR-0003) ama LLM/API-key node'lari
   icin yok. Hedef: Conduut workflow kaydederken AI/API-key node'lari icin n8n
   credential'ini kullanicinin kayitli key'inden otomatik olusturup baglasin
   (`POST /api/v1/credentials` + node'a referans). Mimari niyet (kullanici
@@ -126,15 +135,23 @@ Ornek format:
   Gonder"), hic `update_workflow` cagirmadi. Ayrica runtime alanlarin DEGERLERINI
   `request_user_input` ile topladi (yanlis). **Fix:** (1) prompt — runtime-input
   tanima kurali (degerlerini sorma, input_schema yap) + "tek workflow kur, sonra
-  update" kurali; (2) deterministik dedup — `runner._conversation_workflows_from_messages`
+  update" kurali; (2) deterministik dedup — `history._conversation_workflows_from_messages`
+  (runner cagirir; Faz 3'te `runner`'dan `agent/history.py`'ye tasindi)
   history'den name->id cikariyor, `AgentDeps.conversation_workflows`'a koyuyor,
   `create_workflow` ayni isimde mevcut workflow varsa create yerine update yapiyor
   (`create_workflow_deduped_to_update`). Testler: `test_runner.py` (+2). Duplicate'ler
   silindi. **DIKKAT:** local agent stale idi (08:03 UTC'den beri reload yok); fix'in
   devreye girmesi icin agent restart sart.
-- [ ] WorkflowSpec compiler akislara ozel hardcoded shape'lere bagli ve dinamik
+- [x] WorkflowSpec compiler akislara ozel hardcoded shape'lere bagli ve dinamik
   degil - Etkilenen alan: [[chat-workflow-generation]] / [[agent-service]] /
   [[n8n-registry]].
+  ✅ Eskidi (2026-06-30, Faz 3): `WorkflowSpec`/`WorkflowPlan` compiler'lari
+  (`spec_compiler.py`, `graph_compiler.py`, `blocks.py`) ve `create_workflow_from_*`
+  tool'lari tamamen kaldirildi. Canli yol tek kompakt n8n JSON yuzeyi
+  (`create_workflow`/`update_workflow`) + `repair.py` — herhangi bir n8n
+  node/operation/shape'i destekler, "hardcoded shape" limiti yok
+  ([[adr-0010-json-surface-repair-normalizer]]). Bu sorun gecersiz; tarihsel
+  inceleme asagida korunur.
   Not: Kullanici "Gmail ile mail at, atilan mailin adres/title/icerigini bir
   Sheets tablosuna kaydet" istediginde agent mevcut Google Sheets ID istedi.
   Scope/permission problemi degil; Google Sheets connection `spreadsheets` ve

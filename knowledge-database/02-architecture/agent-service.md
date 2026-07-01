@@ -10,8 +10,10 @@ Merkez: [[index]]
 > tool'lari) **kaldirildi** — ADR-0010 zaten model yuzeyinden cikarmisti, Faz 3
 > olu kodu sildi. Tek yuzey `create_workflow`/`update_workflow` + `agent/repair.py`.
 > Ayrica `store.py`→`store/` paketi, `tools/validation.py`→`tools/build_pipeline.py`,
-> runner history blogu→`agent/history.py`. Asagidaki compiler / BYO-provider /
-> settings-favorites bolumleri (ADR-0011 oncesinden) tam reconcile bekliyor.
+> runner history blogu→`agent/history.py`. **Guncelleme (2026-06-30 reconcile):**
+> compiler / BYO-provider / settings-favorites bolumleri kod gercegiyle
+> hizalandi (IR yolu kaldirildi → tek native-JSON yuzeyi; LLM = Conduut-yonetimli
+> kademeli model). Tarihsel baglam "eski X → artik Y" notlariyla korundu.
 
 ## Stack
 
@@ -29,16 +31,17 @@ Merkez: [[index]]
 `src/main.py` FastAPI uygulamasini olusturur. Lifespan startup asamasinda
 `initialize_registry(settings.n8n_url)` calisir ve n8n node registry hazirlanir.
 
-Router'lar `/api` prefix'i altinda include edilir:
+Router'lar `/api` prefix'i altinda include edilir (bkz. `main.py`):
 
 - `chat`
 - `conversations`
 - `artifacts`
-- `settings`
-- `favorites`
-- `workflows`
 - `credentials`
 - `connections`
+- `workflows`
+
+> Eski `settings` ve `favorites` router'lari **kaldirildi** (BYO-provider yolu
+> ADR-0011 ile elendi; artik kullanici LLM ayari/provider/favorite kaydi yok).
 
 Health endpoint: `GET /health`.
 
@@ -106,15 +109,23 @@ kutuphaneler JSONL dosyasina duz metin satirlari karistirabilir.
 
 ## Chat Flow
 
-`POST /api/chat/send` akisi:
+`POST /api/chat/send` akisi (`routes/chat.py`):
 
 1. Firebase user id alinir.
-2. Firestore'dan aktif LLM ayarlari okunur.
-3. Request provider/model override iceriyorsa provider connection kullanilir.
-4. Conversation olusturulur veya mevcut conversation yuklenir.
-5. User mesaji Firestore'a yazilir.
-6. Conversation history Pydantic AI message history formatina cevrilir.
-7. `src/agent/runner.py` SSE stream olarak calistirilir.
+2. Conversation olusturulur veya mevcut conversation yuklenir.
+3. User mesaji Firestore'a yazilir.
+4. Conversation history Pydantic AI message history formatina cevrilir.
+5. `src/agent/runner.py` SSE stream olarak calistirilir.
+
+> **Model secimi (ADR-0011, BYO kaldirildi):** Eskiden burada Firestore'dan
+> aktif LLM ayarlari okunur ve request provider/model override'i uygulanirdi;
+> artik bu yok. Model seçimi **runner içinde** olur: `agent/router.py`
+> `classify_tier()` mesaji simple/medium/hard tier'ina siniflar,
+> `agent/model_registry.py` aktif profile (`CONDUUT_MODEL_PROFILE`) için o
+> tier'in sabit model+thinking `ModelChoice`'unu cozer ve `provider_factory`
+> Conduut'un **kendi** env key'iyle (`key_for_provider`) modeli kurar. Chat
+> request'i hala tolere etsin diye `provider`/`model`/`reasoning_effort`
+> alanlarini 422 atmadan **yok sayar** (`ConfigDict(extra="ignore")`).
 
 Agent runner Pydantic AI tool calling kullanir. Tool'lar event queue uzerinden
 `tool_call` ve `attachment` SSE event'lerini uretir. Tool execution uzunsa
@@ -149,34 +160,42 @@ baglamini, `user_input_request` ise agent'in once sordugu eksik bilgi
 sorusunu ic context olarak modele ekler. Boylece kullanici sadece eksik cevabi
 yazdiginda agent onceki isi devam ettirebilir.
 
-`src/agent/provider_factory.py` Firestore'daki provider/model/API key bilgisine
-gore Pydantic AI model instance uretir. Desteklenen provider'lar: `openai`,
-`anthropic`, `google`, `groq`, `openrouter`. Eski LiteLLM prefix'leri
-(`gemini/`, `google/`, `groq/`, `openrouter/`) normalize edilir. Settings
-route'lari ve chat provider override path'i bu liste disindaki provider
-anahtarlarini 422 ile reddeder.
-OpenAI model listesi donerken Conduut bilinen model id/prefix'lerine gore
-`reasoning_efforts` bilgisini ekler; `gpt-5*` ve `o*` reasoning destekleyen
-modeller icin chat request'i `reasoning_effort` tasiyabilir. Backend secilen
-effort'u modelin destek listesine karsi validate eder ve Pydantic AI
-`model_settings.openai_reasoning_effort` olarak agent run'a iletir. Conversation
-metadata'si provider/model ile birlikte secilen reasoning effort'u da saklar;
-devam eden chat ayni ayara kilitlenir.
-OpenAI model picker UI'si remote `/v1/models` cagrisi yerine Conduut'un bilinen
-OpenAI model katalogunu dondurur. Bu, lokal gelistirmede OpenAI model listesi
-endpoint'inin ag, quota veya provider API izin problemi yuzunden 502 donup
-settings ekranini kirmasini engeller; provider key dogrulamasi ayri
-`verify_provider_connection` akisinda kalir. Groq ve OpenRouter model listeleri
-hala provider API'sinden dinamik cekilir.
-Chat model selector uyumlulugu icin provider liste endpoint'i yeni
-`users/{uid}/providers` collection'i bos olsa bile aktif
-`users/{uid}/settings/llm` kaydindaki provider'i fallback olarak listeye ekler.
-Model liste endpoint'i de provider collection kaydi yoksa aktif LLM ayari ayni
-provider'a ait oldugunda modelleri dondurebilir. Bu eski settings kaydina sahip
-kullanicilarda selector'in tamamen saklanmasini engeller.
-Provider hata siniflandirmasi auth/model-not-found/rate-limit durumlarina ek
-olarak `insufficient_quota`, quota ve billing mesajlarini ayri yakalar; chat
-SSE error event'i kullaniciya provider quota/billing problemini net soyler.
+## Model Registry, Router ve Provider Factory (ADR-0011)
+
+> **DIKKAT — BYO-provider kaldirildi:** Bu not eskiden kullanicinin Firestore'a
+> kendi provider/model/API key'ini kaydedip chat'te sectigi BYO akisini
+> anlatiyordu (settings/favorites route'lari, OpenAI model picker UI,
+> `users/{uid}/providers` + `settings/llm` fallback, `verify_provider_connection`).
+> **Bu yol [[adr-0011-conduut-managed-tiered-models]] ile tamamen elendi.** Artik
+> kullanici LLM key girmez; Conduut kendi provider key'lerini env'den kullanir.
+
+Aktif yapi 3 dosyaya boluner:
+
+- `src/agent/model_registry.py` — Conduut-yonetimli **3 kademe + router**, named
+  profile'lar icinde. `Tier` (simple/medium/hard) her biri sabit bir
+  `ModelChoice` (provider + model + `ThinkingSpec` + request/tool-call limitleri).
+  Profiller: `default` (onerilen; Medium=Sonnet adaptive, Hard=Gemini Pro HIGH,
+  her tier'in 2.tercihi native GPT), `gpt` (tek-switch full-OpenAI) ve `deepseek`
+  (maliyet bake-off; first-party OpenAI-uyumlu API). `CONDUUT_MODEL_PROFILE` ile
+  secilir; `_validate_profiles()` start'ta yanlis profile'da fail-fast yapar.
+- `src/agent/router.py` — `classify_tier()` aktif profile'in ucuz router modeliyle
+  (thinking OFF, tek istek, structured output) mesaji tier'a siniflar; herhangi
+  bir hatada MEDIUM'a duser (router cokuyse chat bloklanmaz).
+- `src/agent/provider_factory.py` — `build_model(provider, model, api_key)`
+  Conduut'un **kendi** key'inden Pydantic AI model instance'i kurar. Desteklenen
+  provider'lar: `openai`, `anthropic`, `google`, `groq`, `openrouter`, `deepseek`
+  (DeepSeek OpenAI-uyumlu oldugu icin `OpenAIChatModel` + custom `base_url`).
+  `normalize_model_name` eski LiteLLM prefix'lerini (`gemini/`, `google/`,
+  `groq/`, `openrouter/`, ...) temizler; `normalize_provider` liste disindaki
+  provider'i reddeder. `build_model_settings` bir tier'in `ThinkingSpec`'ini
+  saglayici-ozgu `model_settings`'e cevirir (Anthropic `anthropic_thinking`,
+  Google `google_thinking_config`, OpenAI `openai_reasoning_effort`, DeepSeek
+  `extra_body.thinking`).
+
+`classify_provider_error` saglayici SDK hatalarini stabil kullanici mesajlarina
+esler: auth, model-not-found, rate-limit'e ek olarak `insufficient_quota`/quota/
+billing durumlarini ayri yakalar; chat SSE error event'i kullaniciya provider
+quota/billing problemini net soyler.
 
 ## Agent Tools
 
@@ -212,6 +231,9 @@ Kayitli tool'lar:
 - Runtime: `activate_workflow`, `deactivate_workflow`, `execute_workflow`,
   `list_executions`, `analyze_workflow_readiness`, `inspect_execution`.
 - Platform direct action: `run_platform_action`.
+- Credential: `list_credentials`, `attach_credential`, `prepare_api_credential`
+  (agent-managed, [[adr-0013-agent-managed-credentials]]), `add_service_credential`
+  (predefined, [[adr-0015-predefined-credential-library]]).
 - Clarification: `request_user_input`.
 
 ## Artifacts
@@ -319,53 +341,32 @@ saklanir. Gmail send node'u reusable workflow olarak uretildiginde `to`,
 `subject`, `message` runtime field'lari infer edilir ve Gmail parametreleri
 webhook payload expression'larina baglanir. Webhook trigger output'u body'yi
 `$json.body` altinda verdigi icin Webhook + Gmail send workflow'larinda
-compiler/normalizer `={{$json.body.to}}`, `={{$json.body.subject}}` ve
-`={{$json.body.message}}` kullanir.
+normalizer (`agent/repair.py`) `={{$json.body.to}}`, `={{$json.body.subject}}`
+ve `={{$json.body.message}}` kullanir.
 
-`create_workflow_from_plan`, action graph IR icin tercih edilen yoldur. Agent
-`gmail.send`, `sheets.row.append`, `sheets.read_rows` ve `core.filter` gibi
-semantic action primitive'leri, `input.*`/`item.*` ref'leri ve `after`
-baglantilari gonderir. Compiler Webhook/Schedule trigger'i, action node'larini,
-expression'lari, nested `connections` yapisini ve runtime `input_schema`
-metadata'sini uretir. Gmail send -> Google Sheets append log akisi bu yolla
-desteklenir; `sheets.row.append` action'i n8n tarafinda `Prepare Sheets Row`
-Set node'u + Google Sheets Append node'u olarak compile edilir. Sheets Append
-node'u Set cikisini `autoMapInputData` ile yazar. Bu ekstra Set node'u n8n
-Google Sheets append'in bos sheet'te kendi kendine `autoMapInputData`
-fallback'ine gecip onceki Gmail output alanlarini (`id`, `threadId`,
-`labelIds`) yazmasini engeller. Sheet belirtilmemisse ama plan action'i
-`spreadsheet_title`, `spreadsheet_name` veya `document_title` tasiyorsa agent
-direct Sheets API ile spreadsheet'i bir kez provision eder, olusan
-`spreadsheet_id` degerini plan parametrelerine enjekte eder ve workflow
-metadata `resources` alaninda saklar. Title bilgisi de yoksa agent kullanicidan
-gercek Sheet bilgisini ister.
-
-Action factory'ler su an `spec_compiler.py` icindedir. Mevcut Gmail/Sheets
-kapsami icin bu kabul edilebilir; ancak Slack, Calendar veya benzeri ilk yeni
-platform/action eklenirken bu factory'ler Action Registry / platform action pack
-yapisina tasinmalidir. Bu refactor'un amaci n8n'in tum node'larini tamamen
-otomatik anlamak degil; desteklenen platform action'larini reusable,
-deterministic node/subgraph mapping'leri olarak tanimlayip workflow
-kombinasyonlarini dynamic compose etmektir.
-
-`create_workflow_from_spec`, geriye donuk WorkflowSpec IR pilotudur. Desteklenen
-compiler sekilleri:
-
-- `trigger.kind=on_demand` ve tek `send_email`/`gmail` step'i: Webhook + Gmail
-  send workflow'u uretir ve `to`/`subject`/`message` runtime input schema'si
-  kaydeder.
-- `trigger.kind=on_demand` veya gunluk `trigger.kind=schedule` ile
-  `read_sheet_rows`/`google_sheets` -> `filter_items`/`core` ->
-  `send_email`/`gmail`: Google Sheets read, Filter ve Gmail send node'larini
-  deterministic olarak uretir. Bu workflow sheet satiri uzerinden email
-  gonderdigi icin compiler explicit bos `input_schema` dondurur; Gmail runtime
-  input inference bu akista devreye girmez.
-
-Tool LLM'in raw n8n JSON yazmasi yerine desteklenen node/connection yapilarini
-compiler ile uretir, registry'den Webhook/Gmail/Google Sheets/Filter/Schedule
-`typeVersion` bilgisini alir, mevcut validation/readiness/metadata akisini
-kullanir ve unsupported spec veya eksik registry schema durumunda n8n'e side
-effect yapmadan hata dondurur.
+> **DIKKAT — IR compiler yolu kaldirildi ([[adr-0010-json-surface-repair-normalizer]],
+> [[workspace-refactor]] Faz 3):** Bu not eskiden tercih edilen yol olarak
+> `create_workflow_from_plan` (action graph IR) ve `create_workflow_from_spec`
+> (WorkflowSpec IR) tool'larini, bunlari n8n JSON'a ceviren `spec_compiler.py`/
+> `graph_compiler.py`/`blocks.py` derleyicilerini ve `Prepare Sheets Row` Set
+> node'u + `autoMapInputData` gibi compiler-ozgu node uretim numaralarini
+> anlatiyordu. **Tum bu IR tool'lari, schema'lari (WorkflowPlan/WorkflowSpec/
+> WorkflowGraph) ve compiler'lar silindi.**
+>
+> Tek yuzey artik **kompakt native n8n JSON**'dur: model `create_workflow`/
+> `update_workflow` ile dogrudan n8n JSON yazar, `agent/repair.py` deterministik
+> onarir (sub-node main wiring, `{{input.x}}`, `$json.body` atlama vb. uc klasik
+> ham-yol bug'i). Gmail send -> Google Sheets append log akisi hala desteklenir,
+> fakat artik prompt rehberligi + repair ile native JSON uzerinden olusur.
+> Sheet ID yoksa ama istek `spreadsheet_title`/`document_title` tasiyorsa agent
+> direct Sheets API ile spreadsheet'i bir kez provision edip `spreadsheet_id`'yi
+> workflow'a enjekte etme + `resources` metadata davranisini korur; title de
+> yoksa `request_user_input` ile gercek Sheet bilgisini ister.
+>
+> Action Registry / platform action pack refactoru (eski "factory'ler
+> `spec_compiler.py` icinde" notu) artik ileri vadeli bir backlog kalemidir; bkz.
+> [[feature-backlog]] ve [[adr-0005-workflow-spec-compiler]] (ADR-0005/0008/0009
+> ADR-0010 ile **superseded**).
 
 `request_user_input`, kullanicinin otomasyon isteginde gerekli is bilgisi
 eksikse kullanilir. Ornekler: gercek alici email adresleri, gonderilecek
@@ -573,17 +574,22 @@ cevirir. Aksi halde n8n workflow'u API'den kabul etse bile editor
 `src/store/` paketi (Faz 3'te `store.py`'den koleksiyon-bazli bolundu; re-export
 `__init__` ile ayni public yuzey) Firestore kullanir:
 
-- `users/{uid}/settings/llm`
-- `users/{uid}/providers/{provider}`
-- `users/{uid}/settings/favorites`
 - `users/{uid}/conversations/{convId}`
 - `users/{uid}/conversations/{convId}/messages/{messageId}`
-- `oauth_states/{state}`
-- `users/{uid}/connections/google_gmail`
-- `users/{uid}/connections/google_sheets`
 - `users/{uid}/workflow_metadata/{workflowId}`
+- `users/{uid}/connections/{connectionId}` ( or. `google_gmail`, `google_sheets`)
+- `oauth_states/{state}`
 - `users/{uid}/platform_action_audit/{auditId}`
 - `users/{uid}/artifacts/{artifactId}`
+- `users/{uid}/credentials/{credentialId}` (custom HTTP + agent-managed +
+  predefined credential metadata; secret yok)
+- `api_auth_cache/{host}` (global, kullanici-disi; agent-managed auth research
+  cache, secret yok)
+
+> **Kaldirilan koleksiyonlar (BYO-provider, ADR-0011):** eski `settings/llm`,
+> `providers/{provider}` ve `settings/favorites` koleksiyonlari artik yok;
+> kullanici LLM key/model/favorite kaydetmez. `workflow_credentials` da dead
+> legacy cluster olarak kaldirildi (Faz 3, `store/__init__` notuna bkz.).
 
 Artifact preview payload'lari hem conversation message attachment'i olarak
 saklanir hem de dashboard listesi icin `artifacts` collection'ina yazilir.

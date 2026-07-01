@@ -56,19 +56,20 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
 - [[adr-0004-parameterized-workflow-inputs]] - Workflow run sirasinda
   dashboard ve agent'in ortak runtime input contract kullanmasi.
 - [[adr-0005-workflow-spec-compiler]] - Fine-tune yerine WorkflowSpec IR ve
-  deterministic compiler ile n8n JSON uretimini daraltma karari.
+  deterministic compiler ile n8n JSON uretimini daraltma karari. **SUPERSEDED
+  ([[adr-0010-json-surface-repair-normalizer]]); kod Faz 3'te silindi.**
 - [[adr-0006-platform-capability-layer]] - Agent'in n8n builder olmaktan
   platform capability/action katmanina evrilmesi ve Google V1 karari.
 - [[adr-0007-batch-workflow-runs]] - Runtime input alanli workflow'lari
   Conduut tarafinda dosya satirlariyla batch/loop calistirma karari.
 - [[adr-0008-typed-workflow-intent-engine]] - Raw n8n JSON uretimi yerine
-  typed intent + profile engine yoluna gecis karari. **DIKKAT (2026-06-07):
-  implementasyon geri alindi/park edildi; aktif yol hala WorkflowPlan
-  compiler.**
+  typed intent + profile engine yoluna gecis karari. **SUPERSEDED: park edildi
+  (2026-06-07); aktif yol tek-JSON yuzeyi
+  [[adr-0010-json-surface-repair-normalizer]], IR kodu Faz 3'te silindi.**
 - [[adr-0009-workflow-graph-compiler]] - WorkflowGraph IR + genel graph
   compiler (curated block registry + generic n8n: fallback + rol etiketli
-  port cikarimi). **DIKKAT (2026-06-14): [[adr-0010-json-surface-repair-normalizer]]
-  ile model yuzeyinden kaldirildi; artik dahili kutuphane.**
+  port cikarimi). **SUPERSEDED ([[adr-0010-json-surface-repair-normalizer]],
+  2026-06-14); kod Faz 3'te (2026-06-30) tamamen silindi.**
 - [[adr-0010-json-surface-repair-normalizer]] - Tek JSON yuzeyi (kompakt n8n
   JSON) + onarici normalizer (`repair.py`). Model IR yerine native JSON yazar;
   uc klasik ham-yol bug'i (sub-node main wiring, `{{input.x}}`, `$json.body`

@@ -4,7 +4,7 @@ Merkez: [[index]]
 
 Bu not, Conduut'a ileride eklenecek urun/teknik ozellikleri takip etmek icin
 kullanilir. Bug ve regresyonlar [[issue-backlog]] icinde, mimari kararlar ise
-[[adr-0005-workflow-spec-compiler]] gibi ADR notlarinda tutulur.
+[[adr-0010-json-surface-repair-normalizer]] gibi ADR notlarinda tutulur.
 
 ## Kullanim
 
@@ -20,35 +20,40 @@ Her feature maddesi su bilgileri tasimaya calismali:
 
 ### Workflow Action Registry / Platform Action Pack Refactor
 
-- `Durum`: ertelendi; ilk yeni platform/action eklenirken uygulanacak.
+- `Durum`: ertelendi; ilk yeni platform/action eklenirken yeniden
+  degerlendirilecek.
 - `Alan`: agent, n8n-registry
-- `Motivasyon`: Mevcut `WorkflowPlan` action graph dogru yonde calisiyor; fakat
-  action factory'ler `spec_compiler.py` icinde buyumeye baslarsa bakimi
-  zorlasir. Her workflow shape'ini tek tek tanimlamak yerine desteklenen
-  platformlarin reusable semantic action'larini tanimlayan bir Action Registry
-  gerekir.
-- `Kabul kriteri`: `gmail.send`, `sheets.row.append`, `core.filter` gibi
-  action'lar registry/action pack yapisina tasinir; yeni bir platform
-  eklendiginde ornegin `slack.message.send` action'i workflow-shape case'i
-  yazmadan diger action'larla compose edilebilir. Action factory'ler tek node
-  veya `Prepare Sheets Row -> Google Sheets Append` gibi subgraph uretebilir.
-- `Not`: Bu refactor mevcut Gmail/Sheets bugfix'i icin acil degil. Slack,
-  Calendar veya benzeri ilk yeni platform/action eklenirken yapilmasi en
-  dogru zaman.
-- `Ilgili notlar`: [[adr-0005-workflow-spec-compiler]],
-  [[chat-workflow-generation]], [[agent-service]], [[n8n-registry]]
+- `Not (2026-06-30)`: Bu maddenin eski dayanagi olan `WorkflowPlan` action graph
+  IR + `spec_compiler.py` derleyicisi **kaldirildi**
+  ([[adr-0010-json-surface-repair-normalizer]], [[workspace-refactor]] Faz 3).
+  Aktif yol artik tek native n8n JSON yuzeyi + `agent/repair.py`. Dolayisiyla
+  bu refactor "compiler factory'lerini registry'ye tasimak" degil; **native-JSON
+  uzeyi uzerine** reusable semantic action-pack katmani tanimlamak anlamina gelir
+  (yeniden kapsam tanimi gerekir).
+- `Motivasyon`: Her workflow shape'ini prompt/repair ile tek tek ele almak yeni
+  platformlar arttikca olceklenmez; desteklenen platformlarin reusable semantic
+  action'larini (or. `slack.message.send`) tanimlayan bir katman bakimi
+  kolaylastirir.
+- `Kabul kriteri`: yeni bir platform eklendiginde semantic action'lar
+  workflow-shape case'i yazmadan native JSON uretimine compose edilebilir.
+- `Ilgili notlar`: [[adr-0010-json-surface-repair-normalizer]]
+  (ADR-0005/0008/0009 superseded), [[chat-workflow-generation]],
+  [[agent-service]], [[n8n-registry]]
 
-### WorkflowSpec Compiler Genisletmeleri
+### WorkflowSpec Compiler Genisletmeleri (SUPERSEDED)
 
-- `Durum`: fikir
+- `Durum`: superseded; ADR-0010 ile cozuldu.
 - `Alan`: agent, n8n-registry
 - `Motivasyon`: LLM'in uzun n8n JSON uretme hatalarini azaltmak.
-- `Kabul kriteri`: yeni workflow ailesi compact spec ile olusur, compiler side
-  effect yapmadan hata dondurur ve raw `create_workflow` fallback'i korunur.
+- `Not (2026-06-30)`: Bu maddenin onerdigi "compact spec + compiler" yaklasimi
+  ([[adr-0005-workflow-spec-compiler]]) **terk edildi**. Ayni problem (uzun-JSON
+  hatalari) artik tek native-JSON yuzeyi + deterministik `agent/repair.py`
+  normalizer'i ile cozuluyor ([[adr-0010-json-surface-repair-normalizer]]).
+  WorkflowSpec/Plan IR'lari ve compiler'lar silindi.
 - `Ilgili notlar`: [[chat-workflow-generation]], [[n8n-registry]],
-  [[adr-0005-workflow-spec-compiler]]
+  [[adr-0010-json-surface-repair-normalizer]]
 
-### Google Sheets Append/Upsert WorkflowSpec
+### Google Sheets Append/Upsert Reusable Workflow
 
 - `Durum`: fikir
 - `Alan`: agent, oauth
@@ -56,7 +61,9 @@ Her feature maddesi su bilgileri tasimaya calismali:
   kaydeden tekrar kullanilabilir workflow'lar olusturmak.
 - `Kabul kriteri`: Agent kullanicidan sheet/dosya/kolon bilgilerini bir defada
   ister, Webhook runtime input alanlarini kaydeder ve Google Sheets append node'u
-  deterministic compile edilir.
+  native JSON + `repair.py` ile guvenilir uretilir.
+- `Not`: Eski baslik "WorkflowSpec" idi; compiler yolu kaldirildigi icin (ADR-0010)
+  hedef artik native-JSON uretiminin bu akista saglam calismasi.
 - `Ilgili notlar`: [[agent-service]], [[chat-workflow-generation]],
   [[web-app]]
 

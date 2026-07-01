@@ -7,44 +7,42 @@ Chat, Conduut MVP'nin ana urun akisi.
 ## Kullanici Akisi
 
 1. Kullanici Firebase ile giris yapar.
-2. Settings altinda LLM provider API key'i ekler.
-3. `/chat` ekraninda provider ve model secer; secilen model destekliyorsa
-   reasoning effort (`minimal`/`none`/`low`/`medium`/`high`/`xhigh` alt
-   kumesi) de secebilir.
-4. Mesaj gonderir.
-5. Web app `POST /api/chat/send` route'una Firebase token ile istek atar.
-6. Next route FastAPI agent'a proxy eder.
-7. Agent Pydantic AI ile tool calling dongusu calistirir.
-8. Agent n8n REST API uzerinden workflow olusturur/gunceller.
-9. Frontend SSE token'lari ve attachment event'lerini render eder.
+2. `/chat` ekranina mesaj yazar (LLM key/provider/model secimi YOK — bkz. asagi).
+3. Web app `POST /api/chat/send` route'una Firebase token ile istek atar.
+4. Next route FastAPI agent'a proxy eder.
+5. Agent runner mesaji bir tier'a siniflar (router), aktif profile'in o tier
+   modelini Conduut'un kendi key'iyle kurar ve Pydantic AI tool calling
+   dongusu calistirir.
+6. Agent n8n REST API uzerinden workflow olusturur/gunceller (native JSON).
+7. Frontend SSE token/thinking/attachment event'lerini render eder.
+
+> **DIKKAT — BYO-provider kaldirildi ([[adr-0011-conduut-managed-tiered-models]]):**
+> Bu akis eskiden "Settings altinda LLM provider API key'i ekler" ve "provider +
+> model + reasoning effort secer" adimlarini iceriyordu. **Artik yok:** kullanici
+> LLM key girmez, provider/model/effort secmez; model Conduut tarafindan tier
+> router ile otomatik secilir ve Conduut'un env key'leri kullanilir.
 
 ## Yeni Conversation
 
-`/chat` sayfasi provider/model secimini acik tutar. Ilk mesajdan sonra agent
-conversation id dondurur. Web app `conversation-cache` ile yeni mesajlari
-gecici tutar ve `/chat/[conversationId]` sayfasina gecer. Reasoning destekleyen
-OpenAI modellerinde model listesi daha frontend'e gelmeden backend tarafinda
-`reasoning_efforts` ile zenginlestirilir; UI bu alan yoksa secici gostermez.
-Default secim destek varsa `medium` olur.
+`/chat` sayfasi sade bir composer'dir (provider/model/effort secimi yok). Ilk
+mesajdan sonra agent conversation id dondurur. Web app `conversation-cache` ile
+yeni mesajlari gecici tutar ve `/chat/[conversationId]` sayfasina gecer.
 
 ## Devam Conversation
 
-`/chat/[conversationId]` sayfasi conversation detayini yukler. Provider ve model
-conversation metadata'sindan kilitlenir. Reasoning effort secildiyse o da
-metadata'dan kilitlenir. Kullanici ayni conversation icinde model veya
-reasoning effort degistirmez.
+`/chat/[conversationId]` sayfasi conversation detayini yukler. Model secimi her
+mesajda runner'daki tier router tarafindan yapildigi icin conversation'a kilitli
+bir provider/model/effort yoktur.
 
-## Model Selector Uyumlulugu
+## Model Selector (KALDIRILDI)
 
-Yeni chat model selector'i provider/model listesini
-`/api/settings/llm/providers` ve
-`/api/settings/llm/providers/{provider}/models` uzerinden yukler. 2026-05-27
-itibariyla backend bu provider listesinde yeni `providers` collection'i bos
-olsa bile aktif `settings/llm` kaydindaki provider'i fallback olarak dondurur;
-model liste endpoint'i de provider collection kaydi yoksa aktif LLM ayari ayni
-provider'a aitse modelleri dondurebilir. Bu, eski ayar formatina sahip
-kullanicilarda GET 200 donmesine ragmen chat model selector'inin tamamen
-saklanmasini engeller.
+> **DIKKAT (ADR-0011):** Bu bolum eskiden chat model selector'in
+> `/api/settings/llm/providers` ve `.../{provider}/models` endpoint'lerinden
+> provider/model listesi cektigini, eski `settings/llm` kaydini fallback
+> dondurdugunu anlatiyordu. **BYO-provider yolu kaldirildi:** bu BFF route'lari,
+> `providers` collection'i ve chat'teki provider/model selector'in tamami silindi.
+> Model artik backend'de tier router ile otomatik secilir; bkz.
+> [[agent-service]] "Model Registry, Router ve Provider Factory".
 
 ## SSE Event'leri
 
@@ -95,51 +93,32 @@ connection referanslarini node `name` formatina normalize eder; model `1`/`2`
 veya `node1`/`node2` gibi id/sira alias'lari uretirse bunlar n8n'e yazilmadan
 once ilgili node adlarina cevrilir.
 
-Desteklenen Gmail/Sheets/core workflow'lari icin tercih edilen yol artik
-`WorkflowPlan` action graph IR + compiler akisidir. Agent raw
-`nodes/connections` JSON yazmak yerine `create_workflow_from_plan` tool'una
-semantic action listesi verir. Ilk desteklenen action'lar:
+> **DIKKAT — IR/compiler yolu kaldirildi ([[adr-0010-json-surface-repair-normalizer]],
+> [[workspace-refactor]] Faz 3):** Bu bolum eskiden tercih edilen yolun
+> `WorkflowPlan` action graph IR + `create_workflow_from_plan` tool'u (ve eski
+> `WorkflowSpec` + `create_workflow_from_spec`) oldugunu, compiler'in
+> `gmail.send`/`sheets.row.append`/`sheets.read_rows`/`core.filter` gibi semantic
+> action'lardan n8n node/connection ve `Prepare Sheets Row` + `autoMapInputData`
+> yapisini deterministic urettigini anlatiyordu. **Tum IR tool'lari, schema'lari
+> ve compiler'lar (`spec_compiler.py`/`graph_compiler.py`/`blocks.py`) silindi.**
 
-- `gmail.send`
-- `sheets.row.append`
-- `sheets.read_rows`
-- `core.filter`
+Tek yuzey artik **kompakt native n8n JSON**'dur: agent `create_workflow`/
+`update_workflow` ile dogrudan `nodes/connections` JSON yazar; `agent/repair.py`
+deterministik onarir (sub-node main wiring, `{{input.x}}` runtime ref'leri,
+`$json.body` atlama) ve `agent/validation.py` validator pipeline'i yapisal
+kontrol yapar (bkz. asagi). Desteklenen akislar (Gmail send, Gmail send ->
+Google Sheets append log, Sheets read -> Filter -> Gmail send) hala calisir,
+fakat artik prompt rehberligi + repair ile native JSON uzerinden olusur.
 
-Plan parametreleri n8n alan isimleri degil, `to`, `subject`, `message`,
-`spreadsheet_id`, `sheet_name`, `columns`, `field`, `operator`, `value` gibi is
-seviyesindeki isimlerdir. Runtime input baglantilari `{ref: "input.to"}` gibi,
-akistaki mevcut item alanlari `{ref: "item.email"}` gibi ifade edilir. Compiler
-Webhook/Schedule trigger'i, n8n node type/typeVersion degerlerini, expression
-string'lerini, nested `connections` yapisini, Sheets append resourceMapper
-shape'ini ve workflow metadata `input_schema` degerini deterministic uretir.
+Mevcut Sheet ID yoksa ama istek `spreadsheet_title`/`spreadsheet_name`/
+`document_title` tasiyorsa agent direct Sheets API ile spreadsheet'i bir kez
+provision edip `spreadsheet_id`'yi workflow'a yazma + metadata `resources`
+davranisini korur; title de yoksa placeholder uydurmaz, `request_user_input`
+ile ilk eksik gercek is bilgisini sorar.
 
-Gmail send -> Google Sheets append log akisi bu yolla desteklenir: agent once
-`gmail.send`, sonra `sheets.row.append` action'i verir ve append kolonlarini
-`input.to`, `input.subject`, `input.message` ref'lerinden yazar. Compiler bu
-semantic append action'i icin Google Sheets Append oncesine `Prepare Sheets Row`
-Set node'u ekler ve Sheets Append node'unu Set cikisini `autoMapInputData` ile
-yazacak sekilde kurar. Bunun nedeni n8n Google Sheets append node'unun bos
-sheet'te `defineBelow` mapping verilse bile `autoMapInputData` moduna dusmesi;
-Set node'u current item'i hedef kolonlara cevirdigi icin bos veya daha once
-yanlis header yazilmis sheet'lerde de `to`, `subject`, `message` gibi beklenen
-kolonlar yazilir. Mevcut Sheet ID yoksa ama action parametrelerinde
-`spreadsheet_title`, `spreadsheet_name` veya `document_title` varsa agent
-workflow compile oncesi direct Sheets API ile spreadsheet'i bir kez olusturur,
-olusan `spreadsheet_id` degerini workflow'a yazar ve metadata `resources`
-alaninda saklar. Title/isim bilgisi de yoksa placeholder uydurmaz;
-`request_user_input` ile ilk eksik gercek is bilgisini sorar.
-
-Eski `WorkflowSpec` compiler yolu Gmail on-demand ve Google Sheets read rows ->
-Filter -> Gmail send akislari icin geriye donuk uyumluluk olarak korunur, fakat
-yeni desteklenen akislarda agent once `create_workflow_from_plan` kullanmalidir.
-
-Compiler icin orta vadeli yon Action Registry / platform action pack yapisidir.
-Bu, mevcut bugfix icin acil degildir; ilk yeni platform veya action ailesi
-eklenirken uygulanmalidir. Yeni platform eklerken hedef workflow shape'i
-tanimlamak degil, `slack.message.send` gibi reusable semantic action'lar
-tanimlamak ve bunlari mevcut `WorkflowPlan` icinde diger action'larla compose
-etmektir. OAuth/connection eklemek compiler destegi anlamina gelmez; ilgili
-semantic action ve n8n node/subgraph mapping'i de eklenmelidir.
+Action Registry / platform action pack ("reusable `slack.message.send` semantic
+action'lar") fikri artik ileri vadeli bir backlog kalemidir; bkz.
+[[feature-backlog]] (ADR-0005/0008/0009 ADR-0010 ile **superseded**).
 
 ## Direct Platform Actions
 
@@ -324,12 +303,12 @@ sonuc dondurur ve agent yeterli adayi bulamazsa `limit` parametresini artirarak
 tekrar arayabilir; limit registry tarafinda 50 ile sinirlanir.
 
 On-demand Gmail send/reusable email workflow'larda, Gmail send -> Sheets append
-log akislari ve desteklenen Google Sheets satir akisi workflow'larda agent once
-`create_workflow_from_plan` kullanmalidir. Eski `create_workflow_from_spec`
-uyumluluk icin kalir; plan compiler desteklemiyorsa raw `create_workflow`
-fallback'i korunur. Tek seferlik gonderimlerde gerekli runtime input
-tamamlandiktan sonra agent olusan on-demand workflow'u `execute_workflow` ile
-calistirabilir.
+log akislari ve desteklenen Google Sheets satir akisi workflow'larda agent
+`create_workflow`/`update_workflow` ile dogrudan native n8n JSON yazar; `repair.py`
+ve validator pipeline onarir/dogrular. (Eski `create_workflow_from_plan`/`_spec`
+IR tool'lari kaldirildi — ADR-0010.) Tek seferlik gonderimlerde gerekli runtime
+input tamamlandiktan sonra agent olusan on-demand workflow'u `execute_workflow`
+ile calistirabilir.
 
 Agent artik kullanicidan n8n, webhook, workflow veya node terminolojisi
 beklememelidir. "Su mail adreslerine bu paragrafi gonder" gibi dogal dil

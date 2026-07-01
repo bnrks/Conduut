@@ -2,8 +2,10 @@
 
 Merkez: [[index]]
 
-Durum: KARAR GECERLI ama implementasyon GERI ALINDI (parked).
-Tarih: 2026-06-05 (karar), 2026-06-07 (revert).
+Durum: KARAR GECERLI ama implementasyon GERI ALINDI (parked) —
+**SUPERSEDED by [[adr-0010-json-surface-repair-normalizer]]**.
+Tarih: 2026-06-05 (karar), 2026-06-07 (revert), 2026-06-30 (parked
+`workflow_intent` paketi ve tum IR yolu Faz 3'te koddan tamamen kaldirildi).
 
 ## 2026-06-07 Durum Guncellemesi (ONEMLI)
 

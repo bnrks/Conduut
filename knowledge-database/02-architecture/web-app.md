@@ -77,11 +77,15 @@ Baslica route handler'lar:
 - `api/oauth/google/callback`: Google OAuth callback'ini auth header olmadan
   generic agent Google callback endpoint'ine iletir ve connection id ile
   dashboard'a success/error redirect yapar.
-- `api/settings/llm`: aktif provider/model/API key ayarlari.
-- `api/settings/llm/providers`: provider ekleme/listeleme.
-- `api/settings/llm/providers/[provider]/models`: model listeleme.
-- `api/settings/llm/providers/[provider]/verify`: provider key dogrulama.
-- `api/settings/favorites`: favorite modeller.
+- `api/credentials` + `api/credentials/[credentialId]` (+ `/finalize`),
+  `api/credentials/types`, `api/credentials/catalog/...`, `api/credentials/icon`:
+  custom HTTP + agent-managed + predefined credential kutuphanesi BFF'leri.
+
+> **Kaldirildi (BYO-provider, [[adr-0011-conduut-managed-tiered-models]]):** eski
+> `api/settings/llm`, `api/settings/llm/providers`,
+> `.../providers/[provider]/models`, `.../providers/[provider]/verify` ve
+> `api/settings/favorites` BFF route'lari **silindi**. Kullanici artik LLM
+> key/provider/model/favorite kaydetmez; model backend'de tier router ile secilir.
 
 Local `pnpm dev`, Next 16.2.1 icin `next dev --webpack` calistirir. Turbopack
 dev server Windows ortaminda ikinci seviye App Router sayfa ve API route'larini
@@ -102,15 +106,17 @@ saklanamaz. Env veya port degisirse Next dev server yeniden baslatilmalidir.
 
 ## Chat UI
 
-Yeni chat sayfasi model/provider secimine izin verir. Conversation olustuktan
-sonra `conversation-cache` ile gecici cache kullanilir ve router
-`/chat/[conversationId]` sayfasina gider. Devam eden conversation'da provider ve
-model kilitlenir. Model liste endpoint'i her model icin varsa
-`reasoning_efforts` dizisini dondurur; chat input yalnizca destekleyen modelde
-kompakt reasoning effort secicisini gosterir ve secimi chat request body'de
-`reasoning_effort` olarak yollar. Yeni conversation cache'i ve conversation
-detail response'u bu effort'u da tasir, bu yuzden devam mesajlarinda ayar
-degismez.
+Chat sayfasi sade bir composer'dir; **provider/model/reasoning-effort secimi
+yoktur** (BYO-provider [[adr-0011-conduut-managed-tiered-models]] ile kaldirildi).
+Model her mesajda backend'deki tier router tarafindan otomatik secilir. Conversation
+olustuktan sonra `conversation-cache` ile gecici cache kullanilir ve router
+`/chat/[conversationId]` sayfasina gider.
+
+> Eski hali: chat sayfasi model/provider secimine izin verir, devam eden
+> conversation'da provider+model kilitlenir, destekleyen modelde reasoning effort
+> secicisi gosterilirdi. Bu UI tamamen kaldirildi. `Message` tipindeki
+> `provider`/`model`/`reasoningEffort` alanlari yalniz geriye donuk tolere edilen
+> opsiyonel alanlar olarak kaldi (secici degil).
 
 SSE event'leri `src/lib/chat/sse.ts` ile parse edilir:
 
@@ -229,12 +235,12 @@ Mekanizma:
 
 ## UI State
 
-- `chat-store.ts`: conversation sidebar state.
+- `chat-store.ts`: conversation sidebar state (`lib/stores/chat-store.ts`).
 - `ui-store.ts`: `sidebarCollapsed` (masaustu sidebar daraltma) + `mobileNavOpen`
-  (dar-ekran overlay drawer) UI state.
-- `use-model-selector.ts`: provider, model ve favorite model secimi. Backend
-  eski aktif `settings/llm` kaydini provider fallback'i olarak dondurdugu icin
-  yeni chat selector'i sadece yeni provider collection'i dolu olan
-  kullanicilarda degil, eski ayar formatina sahip kullanicilarda da gorunur.
+  (dar-ekran overlay drawer) UI state (`lib/stores/ui-store.ts`).
+
+> **Kaldirildi (ADR-0011):** eski `use-model-selector.ts` hook'u (provider/model/
+> favorite model secimi + `settings/llm` fallback mantigi) **silindi**; chat'te
+> model selector yok, model backend tier router ile otomatik secilir.
 
 Ilgili notlar: [[chat-workflow-generation]], [[dashboard]], [[agent-service]].

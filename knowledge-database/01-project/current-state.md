@@ -22,18 +22,21 @@ once bu not ve kaynak kod esas alinmalidir.
 
 ## Gercek Veriyle Bagli Olanlar
 
-- Chat mesajlari, conversation listesi, provider ayarlari ve favorites
-  Firestore'a yaziliyor.
+- Chat mesajlari, conversation listesi, workflow metadata, credential metadata
+  ve artifact'lar Firestore'a yaziliyor. (BYO provider ayarlari/favorites
+  [[adr-0011-conduut-managed-tiered-models]] ile kaldirildi.)
 - Workflow dashboard shared n8n instance uzerinden workflow listeliyor,
   activate/deactivate/delete ve runtime input ile run islemleri yapiyor.
 - Agent, workflow olustururken `search_n8n_nodes`, `get_node_schema` ve
   `find_workflow_template` tool'larini kullanabiliyor.
-- Workflow generation aktif ana yolu `create_workflow_from_plan` (WorkflowPlan
-  compiler); desteklenen aksiyonlar `gmail.send`, `sheets.row.append`,
-  `sheets.read_rows`, `core.filter`. Bunun disindaki istekler raw
-  `create_workflow` fallback'ine duser. Planlanan typed intent engine
-  ([[adr-0008-typed-workflow-intent-engine]]) 2026-06-07'de geri alindi;
-  detay [[known-issues]].
+- Workflow generation tek kompakt-JSON yuzeyi uzerinden: model
+  `create_workflow`/`update_workflow` ile n8n JSON yazar, `agent/repair.py` bunu
+  deterministik onarir (boilerplate, lineer wiring, AI sub-node portlari,
+  runtime-input expression'lari). Eski IR compiler yollari
+  (`create_workflow_from_plan`/`_spec`/`_graph` + WorkflowPlan/Spec/Graph IR'lari)
+  [[adr-0010-json-surface-repair-normalizer]] ile supersede edildi ve Faz 3'te
+  koddan kaldirildi (eski tasarim: [[adr-0005-workflow-spec-compiler]],
+  [[adr-0008-typed-workflow-intent-engine]], [[adr-0009-workflow-graph-compiler]]).
 - Connections sayfasi Google Gmail ve Sheets permission pack OAuth akisiyle
   gercek connection listeleme, connect/reconnect, pack grant ve disconnect
   islemlerine bagli.
@@ -74,12 +77,11 @@ once bu not ve kaynak kod esas alinmalidir.
 
 ## Dokuman Uyumsuzluklari
 
-- `PROJECT.md` ve eski Copilot talimatlari hedef mimariyi anlatir; mevcut MVP
-  Firestore ve shared n8n kullanir.
-- `.github/copilot-instructions.md` icinde `apps/control-plane` gibi henuz
-  bulunmayan yollar ve eski moduller geciyor.
-- Root `CLAUDE.md` daha gunceldir, ancak yine de kod ve manifestlerle
-  dogrulanmalidir.
+- `PROJECT.md` hedef (uzun vadeli) mimariyi anlatir; mevcut MVP Firestore +
+  shared n8n kullanir — kod yazarken bu not ve kaynak esas alinir.
+- Kanonik agent rehberi `AGENTS.md`; root `CLAUDE.md` ince pointer'dir. Copilot
+  talimat dosyalari (root + `.github/`) Faz 2'de kaldirildi. (bkz.
+  [[workspace-refactor]])
 
 ## Branch Durumu
 

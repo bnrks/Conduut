@@ -181,9 +181,11 @@ senaryosunu kiriyordu. (Credential ozelligi dogru calisti; bu ayri bir bug'di.)
 runtime input uretir/doldurur; agent'in yazdigi somut degerler (sabit alici,
 yukari-node mesaj expression'i) **korunur**. Placeholder alicilar zaten
 `validation._looks_like_placeholder_email` ile yakalandigi icin "bos birak"
-rescue'suna gerek yok. Spec compiler (`_compile_gmail_on_demand`) parametrik
-semasini artik `_GMAIL_RUNTIME_INPUT_FIELDS` ile **acikca** bildiriyor (dolu
-alanlardan infer etmiyor). Prompt'a da: icerik yukari node'dan geliyorsa
+rescue'suna gerek yok. Gmail parametrik semasi artik `_GMAIL_RUNTIME_INPUT_FIELDS`
+ile **acikca** bildirilir (dolu alanlardan infer etmez). _(2026-06-30, Faz 3:
+eskiden bu liste spec compiler `_compile_gmail_on_demand` icindeydi; spec/graph IR
+compiler'lari tamamen kaldirildi, mekanizma artik `tools/runtime_inputs.py`
+icinde.)_ Prompt'a da: icerik yukari node'dan geliyorsa
 referansla + sabit aliciyi hardcode et; runtime input sadece kullanici her
 calistirmada deger girecekse. **237 passed, ruff temiz.** Eski bozuk workflow
 (`7F4Dxt0r6LGUS9Ph`) agent yeniden kurunca duzelir.
@@ -256,8 +258,14 @@ secilen portun Google Console redirect URI listesinde de bulunmasi gerekir.
 
 ## Firestore Plain API Keys
 
-`apps/agent/src/store.py` provider API key'lerini Firestore alanlari olarak
-kaydediyor. Bu MVP icin hizli cozum, production icin guvenlik riski.
+✅ Cozuldu/eskidi (2026-06-30): BYO-provider tamamen kaldirildi
+([[adr-0011-conduut-managed-tiered-models]]) — kullanici LLM provider key'leri
+(`ProviderConnection`/`LLMSettings`/`favorites`) artik yok; modeller
+Conduut-yonetimli env key'leri + tier router ile calisir. Ayrica `store.py`
+artik `src/store/` paketi. Yani "provider API key'leri Firestore'da plaintext"
+sorunu gecersiz. (Tarihsel baglam: eskiden `apps/agent/src/store.py` provider
+API key'lerini Firestore alanlari olarak kaydediyordu — MVP hizli cozumu,
+production guvenlik riskiydi.)
 
 Workflow credential metadata'si da Firestore'da tutuluyor; secret degerleri
 n8n credential store'a yaziliyor. Yine de gercek production icin Vault/Secret
@@ -434,6 +442,15 @@ Belirsiz durumlar (cok-agent, trigger yok) hala `validate_workflow_payload`
 tarafindan reddedilir. Test: `test_repair.py` (9) + `test_tools.py` pipeline
 testi.
 
+**GUNCELLEME (2026-06-30, Faz 3):** IR compiler'lari (`graph_compiler.py`,
+`spec_compiler.py`, `blocks.py`) ve rakip `create_workflow_from_graph`/`_plan`/`_spec`
+tool'lari **tamamen kaldirildi**. Artik tek canli yol kompakt n8n JSON yuzeyi
+(`create_workflow`/`update_workflow`) + `agent/repair.py` hatti. Yani yukaridaki
+uzun "agent neden `create_workflow_from_graph`'i atliyor?" pretraining-onyargisi
+analizi tarihsel/gecersizdir — atlanacak bir IR yolu kalmadi; ham yol = tek yol
+ve uc klasik hatayi `repair.py` deterministik onariyor. (validation.py ve
+prompt.py guard'lari yerinde; build pipeline `tools/build_pipeline.py`.)
+
 **Canli dogrulama (2026-06-15, `HMIb1xyrmhcoZlS8`, gpt-5):** Uc klasik bug da
 YOK — AI Agent `{{ $json.body.company/... }}`, Gmail `{{ $json.body.email }}` +
 `{{ $('AI Agent').first().json.output }}`, chat model `ai_languageModel`
@@ -499,8 +516,11 @@ Canli dogrulandi: throwaway workflow'da `openAiApi` -> `nk5cJsBDTXOt7134`
 agent-kurdugu AI workflow'lari elle credential baglamadan calisiyor.
 
 **Hala bekleyen (tam cozum):** per-user container + kullanici credential saklama
-gelince broker'a evrilecek (kullanicinin kendi `ProviderConnection` key'ini kendi
-container'ina enjekte). Secenekler: (A) credential broker'i API-key'lere genislet,
+gelince broker'a evrilecek (kullanicinin kendi sakladigi API key'ini kendi
+container'ina enjekte). _(Not 2026-06-30: eski BYO `ProviderConnection` modeli
+[[adr-0011-conduut-managed-tiered-models]] ile kaldirildi; bu pending kalem artik
+per-user-container faza ait kullanici credential saklamaya bagli, kaldirilan BYO
+koduna degil.)_ Secenekler: (A) credential broker'i API-key'lere genislet,
 (B) app provider key'ini n8n'e enjekte et, (C) n8n OpenAI node yerine Conduut LLM
 katmani. Bkz. [[issue-backlog]]; per-user container + credential saklama Claude
 memory'sinde (`per-user-container-credentials`).
@@ -518,6 +538,13 @@ veya planlanan mimari bilgilerini iceriyor. Kod yazarken once kaynak kod,
 manifestler, root `AGENTS.md` ve bu vault kontrol edilmeli.
 
 ## Workflow Intent Engine Reverted — Stale .pyc Kalintisi
+
+✅ Cozuldu/eskidi (2026-06-30, Faz 3): Asagidaki tarihsel kayit artik gecersiz.
+`apps/agent/src/agent/workflow_intent/` klasoru (stale `.pyc` kalintisi dahil)
+tamamen silindi. Ayrica o donemde "aktif yol" diye anilan `create_workflow_from_plan`
+ve `spec_compiler.py` da kaldirildi; canli yol tek kompakt-JSON yuzeyi
+(`create_workflow`/`update_workflow`) + `repair.py`
+([[adr-0010-json-surface-repair-normalizer]]). Tarihsel baglam icin asagisi korunur.
 
 2026-06-07: [[adr-0008-typed-workflow-intent-engine]] kararinin 2026-06-05'te
 baslayan ilk implementasyon slice'i kullanici tarafindan geri alindi (birkac

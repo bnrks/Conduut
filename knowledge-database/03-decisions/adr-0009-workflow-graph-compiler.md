@@ -5,7 +5,9 @@ Merkez: [[index]]
 ## Durum
 
 Kabul edildi (2026-06-10). [[adr-0005-workflow-spec-compiler]]'in dogal
-genellestirmesi; onu gecersiz kilmaz, superset olur.
+genellestirmesi; onu gecersiz kilmaz, superset olur. **SUPERSEDED by
+[[adr-0010-json-surface-repair-normalizer]]** (2026-06-14): graph/spec compiler
+model yuzeyinden cikti, kod Faz 3'te (2026-06-30) silindi. Tarihsel kayit.
 
 ## Baglam
 

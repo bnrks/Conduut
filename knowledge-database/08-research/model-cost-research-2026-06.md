@@ -171,7 +171,7 @@ start"), ve **request_limit (20)'i tüketti** → kullanıcıya generic error. K
 **Fix (TDD):** `workflow_runner.execution_retry_guard` (mevcut `workflow_test_attempts`
 desenini aynalar) — gerçek-execution başarısızlıklarını workflow başına sayar; 1.
 başarısızlıkta model bir kez düzeltebilir, **2. başarısızlıkta dur** ve `stop_retrying=true`
-+ talimatla ("tekrar deneme/rebuild etme, kullanıcıya dürüstçe söyle, trigger'ı koru")
+ve talimatla ("tekrar deneme/rebuild etme, kullanıcıya dürüstçe söyle, trigger'ı koru")
 döner. `AgentDeps.workflow_execution_failures` eklendi; `execute_workflow` guard'ı çağırır;
 `prompt.py`'ye trigger-koruma + over-retry kuralı. **306 passed, ruff temiz.** (Sandbox'ın
 aksiyon-node kör noktası ayrı, V1 non-goal — değişmedi.)

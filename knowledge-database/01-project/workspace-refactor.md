@@ -121,6 +121,41 @@ Yapilanlar:
   isaret ediyorlardi; karar ADR govdesinde duruyor). 99-archive snapshot'ina
   dokunulmadi (donmus tarihsel kayit).
 
+## Faz 5 — knowledge-database temizlik (2026-06-30/07-01) ✅
+
+Karar: kullanici "en onemli yer" dedi → dogruluk onceligi, icerik kaybetmeden.
+Uc workstream:
+
+**KB-1 — organizasyon:** yanlis-yazimli `03-desicions/` → `03-decisions/` rename
+(kurallarin bekledigi "ozel migration"; AGENTS.md / CLAUDE.md / vault AGENTS.md
+path ref'leri guncellendi; wikilink'ler basename oldugu icin etkilenmedi).
+Root-seviye notlar klasorlendi: `model-cost-research` + `claude-vs-deepseek` →
+`08-research/`; `agent-platform-self-awareness` → `02-architecture/`; parked
+`new-engine-plan` → `99-archive/`. Root artik yalniz `index.md` + `AGENTS.md`.
+
+**KB-2 — graph hijyeni:** tek gercek kirik wikilink duzeltildi (`known-issues`
+`[[per-user-container-credentials]]` aslinda Claude-memory dosyasiydi, vault notu
+degil → duz referans). Kalan "kirik"lar false-positive (JSON ornekleri, arsivdeki
+`new-engine-plan` basename ile cozulur, `[[not-adi]]` placeholder).
+
+**KB-3 — staleness reconcile (tam):** ADR'ler haric 8 icerik notu guncel kodla
+hizalandi (subagent-destekli + review; bir subagent sonda stall etti ama edit'leri
+tamamdi — bitirdim/dogruladim):
+- `current-state.md`, `agent-service.md` (derin — IR compiler / BYO / settings
+  bolumleri "DIKKAT" blockquote'lariyla tarihsellendi), `chat-workflow-generation.md`,
+  `system-architecture.md`, `web-app.md`, `feature-backlog.md`, `known-issues.md`
+  + `issue-backlog.md` (cozulen/obsolete issue'lar isaretlendi, gercekten acik
+  olanlar korundu — orn. per-user credential injection).
+- Superseded ADR'ler net isaretlendi: [[adr-0005-workflow-spec-compiler]],
+  [[adr-0008-typed-workflow-intent-engine]], [[adr-0009-workflow-graph-compiler]]
+  (hepsi [[adr-0010-json-surface-repair-normalizer]] tarafindan). `index.md`
+  Kararlar girisleri de guncellendi.
+- Markdown hijyeni: liste-item gibi render olan wrapped `+ ` satirlari duzeltildi
+  (adr-0012, known-issues, model-cost-research, chat-workflow-generation).
+
+Not: `.claude/settings.local.json`'daki eski `03-desicions/**` Read-permission
+glob'u local/gitignored — dokunulmadi (en fazla bir kez yeniden izin sorar).
+
 ## Ertelenen kalemler (sonraki turlar)
 
 - ~~Agent-yonerge konsolidasyonu~~ ✅ Faz 2'de yapildi (yukari bak).
@@ -128,9 +163,7 @@ Yapilanlar:
 - **`README.md` bos** (sadece `# Conduut`) — icerik turu, temizlik degil; ertelendi.
 - **Phase C2 (test-helper dedup)** — Faz 3'te bilincli ertelendi (yukari bak);
   dusuk-getiri/yuksek-churn, gelecek tur icin acik.
-- **`agent-service.md` derin reconcile** — not ADR-0010/0011 oncesinden beri
-  kismen stale (compiler/BYO-provider/settings bolumleri); Faz 3'te tepeye banner
-  + somut tool/persistence listesi duzeltildi, tam reconcile ayri is.
+- ~~`agent-service.md` derin reconcile~~ ✅ Faz 5 (KB-3)'te tamamlandi.
 - **Ic-katman bos dizinler**: `apps/agent/apps/` **zaten yok** (Faz 3'te dogrulandi);
   `apps/web/apps/` web turunda kontrol edilecek (CLAUDE.md eksikler #13).
 - ~~`docs/superpowers/` tracking tutarsizligi~~ ✅ Faz 4'te cozuldu (uniform yerel).

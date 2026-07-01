@@ -76,9 +76,11 @@ olmak iyi, fakat mevcut MVP'nin gercek sinirlarini bozmamak daha onemlidir.
 - Direct platform action: [[agent-service]] `run_platform_action` ->
   encrypted Google refresh token -> Gmail/Sheets API -> platform action audit
   log. n8n bu akista execution backend degildir.
-- Workflow platform provisioning: [[agent-service]] `create_workflow_from_plan`
-  -> direct Sheets API ile eksik spreadsheet'i bir kez olusturur -> workflow
-  metadata `resources` -> shared n8n workflow create/update.
+- Workflow platform provisioning: [[agent-service]] `create_workflow`/
+  `update_workflow` (native n8n JSON; eski `create_workflow_from_plan` IR tool'u
+  ADR-0010 ile kaldirildi) -> gerekirse direct Sheets API ile eksik
+  spreadsheet'i bir kez olusturur -> workflow metadata `resources` -> shared n8n
+  workflow create/update (`agent/repair.py` normalize/onarir).
 - Workflow run: dashboard run form veya agent tool -> Conduut run endpoint ->
   runtime input validation -> webhook-triggered workflow call -> n8n execution
   API -> agent/internal verification -> normal assistant text response veya

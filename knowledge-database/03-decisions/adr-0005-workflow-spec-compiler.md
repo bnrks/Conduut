@@ -4,7 +4,10 @@ Merkez: [[index]]
 
 ## Durum
 
-Kabul edildi.
+Kabul edildi — **SUPERSEDED by [[adr-0010-json-surface-repair-normalizer]]**
+(2026-06-14). WorkflowSpec IR + compiler model yuzeyinden kaldirildi; tek
+kompakt-JSON yuzeyi + `repair.py` aktif yol oldu. Compiler kodu Faz 3'te
+(2026-06-30) silindi. Bu ADR tarihsel kayit olarak korunur.
 
 ## Baglam
 
