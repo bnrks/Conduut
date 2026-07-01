@@ -25,7 +25,7 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
   ertelenen kalemler (Faz 1: root dizin temizligi).
 - [[system-architecture]] - MVP mimarisi ve uzun vadeli hedef mimari.
 - [[web-app]] - Next.js frontend, route yapisi, auth ve BFF API route'lari.
-- [[agent-service]] - FastAPI agent, SSE chat flow, LiteLLM ve Firestore.
+- [[agent-service]] - FastAPI agent, SSE chat flow, Pydantic AI ve Firestore.
 - [[agent-platform-self-awareness]] - agent'in platform oz-farkindaligi: statik
   oz-bilgi profili (platform_profile.py) + dinamik kullanici durumu
   (platform_state.py) + disclosure/proaktiflik politikasi.
@@ -34,7 +34,7 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
 - [[artifacts]] - Sheets sonuc onizleme kartlari ve gelecekteki artifact modeli.
 - [[feature-backlog]] - ileride eklenecek ozellikler ve kabul kriterleri.
 - [[dashboard]] - dashboard sayfalari ve real/mock ayrimi.
-- [[agent-instructions]] - Claude, Copilot ve Codex yonerge haritasi.
+- [[agent-instructions]] - Claude Code ve Codex yonerge haritasi (kanonik: `AGENTS.md`).
 - [[known-issues]] - bilinen teknik borclar ve dikkat edilmesi gerekenler.
 - [[issue-backlog]] - kullanicinin fark ettigi cozulmesi gereken sorunlar ve
   buglar icin triage bekleyen not alani.
@@ -111,13 +111,13 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
 
 ## Kaynak Dokumanlar
 
-- Root `AGENTS.md` Codex icin guncel calisma rehberi.
-- Root `CLAUDE.md` 2026-04-13 itibariyla onceki Claude oturumlarindan gelen
-  en guncel proje ozeti.
+- Root `AGENTS.md` — **tum coding agent'lar icin kanonik** calisma rehberi.
+- Root `CLAUDE.md` — ince pointer (AGENTS.md + bu vault'a yonlendirir; eski
+  "son oturum ozeti" gunlugu `99-archive/claude-md-snapshot-2026-06-29.md`'de).
 - `PROJECT.md` uzun vadeli urun ve mimari vizyonu.
 - `BRAND.md` marka, renk, logo ve tipografi kararlari.
-- `.claude/*` ve `.github/copilot-instructions.md` onceki agent talimatlari;
-  bazi kisimlari tarihsel veya stale olabilir.
+- `.claude/*` Claude Code tooling'i (subagent'lar, skills). Copilot talimat
+  dosyalari Faz 2'de kaldirildi.
 
 ## Guncelleme Kurali
 

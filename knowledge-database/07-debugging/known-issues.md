@@ -533,9 +533,10 @@ memory'sinde (`per-user-container-credentials`).
 
 ## Stale Assistant Docs
 
-`.github/copilot-instructions.md` ve root `copilot-instructions.md` bazi eski
-veya planlanan mimari bilgilerini iceriyor. Kod yazarken once kaynak kod,
-manifestler, root `AGENTS.md` ve bu vault kontrol edilmeli.
+✅ Cozuldu (2026-06-30, Faz 2): Copilot talimat dosyalari (root +
+`.github/copilot-instructions.md`) silindi; `CLAUDE.md` ince pointer'a indirildi;
+kanonik rehber artik root `AGENTS.md`. Kod yazarken kaynak kod + `AGENTS.md` +
+bu vault esas alinir.
 
 ## Workflow Intent Engine Reverted — Stale .pyc Kalintisi
 
