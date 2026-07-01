@@ -296,6 +296,73 @@ def _validate_gmail_node(node: Mapping[str, Any], label: str) -> list[str]:
     return errors
 
 
+# Google Sheets row-write ops that need the v4 "columns" mapping. update /
+# appendOrUpdate additionally need a matching column to locate the row. The model
+# often falls back to the pre-v4 shape (dataMode/values/range), which structurally
+# validates but n8n v4 ignores -> the write silently does nothing (e.g. a
+# "mark as sent" step that never marks, so the workflow re-sends every run).
+_GOOGLE_SHEETS_COLUMN_MAP_OPS = {"update", "appendorupdate"}
+_GOOGLE_SHEETS_LEGACY_KEYS = ("dataMode", "values", "range")
+
+
+def _validate_google_sheets_node(node: Mapping[str, Any], label: str) -> list[str]:
+    if node.get("type") != "n8n-nodes-base.googleSheets":
+        return []
+    parameters = node.get("parameters")
+    if not isinstance(parameters, Mapping):
+        return [f"Google Sheets node '{label}' parameters must be an object"]
+    operation = str(parameters.get("operation") or "").lower()
+    if operation not in _GOOGLE_SHEETS_COLUMN_MAP_OPS:
+        return []
+
+    columns = parameters.get("columns")
+    if not isinstance(columns, Mapping):
+        # The pre-v4 shape (dataMode/values/range, no columns object at all).
+        legacy = [key for key in _GOOGLE_SHEETS_LEGACY_KEYS if key in parameters]
+        legacy_note = (
+            f" Drop the pre-v4 keys ({', '.join(legacy)}); n8n v4 ignores them." if legacy else ""
+        )
+        return [
+            f"Google Sheets node '{label}' operation '{operation}' is missing "
+            "parameters.columns. n8n v4 finds the row by a matching column and maps the "
+            'fields to write. Set parameters.columns = {"mappingMode": "defineBelow", '
+            '"matchingColumns": ["<column that identifies the row, e.g. the ID column>"], '
+            '"value": {"<matchColumn>": "={{ $json.<matchColumn> }}", '
+            '"<column>": "<value>"}}.' + legacy_note
+        ]
+
+    matching = columns.get("matchingColumns")
+    match_cols = (
+        [str(item).strip() for item in matching if str(item).strip()]
+        if isinstance(matching, list)
+        else []
+    )
+    if not match_cols:
+        return [
+            f"Google Sheets node '{label}' operation '{operation}' needs "
+            "parameters.columns.matchingColumns set to the column(s) that identify which "
+            "row to update (e.g. the order id). Without it n8n cannot locate the row."
+        ]
+
+    # defineBelow reads the match value from columns.value["<matchCol>"]; auto-map
+    # takes it from the input item, so only defineBelow needs it spelled out.
+    mapping_mode = str(columns.get("mappingMode") or "defineBelow").lower()
+    if mapping_mode == "definebelow":
+        value = columns.get("value")
+        value_map = value if isinstance(value, Mapping) else {}
+        unmatched = [col for col in match_cols if not str(value_map.get(col, "")).strip()]
+        if unmatched:
+            example = unmatched[0]
+            return [
+                f"Google Sheets node '{label}' operation '{operation}' matches on "
+                f"[{', '.join(unmatched)}] but columns.value has no value to match on for "
+                "them. In defineBelow mode the matching column must appear in columns.value "
+                f'with the value to look up, e.g. "{example}": "={{{{ $json.{example} }}}}". '
+                "Without it n8n throws \"The 'Column to Match On' parameter is required\"."
+            ]
+    return []
+
+
 def _normalize_gmail_node(data: dict[str, Any]) -> None:
     if data.get("type") != "n8n-nodes-base.gmail":
         return
@@ -472,6 +539,7 @@ def validate_workflow_payload(
 
         errors.extend(_validate_set_node(node, label))
         errors.extend(_validate_gmail_node(node, label))
+        errors.extend(_validate_google_sheets_node(node, label))
         errors.extend(_validate_input_expressions(node, label))
 
         if _is_trigger_node(node, schema):

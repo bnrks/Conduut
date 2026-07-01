@@ -21,10 +21,15 @@ Repairs performed (in order):
                            options.appendAttribution=false so n8n stops appending
                            "This email was sent automatically with n8n" (only when
                            the model has not made an explicit choice)
-  6. resourceLocators    — bare-string RL params (googleSheets documentId/
+  6. sheets schema       — googleSheets row ops written in the pre-v4 shape
+                           (resource "spreadsheet" + spreadsheetId + range) are
+                           upgraded to v4 (resource "sheet" + documentId +
+                           sheetName); the v4 router has no read/update handler
+                           under "spreadsheet", so the node crashes otherwise
+  7. resourceLocators    — bare-string RL params (googleSheets documentId/
                            sheetName) wrapped into {"__rl", "mode", "value"};
                            a string n8n reads as value/mode undefined otherwise
-  7. webhook response    — webhook triggers get responseMode=lastNode so a Conduut
+  8. webhook response    — webhook triggers get responseMode=lastNode so a Conduut
                            run returns the execution result (default "onReceived"
                            acks immediately -> "no response from n8n")
 
@@ -69,6 +74,14 @@ _RESOURCE_LOCATOR_FIELDS: dict[str, dict[str, str]] = {
     "n8n-nodes-base.googleSheets": {"documentId": "id", "sheetName": "name"},
 }
 
+_GOOGLE_SHEETS_TYPE = "n8n-nodes-base.googleSheets"
+# googleSheets operations that only exist under resource "sheet" (row-level ops).
+# Under resource "spreadsheet" the node's router implements ONLY create/delete of
+# the spreadsheet file, so these resolve to undefined and crash at runtime. The
+# ambiguous ops (create/delete exist under both resources) are deliberately
+# excluded so a genuine "delete spreadsheet" is never rewritten.
+_SHEET_ROW_OPERATIONS = frozenset({"read", "update", "append", "appendOrUpdate", "clear", "remove"})
+
 _INPUT_EXPR_RE = re.compile(r"\{\{\s*input\.(\w+)\s*\}\}")
 _JSON_DOT_RE = re.compile(r"\$json\.(?!body\.)(\w+)")
 _JSON_BRACKET_RE = re.compile(r"""\$json\[(['"])(\w+)\1\]""")
@@ -101,6 +114,7 @@ def repair_workflow(
     _assign_positions(nodes, connections)
     _repair_expressions(nodes, connections, set(runtime_fields), trigger_name, repairs)
     _repair_http_array_indexing(nodes, connections, repairs)
+    _normalize_google_sheets_schema(nodes, repairs)
     _normalize_resource_locators(nodes, repairs)
     _strip_email_attribution(nodes, repairs)
     _normalize_webhook_response_mode(nodes, repairs)
@@ -493,6 +507,61 @@ def _strip_email_attribution(nodes: list[dict[str, Any]], repairs: list[str]) ->
 # ---------------------------------------------------------------------------
 # Stage 6 — resourceLocator normalization
 # ---------------------------------------------------------------------------
+
+
+def _normalize_google_sheets_schema(nodes: list[dict[str, Any]], repairs: list[str]) -> None:
+    """Upgrade legacy/compact googleSheets params to the v4 addressing shape.
+
+    The model frequently emits a pre-v4 mental model for row operations::
+
+        resource: "spreadsheet", operation: "read"/"update", spreadsheetId, range
+
+    On the installed googleSheets v4 node this crashes at runtime: the node's
+    router dispatches resource ``"spreadsheet"`` to a module implementing only
+    ``create``/``delete`` of the spreadsheet file, so ``read``/``update`` resolve
+    to ``undefined`` (``Cannot read properties of undefined (reading 'execute')``).
+    v4 addresses rows via resource ``"sheet"`` + ``documentId``/``sheetName``
+    resourceLocators. This maps deterministically:
+
+    * ``resource: "spreadsheet"`` + a row-level op -> ``resource: "sheet"``
+    * ``spreadsheetId`` (string) -> ``documentId`` (wrapped into an ``__rl`` object
+      by :func:`_normalize_resource_locators`, which runs next)
+    * ``range: "Tab!A:F"`` -> ``sheetName: "Tab"`` (v4 read/update have no free A1
+      range; the tab is the literal before ``!``). A range without ``!`` is
+      ambiguous (bare tab vs bare A1 range) and is left for validation.
+
+    The update column mapping (``dataMode``/``values``) is intentionally left
+    untouched: reconstructing the matching column is ambiguous, so it is deferred
+    to validation / ModelRetry rather than guessed (a wrong guess writes to the
+    wrong row).
+    """
+
+    for node in nodes:
+        if node.get("type") != _GOOGLE_SHEETS_TYPE:
+            continue
+        parameters = node.get("parameters")
+        if not isinstance(parameters, dict):
+            continue
+        name = node.get("name")
+        operation = parameters.get("operation")
+
+        if parameters.get("resource") == "spreadsheet" and operation in _SHEET_ROW_OPERATIONS:
+            parameters["resource"] = "sheet"
+            repairs.append(f"set googleSheets resource=sheet on '{name}'")
+
+        spreadsheet_id = parameters.get("spreadsheetId")
+        if isinstance(spreadsheet_id, str) and spreadsheet_id and "documentId" not in parameters:
+            del parameters["spreadsheetId"]
+            parameters["documentId"] = spreadsheet_id
+            repairs.append(f"mapped googleSheets spreadsheetId->documentId on '{name}'")
+
+        range_value = parameters.get("range")
+        if isinstance(range_value, str) and "!" in range_value and "sheetName" not in parameters:
+            tab = range_value.split("!", 1)[0].lstrip("=").strip().strip("'\"")
+            if tab:
+                del parameters["range"]
+                parameters["sheetName"] = tab
+                repairs.append(f"mapped googleSheets range->sheetName on '{name}'")
 
 
 def _normalize_resource_locators(nodes: list[dict[str, Any]], repairs: list[str]) -> None:

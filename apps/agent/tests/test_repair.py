@@ -569,6 +569,133 @@ def test_google_sheets_locators_left_when_already_rl():
 
 
 # --------------------------------------------------------------------------
+# Google Sheets legacy schema upgrade (resource/spreadsheetId/range -> v4)
+# --------------------------------------------------------------------------
+
+
+def test_google_sheets_spreadsheet_resource_read_upgraded_to_v4():
+    # The model's pre-v4 prior: resource "spreadsheet" + spreadsheetId + range.
+    # On the installed googleSheets v4 node the router dispatches resource
+    # "spreadsheet" to a module implementing only create/delete, so "read"
+    # resolves to undefined -> TypeError at runtime. Upgrade to resource "sheet"
+    # with documentId/sheetName resourceLocators.
+    nodes = [
+        _node("Schedule", "n8n-nodes-base.code", parameters={"jsCode": "return items;"}),
+        _node(
+            "Read Siparisler",
+            "n8n-nodes-base.googleSheets",
+            parameters={
+                "resource": "spreadsheet",
+                "operation": "read",
+                "spreadsheetId": "1efQabc",
+                "range": "Siparisler!A:F",
+                "authentication": "oAuth2",
+            },
+        ),
+    ]
+    connections = {
+        "Schedule": {"main": [[{"node": "Read Siparisler", "type": "main", "index": 0}]]}
+    }
+    repaired, _conns, repairs = repair_workflow(nodes, connections, registry=REGISTRY)
+    sheets = next(n for n in repaired if n["name"] == "Read Siparisler")
+    params = sheets["parameters"]
+    assert params["resource"] == "sheet"
+    assert params["documentId"] == {"__rl": True, "mode": "id", "value": "1efQabc"}
+    assert params["sheetName"] == {"__rl": True, "mode": "name", "value": "Siparisler"}
+    # Legacy keys removed so they can't mislead a later read of the node.
+    assert "spreadsheetId" not in params
+    assert "range" not in params
+    assert any("googleSheets" in r for r in repairs)
+
+
+def test_google_sheets_update_addressing_upgraded_from_expression_range():
+    # An update node addressed a cell via an expression range
+    # ("=Siparisler!E{{ $json.row_number }}"). Extract the tab name (the literal
+    # before "!") into sheetName; the A1 cell part has no v4 equivalent and is
+    # dropped (v4 update matches rows by column, not A1 range).
+    nodes = [
+        _node(
+            "Update Siparis",
+            "n8n-nodes-base.googleSheets",
+            parameters={
+                "resource": "spreadsheet",
+                "operation": "update",
+                "spreadsheetId": "1efQabc",
+                "range": "=Siparisler!E{{ $json.row_number }}",
+                "dataMode": "raw",
+                "values": {"teslim_mail": "evet"},
+            },
+        ),
+    ]
+    repaired, _conns, _ = repair_workflow(nodes, None, registry=REGISTRY)
+    params = next(n for n in repaired if n["name"] == "Update Siparis")["parameters"]
+    assert params["resource"] == "sheet"
+    assert params["documentId"] == {"__rl": True, "mode": "id", "value": "1efQabc"}
+    assert params["sheetName"] == {"__rl": True, "mode": "name", "value": "Siparisler"}
+    assert "range" not in params
+
+
+def test_google_sheets_spreadsheet_create_left_alone():
+    # resource "spreadsheet" + "create" is a genuine spreadsheet-level operation;
+    # it must NOT be rewritten to resource "sheet".
+    nodes = [
+        _node(
+            "Create Doc",
+            "n8n-nodes-base.googleSheets",
+            parameters={"resource": "spreadsheet", "operation": "create", "title": "New"},
+        ),
+    ]
+    repaired, _conns, repairs = repair_workflow(nodes, None, registry=REGISTRY)
+    params = next(n for n in repaired if n["name"] == "Create Doc")["parameters"]
+    assert params["resource"] == "spreadsheet"
+    assert not any("googleSheets" in r for r in repairs)
+
+
+def test_google_sheets_schema_upgrade_idempotent():
+    nodes = [
+        _node("Schedule", "n8n-nodes-base.code", parameters={"jsCode": "return items;"}),
+        _node(
+            "Read",
+            "n8n-nodes-base.googleSheets",
+            parameters={
+                "resource": "spreadsheet",
+                "operation": "read",
+                "spreadsheetId": "1efQabc",
+                "range": "Urunler!A:B",
+            },
+        ),
+    ]
+    connections = {"Schedule": {"main": [[{"node": "Read", "type": "main", "index": 0}]]}}
+    once_nodes, once_conns, _ = repair_workflow(nodes, connections, registry=REGISTRY)
+    twice_nodes, twice_conns, _ = repair_workflow(once_nodes, once_conns, registry=REGISTRY)
+    assert once_nodes == twice_nodes
+    assert once_conns == twice_conns
+
+
+def test_google_sheets_range_without_tab_left_alone():
+    # A range with no "!" is ambiguous (bare tab vs bare A1 range) -> decline,
+    # leave for validation rather than guess a wrong sheetName.
+    nodes = [
+        _node(
+            "Read",
+            "n8n-nodes-base.googleSheets",
+            parameters={
+                "resource": "spreadsheet",
+                "operation": "read",
+                "spreadsheetId": "1efQabc",
+                "range": "A:F",
+            },
+        ),
+    ]
+    repaired, _conns, _ = repair_workflow(nodes, None, registry=REGISTRY)
+    params = next(n for n in repaired if n["name"] == "Read")["parameters"]
+    # resource + documentId still upgraded, but no sheetName invented from "A:F".
+    assert params["resource"] == "sheet"
+    assert "sheetName" not in params
+    assert params["range"] == "A:F"
+
+
+# --------------------------------------------------------------------------
 # Webhook responseMode normalization
 # --------------------------------------------------------------------------
 

@@ -52,7 +52,30 @@ reddedilmek yerine deterministik olarak **onarılır**.
      (`gmail` message send/reply, `emailSend`) `options.appendAttribution=false`
      alır → n8n'in "This email was sent automatically with n8n" footer'ı kapanır.
      Sadece model açıkça bir değer vermemişse set edilir (açık seçim korunur).
-   - **resourceLocator normalizasyonu (Stage 6, 2026-06-18 eklendi):** bazı
+   - **googleSheets şema upgrade'i (Stage 6, 2026-07-01 eklendi):** model
+     googleSheets satır operasyonlarını (read/update/append...) sık sık **v4-öncesi
+     zihinsel modelle** yazıyor: `resource: "spreadsheet"` + `spreadsheetId` +
+     `range: "Tab!A:F"`. Kurulu v4.7 node'da bu **runtime'da crash**: node router'ı
+     `resource: "spreadsheet"`'i yalnız `create`/`delete` implement eden modüle
+     yönlendirir, `read`/`update` → `undefined` → `Cannot read properties of
+     undefined (reading 'execute')`. Deterministik upgrade: `resource: "spreadsheet"`
+     + satır-op → `resource: "sheet"`; `spreadsheetId`(str) → `documentId`;
+     `range: "Tab!..."` → `sheetName: "Tab"` (v4 read/update serbest A1 range almaz;
+     tab = `!`'ten önceki literal, leading `=` sıyrılır). `!` içermeyen range belirsiz
+     (çıplak tab mı, çıplak A1 aralığı mı) → dokunulmaz, validation'a düşer. Bu stage
+     RL sarma'dan (Stage 7) **önce** çalışır ki yeni `documentId`/`sheetName` string'leri
+     `__rl` nesnesine sarılsın. Belirsizlik (create/delete iki resource'ta da var) yüzünden
+     `create`/`delete` **auto-convert edilmez** (gerçek "delete spreadsheet" korunur).
+     **Sınırlama (bilinçli):** update'in kolon-eşlemesi (`dataMode`/`values` → v4
+     `columns`+`matchingColumns`) onarılmaz; doğru eşleşen-kolonu yeniden kurmak
+     belirsizdir (yanlış tahmin **yanlış satıra yazar** = veri bozulması), o yüzden
+     "reddet" tarafına bırakılır: `validation._validate_google_sheets_node` (2026-07-01
+     eklendi) update/appendOrUpdate'te `columns`/`matchingColumns` yoksa hedef v4
+     şekli gösteren `ModelRetry` ipucuyla reddeder (bkz. [[known-issues]] madde 1).
+     Kaynak: 2026-07-01 "Sipariş Onay Maili" testi
+     (kullanıcı log incelemesi); üç Sheets node'u da bu şemayla üretilmiş, aktive
+     edilen workflow ilk Read'de patlıyordu. Detay: [[known-issues]].
+   - **resourceLocator normalizasyonu (Stage 7, 2026-06-18 eklendi):** bazı
      node alanları n8n'de `{"__rl": True, "mode", "value"}` nesnesi bekler ama
      model doğal olarak düz string yazar; n8n bunu value/mode=undefined okur
      (`Can not get sheet 'undefined' ...` runtime hatası). `_RESOURCE_LOCATOR_FIELDS`
@@ -84,6 +107,32 @@ reddedilmek yerine deterministik olarak **onarılır**.
 - Negatif/risk: repair n8n semantiğini taşır (bakım yükü); sessiz yanlış-onarım
   riski → yalnızca tek-doğru-yorum onarılır, belirsiz reddedilir, hepsi loglanır.
 - Geri alınabilir: IR tool kayıtları geri eklenebilir (compiler modülleri yerinde).
+
+## Düzeltme katman hiyerarşisi (addendum 2026-07-01)
+
+Model-çıktısı hatalarını düzeltirken **kanıt-kapılı** bir katman sırası izlenir;
+yeni bir bug en **ucuz doğru** katmandan girer, üst katmana ancak alt katmanın
+yetmediği **kanıtlanınca** çıkılır. "Her tuhaflık için prompt" anti-pattern'i
+bilinçli olarak reddedilir.
+
+1. **`repair.py` (deterministik)** — tek doğru yorum varsa. Bedava, sessiz, tüm
+   modeller, 0 token. Varsayılan hedef.
+2. **`validation.py` + ModelRetry** — belirsiz ama tespit + tarif edilebilirse
+   (fix modelin semantik bilgisini ister, ör. hangi kolon eşleşir). Sadece
+   tetiklenince 1 retry; 0 duran token. İpucu hedef şekli birebir göstermeli.
+3. **`few_shots` (ayrı modül, seçmeli enjekte)** — 1 & 2 kanıtlanmış şekilde
+   toparlamıyorsa **veya** desen çok sıksa. Her istekte duran token → pahalı;
+   bu yüzden görev/node-type'a göre **seçerek** enjekte edilir (istek başı token
+   doğrusal artmaz). Kanonik kompakt-JSON worked example'lar; diğer platformlara
+   da örnek havuzu; loglanan repair corpus'uyla birlikte ileride finetune seti →
+   model prior'ı öğrenince few-shot'lar emekli olur ("geçici finetune").
+4. **Prompt kuralı** — sadece kesişen genel ilke; en pahalı/en zayıf sinyal, son çare.
+
+**Uygulama durumu (2026-07-01):** googleSheets için Katman 1 (Stage 6 sheets
+şema upgrade) + Katman 2 (`_validate_google_sheets_node` update column-map
+kontrolü) kullanıldı. Katman 3 (`few_shots` modülü + Sheets-update örneği)
+**ertelendi**: önce validation+ModelRetry'ın modeli canlıda toparlatıp
+toparlatamadığı gözlenecek; toparlamıyorsa eklenir. Detay: [[known-issues]] madde 1.
 
 ## İlgili
 

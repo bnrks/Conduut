@@ -299,6 +299,141 @@ def test_normalize_workflow_nodes_rewrites_google_sheets_append_resource_to_shee
     assert normalized[2].parameters["resource"] == "sheet"
 
 
+def _sheets_node(parameters: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": "sheets",
+        "name": "Update Siparis",
+        "type": "n8n-nodes-base.googleSheets",
+        "typeVersion": 4.7,
+        "position": [750, 300],
+        "parameters": parameters,
+    }
+
+
+def test_google_sheets_update_missing_columns_fails_validation():
+    # The pre-v4 shape (dataMode/values, no columns) passes structural checks but
+    # n8n v4 ignores it -> the "mark as sent" write silently does nothing.
+    nodes = valid_nodes()
+    nodes.append(
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "update",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "sheetName": {"__rl": True, "mode": "name", "value": "Siparisler"},
+                "dataMode": "raw",
+                "values": {"teslim_mail": "evet"},
+            }
+        )
+    )
+    errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+    joined = "\n".join(errors)
+    assert "Update Siparis" in joined
+    assert "parameters.columns" in joined
+    assert "matchingColumns" in joined
+    # The legacy keys are named so the model knows to drop them.
+    assert "dataMode" in joined
+
+
+def test_google_sheets_update_with_columns_passes_validation():
+    nodes = valid_nodes()
+    nodes.append(
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "update",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "sheetName": {"__rl": True, "mode": "name", "value": "Siparisler"},
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "matchingColumns": ["siparis_no"],
+                    # A complete defineBelow update carries the matching column's
+                    # value (so n8n knows which row) plus the fields to write.
+                    "value": {"siparis_no": "={{ $json.siparis_no }}", "teslim_mail": "evet"},
+                },
+            }
+        )
+    )
+    errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+    assert errors == []
+
+
+def test_google_sheets_update_matching_column_missing_from_value_fails_validation():
+    # defineBelow reads the match value from columns.value["<matchCol>"]; if the
+    # matching column has no value there, n8n throws "The 'Column to Match On'
+    # parameter is required" at runtime. Catch it statically.
+    nodes = valid_nodes()
+    nodes.append(
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "update",
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "matchingColumns": ["siparis_no"],
+                    "value": {"teslim_mail": "evet"},  # no siparis_no -> unmatchable
+                },
+            }
+        )
+    )
+    errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+    joined = "\n".join(errors)
+    assert "siparis_no" in joined
+    assert "columns.value" in joined
+
+
+def test_google_sheets_update_automap_does_not_require_value():
+    # autoMapInputData maps the whole input item, so the matching value comes from
+    # the item -> no explicit columns.value required.
+    nodes = valid_nodes()
+    nodes.append(
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "update",
+                "columns": {
+                    "mappingMode": "autoMapInputData",
+                    "matchingColumns": ["siparis_no"],
+                },
+            }
+        )
+    )
+    errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+    assert not any("columns" in error for error in errors)
+
+
+def test_google_sheets_update_columns_without_matching_fails_validation():
+    nodes = valid_nodes()
+    nodes.append(
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "update",
+                "columns": {"mappingMode": "defineBelow", "value": {"teslim_mail": "evet"}},
+            }
+        )
+    )
+    errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+    assert any("matchingColumns" in error for error in errors)
+
+
+def test_google_sheets_read_not_flagged_for_columns():
+    # Read writes nothing -> no column mapping required.
+    nodes = valid_nodes()
+    nodes.append(
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "read",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "sheetName": {"__rl": True, "mode": "name", "value": "Siparisler"},
+            }
+        )
+    )
+    errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+    assert not any("columns" in error for error in errors)
+
+
 def test_gmail_send_placeholder_recipient_fails_validation():
     nodes = valid_nodes()
     nodes.append(

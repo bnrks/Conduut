@@ -7,6 +7,85 @@ Bu not, repo icinde gorulen bilinen sorunlari ve dikkat noktalarini toplar.
 Kullanicinin yeni fark ettigi ve henuz triage edilmemis sorun/bug notlari icin
 ayri alan: [[issue-backlog]].
 
+## googleSheets v4 sema uyumsuzlugu → workflow runtime'da crash (2026-07-01, fatal kisim cozuldu)
+
+**Belirti:** "Sipariş Onay Maili" testinde (kullanici log incelemesi,
+conversation `6729700d`, DeepSeek V4) agent iki Sheets dosyasi arasinda
+lookup + 15:00 cutoff + mail + "evet"e geri-yazma iceren workflow uretti,
+aktive etti — ama **hicbir zaman calismadi**. Aktivasyondan sadece 8dk gectigi
+icin (schedule 15dk) henuz execution yoktu; ama kok neden execution beklemeden
+belli: tetiklendiginde **ilk node (Read Siparisler) patlardi**.
+
+**Kok neden (kurulu n8n 1.121.3 `Google/Sheet/v2/actions/router.js` ile
+dogrulandi):** model uc Sheets node'unu da v4-oncesi semayla yazmis:
+`resource: "spreadsheet"` + `spreadsheetId` + `range: "Siparisler!A:F"`.
+v4 router `resource: "spreadsheet"`'i yalniz `create`/`delete` implement eden
+module yonlendirir → `spreadsheet["read"]` = `undefined` →
+`Cannot read properties of undefined (reading 'execute')`. Sistematik: yetim
+kopya (`bshJwFCLXEN2lwS6`) da ayni semadaydi. Mevcut Stage 7 RL-normalizer
+`documentId`/`sheetName` beklediginden hic tetiklenmemisti.
+
+**Cozum (TDD, `repair.py` Stage 6, [[adr-0010-json-surface-repair-normalizer]]):**
+`resource:spreadsheet`+satir-op → `sheet`; `spreadsheetId`→`documentId`;
+`range:"Tab!..."`→`sheetName:"Tab"`. RL sarma'dan once calisir. Gercek bozuk
+workflow node'lari fix'ten gecirilerek dogrulandi: iki Read artik gecerli v4.7,
+crash gitti. `test_repair.py` +5 test, tum agent suite **386 passed**, ruff temiz.
+
+**ACIK KALAN (bilincli/triage):**
+1. **Update kolon-eslemesi — validation kontrolu eklendi (2026-07-01).**
+   `Update Siparis`'te `dataMode:"raw"` (gecersiz) + duz `values` var; v4 update
+   `columns`+`matchingColumns` ister. Repair bunu **onarmaz** (dogru eslesen-kolonu
+   yeniden kurmak belirsiz; yanlis tahmin yanlis satira yazar). Bunun yerine
+   `validation._validate_google_sheets_node` (mevcut `_validate_gmail_node`
+   precedent'i) update/appendOrUpdate'te `columns` yoksa/`matchingColumns` bossa
+   **ModelRetry** ile reddeder; ipucu hedef v4 sekli birebir gosterir + birakilacak
+   legacy key'leri (dataMode/values/range) isimlendirir. Gercek bozuk workflow'la
+   uctan-uca dogrulandi (repair→validate → dogru hata). **KALAN risk:** validation
+   tespit eder, duzeltmeyi *model* yapar; v4 update mapping karmasik oldugundan
+   DeepSeek retry'da toparlamazsa yine basarisiz olabilir → daha guclu tamamlayici:
+   prompt.py'a kanonik Sheets-update few-shot
+   ([[adr-0010-json-surface-repair-normalizer]] "few-shot=gecici finetune").
+
+   **Canli dogrulama (2026-07-01, conversation `2a04bf12`, yeniden uretim):**
+   fix'ler CANLI calisti. (a) repair Stage 6 uc Sheets node'unu v4'e cevirdi
+   (loglarda `set googleSheets resource=sheet` / `mapped ...`). (b) `create_workflow`
+   validation'da `Mark Sent` update'inin `columns`'u eksik diye reddedildi (benim
+   hint'im, dataMode/values isimlendirildi). (c) **model tek retry'da toparladi**:
+   ikinci create'te `columns={mappingMode:defineBelow, matchingColumns:["siparis_no"],
+   value:{teslim_mail:"evet"}}` uretti → validation gecti, tek workflow (orphan yok),
+   `$input.all()`+index (onceki `$input.first()` bug'i yok), filtre case-insensitive.
+   Yani validation+ipucu yaklasimi DeepSeek'i **gercekten yakinsatti** — few-shot
+   simdilik gerekmedi. **AMA ikinci-derece bug ortaya cikti + duzeltildi:** model
+   `matchingColumns:["siparis_no"]` dedi ama `columns.value`'ya `siparis_no`
+   **degerini koymadi**; v4 update eslesme degerini `columns.value["siparis_no"]`'dan
+   okur (`update.operation.js:312`), bossa `"The 'Column to Match On' parameter is
+   required"` firlatir. `_validate_google_sheets_node` **genisletildi**: defineBelow'da
+   her `matchingColumns` girdisi `columns.value`'da (dolu) olmali; degilse hedef-ornekli
+   hint. autoMapInputData'da item'dan geldigi icin istenmez. Toplam `test_workflow_validation.py`
+   +6 test, suite **392 passed**, ruff temiz; gercek `Mark Sent` node'u validate edilerek
+   dogrulandi.
+
+   **DIKKAT — su an aktif workflow (`Z4vuApPVx2buTpBy`) bu genisletmeden ONCE
+   uretildi:** `Mark Sent` hala `siparis_no` degeri eksik → tetiklenince (30dk schedule,
+   aktivasyon 12:45 UTC) Mark Sent runtime'da patlar. Iki senaryo: (i) `siparis_saati`
+   kolonu YOKsa Process Orders `undefined.split` ile once patlar → mail gitmez; (ii)
+   kolon VARsa mail gider ama Mark Sent patlar → satir "evet"e yazilmaz → **her tick'te
+   tekrar mail (duplicate)**. Oneri: bu workflow'u DEAKTIVE et + yeniden urettir
+   (genisletilmis validation artik dogru Mark Sent'i zorlar). `siparis_saati` /
+   snake_case header varsayimlari veri-bagimli; validation'da cozulemez (kullanici
+   dogrulamali) — bkz. madde 3.
+2. **Platform gap:** sandbox `test_workflow` + `analyze_workflow_readiness` +
+   `repair.py` ucu de calismayan workflow'u "hazir" gecirdi. Sandbox gate read
+   node'larini gercekten execute edip bu TypeError'i yakalamiyor.
+3. **Ikincil (agent davranisi, ayni testte):** (a) agent tek run'da iki workflow
+   yaratip zayif olani aktive etti, iyi olani (9-node, lookup+row-num) yetim
+   birakti; (b) aktif Code node'u `runOnceForEachItem`'da `$input.first().json`
+   kullaniyor → cok siparişte hepsi ilk siparisin verisiyle gider (`$input.item`
+   olmali); (c) `siparis_saati` kolonu varsayimi — kullanici o kolonu tanimlamadi,
+   yoksa cutoff sessizce hep "ayni gun"; (d) kolon E hardcode + snake_case header
+   varsayimi (`teslim_mail`/`urun_kodlari`) gercek basliklarla eslesmezse kirilir.
+   Bunlar repair kapsaminda degil; prompt/few-shot veya agent-akisi isi.
+
 ## `/api/workflows` N+1 ile ~4sn (2026-06-22, cozuldu — canli dogrulama bekliyor)
 
 **Belirti:** Dashboard workflows sayfasi acilirken uzun suruyordu. Kullanici
