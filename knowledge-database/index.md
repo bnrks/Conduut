@@ -38,6 +38,8 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
 - [[known-issues]] - bilinen teknik borclar ve dikkat edilmesi gerekenler.
 - [[issue-backlog]] - kullanicinin fark ettigi cozulmesi gereken sorunlar ve
   buglar icin triage bekleyen not alani.
+- [[scenario-bank]] - n8n.io gercek workflow'lariyla referans-gudumlu test &
+  genel-duzeltme dongusu (manuel yargi + buyuyen senaryo bankasi, `06-testing/`).
 
 ## Arastirma
 
