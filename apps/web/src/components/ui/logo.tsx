@@ -45,7 +45,9 @@ export function Logo({ variant = "full", className, ...props }: LogoProps) {
     );
   }
 
-  // Full wordmark: "cond" charcoal + "uu" purple + "t" charcoal
+  // Full wordmark: "cond" foreground + "uu" purple + "t" foreground.
+  // foreground tema-duyarlı: light'ta koyu (#18181b), dark'ta açık (#fafafa),
+  // böylece "cond"/"t" her iki temada da okunur, "uu" mor vurgu olarak kalır.
   return (
     <svg
       viewBox="0 0 150 32"
@@ -64,9 +66,9 @@ export function Logo({ variant = "full", className, ...props }: LogoProps) {
         fontWeight="500"
         letterSpacing="-0.8"
       >
-        <tspan fill="var(--color-charcoal, #18181B)">cond</tspan>
+        <tspan fill="var(--color-foreground, #18181B)">cond</tspan>
         <tspan fill="var(--color-conduut-500, #534AB7)">uu</tspan>
-        <tspan fill="var(--color-charcoal, #18181B)">t</tspan>
+        <tspan fill="var(--color-foreground, #18181B)">t</tspan>
       </text>
     </svg>
   );

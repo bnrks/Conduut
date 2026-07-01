@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
+import Script from "next/script";
 import { Toaster } from "sonner";
 import { Providers } from "@/app/providers";
 import "./globals.css";
@@ -15,6 +16,12 @@ const mono = JetBrains_Mono({
   variable: "--font-mono",
   weight: ["400", "500"],
 });
+
+// Theme'i ilk boyamadan ÖNCE senkron uygula (anti-FOUC).
+// localStorage tercihini (yoksa "system") okuyup .dark class'ini <html>'e
+// toggle eder. Boylece theme her sayfada tutarli olur ve Settings'e girince
+// "aniden dark olma" bug'i olusmaz. useTheme sadece Settings toggle'i icin.
+const THEME_INIT_SCRIPT = `(function(){try{var t=localStorage.getItem('conduut-theme')||'system';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.classList.toggle('dark',d);}catch(e){}})();`;
 
 export const metadata: Metadata = {
   title: {
@@ -41,6 +48,11 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
+        {/* Theme init: beforeInteractive => ilk sunucu HTML'inin <head>'ine
+            enjekte edilir, ilk boyamadan once senkron calisir (anti-FOUC). */}
+        <Script id="theme-init" strategy="beforeInteractive">
+          {THEME_INIT_SCRIPT}
+        </Script>
         <Providers>{children}</Providers>
         <Toaster
           position="top-right"
