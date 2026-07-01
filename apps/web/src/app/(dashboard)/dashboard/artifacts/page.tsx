@@ -2,14 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ExternalLink, FileSearch, Mail, MessageSquare, Table2, Trash2 } from "lucide-react";
+import { CheckSquare, ExternalLink, FileSearch, Mail, MessageSquare, Table2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ServiceLogo } from "@/components/dashboard/service-logo";
+import { BulkActionBar } from "@/components/dashboard/bulk-action-bar";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { useAuth } from "@/hooks/use-auth";
+import { useMultiSelect } from "@/hooks/use-multi-select";
+import { cn } from "@/lib/utils";
 import type {
   ArtifactPreviewRow,
   ArtifactPreviewTable,
@@ -287,6 +291,10 @@ function buildDashboardItems(artifacts: ArtifactRecord[]): DashboardArtifactItem
   );
 }
 
+function itemArtifactIds(item: DashboardArtifactItem): string[] {
+  return item.kind === "sheet" ? item.artifactIds : [item.artifact.id];
+}
+
 function PreviewTable({ table }: { table: ArtifactPreviewTable }) {
   const columns = table.columns.slice(0, 5);
   const rows = table.rows.slice(0, 4);
@@ -393,10 +401,16 @@ function DeleteArtifactButton({
 function SheetsArtifactCard({
   item,
   deleting,
+  selectable,
+  selected,
+  onToggleSelect,
   onDelete,
 }: {
   item: SheetArtifactItem;
   deleting: boolean;
+  selectable: boolean;
+  selected: boolean;
+  onToggleSelect: (item: SheetArtifactItem) => void;
   onDelete: (item: SheetArtifactItem) => void;
 }) {
   const title = item.title ?? (item.sheetName ? `${item.sheetName} sheet` : "Google Sheet");
@@ -406,9 +420,25 @@ function SheetsArtifactCard({
   ].filter(Boolean);
 
   return (
-    <article className="overflow-hidden rounded-lg border border-border bg-card text-foreground">
+    <article
+      onClick={selectable ? () => onToggleSelect(item) : undefined}
+      className={cn(
+        "overflow-hidden rounded-lg border border-border bg-card text-foreground",
+        selectable && "cursor-pointer",
+        selectable && selected && "ring-2 ring-conduut-500"
+      )}
+    >
       <div className="flex items-start justify-between gap-3 px-4 py-4">
         <div className="flex min-w-0 items-start gap-3">
+          {selectable && (
+            <Checkbox
+              checked={selected}
+              onCheckedChange={() => onToggleSelect(item)}
+              onClick={(event) => event.stopPropagation()}
+              aria-label={`Select ${title}`}
+              className="mt-1"
+            />
+          )}
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted">
             <ServiceLogo service="google_sheets" className="h-5 w-5" />
           </div>
@@ -440,11 +470,13 @@ function SheetsArtifactCard({
               <ExternalLink className="h-3.5 w-3.5" />
             </a>
           )}
-          <DeleteArtifactButton
-            label={`Delete ${title}`}
-            disabled={deleting}
-            onDelete={() => onDelete(item)}
-          />
+          {!selectable && (
+            <DeleteArtifactButton
+              label={`Delete ${title}`}
+              disabled={deleting}
+              onDelete={() => onDelete(item)}
+            />
+          )}
         </div>
       </div>
 
@@ -479,10 +511,16 @@ function SheetsArtifactCard({
 function GenericArtifactCard({
   item,
   deleting,
+  selectable,
+  selected,
+  onToggleSelect,
   onDelete,
 }: {
   item: GenericArtifactItem;
   deleting: boolean;
+  selectable: boolean;
+  selected: boolean;
+  onToggleSelect: (item: GenericArtifactItem) => void;
   onDelete: (item: GenericArtifactItem) => void;
 }) {
   const artifact = item.artifact;
@@ -491,9 +529,25 @@ function GenericArtifactCard({
     artifact.message && Object.keys(artifact.message).length > 0 ? artifact.message : undefined;
 
   return (
-    <article className="overflow-hidden rounded-lg border border-border bg-card text-foreground">
+    <article
+      onClick={selectable ? () => onToggleSelect(item) : undefined}
+      className={cn(
+        "overflow-hidden rounded-lg border border-border bg-card text-foreground",
+        selectable && "cursor-pointer",
+        selectable && selected && "ring-2 ring-conduut-500"
+      )}
+    >
       <div className="flex items-start justify-between gap-3 px-4 py-4">
         <div className="flex min-w-0 items-start gap-3">
+          {selectable && (
+            <Checkbox
+              checked={selected}
+              onCheckedChange={() => onToggleSelect(item)}
+              onClick={(event) => event.stopPropagation()}
+              aria-label={`Select ${artifact.title}`}
+              className="mt-1"
+            />
+          )}
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted">
             <ServiceLogo service={artifact.service} className="h-5 w-5" />
           </div>
@@ -525,11 +579,13 @@ function GenericArtifactCard({
               <ExternalLink className="h-3.5 w-3.5" />
             </a>
           )}
-          <DeleteArtifactButton
-            label={`Delete ${artifact.title}`}
-            disabled={deleting}
-            onDelete={() => onDelete(item)}
-          />
+          {!selectable && (
+            <DeleteArtifactButton
+              label={`Delete ${artifact.title}`}
+              disabled={deleting}
+              onDelete={() => onDelete(item)}
+            />
+          )}
         </div>
       </div>
       {messagePreview ? (
@@ -562,10 +618,12 @@ function GenericArtifactCard({
 export default function ArtifactsPage() {
   const { user, loading: authLoading } = useAuth();
   const confirm = useConfirm();
+  const selection = useMultiSelect();
   const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [serviceFilter, setServiceFilter] = useState<ServiceFilter>("all");
   const [deletingIds, setDeletingIds] = useState<Set<string>>(() => new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams({ limit: "50" });
@@ -607,6 +665,43 @@ export default function ArtifactsPage() {
 
   const dashboardItems = useMemo(() => buildDashboardItems(artifacts), [artifacts]);
 
+  const runDelete = async (artifactIds: string[]) => {
+    if (!user || artifactIds.length === 0) return;
+    const previous = artifacts;
+    setDeletingIds((current) => new Set([...current, ...artifactIds]));
+    setArtifacts((current) => current.filter((artifact) => !artifactIds.includes(artifact.id)));
+    try {
+      const token = await user.getIdToken();
+      const results = await Promise.allSettled(
+        artifactIds.map((artifactId) =>
+          fetch(`/api/artifacts/${encodeURIComponent(artifactId)}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${token}` },
+          }).then((response) => {
+            if (!response.ok) throw new Error("Delete failed");
+          })
+        )
+      );
+      const failures = results.filter((result) => result.status === "rejected").length;
+      if (failures > 0) {
+        setArtifacts(previous);
+        void loadArtifacts(); // resync truth from server
+        toast.error(`${artifactIds.length - failures} deleted, ${failures} failed.`);
+      } else {
+        toast.success(artifactIds.length > 1 ? "Artifact previews deleted." : "Artifact deleted.");
+      }
+    } catch (error) {
+      setArtifacts(previous);
+      toast.error(error instanceof Error ? error.message : "Artifact could not be deleted.");
+    } finally {
+      setDeletingIds((current) => {
+        const next = new Set(current);
+        artifactIds.forEach((artifactId) => next.delete(artifactId));
+        return next;
+      });
+    }
+  };
+
   const deleteArtifacts = async (artifactIds: string[], title: string) => {
     if (!user || artifactIds.length === 0) return;
     const confirmed = await confirm({
@@ -620,35 +715,25 @@ export default function ArtifactsPage() {
       tone: "danger",
     });
     if (!confirmed) return;
+    await runDelete(artifactIds);
+  };
 
-    const previous = artifacts;
-    setDeletingIds((current) => new Set([...current, ...artifactIds]));
-    setArtifacts((current) => current.filter((artifact) => !artifactIds.includes(artifact.id)));
-    try {
-      const token = await user.getIdToken();
-      const responses = await Promise.all(
-        artifactIds.map((artifactId) =>
-          fetch(`/api/artifacts/${encodeURIComponent(artifactId)}`, {
-            method: "DELETE",
-            headers: { Authorization: `Bearer ${token}` },
-          })
-        )
-      );
-      const failed = responses.find((response) => !response.ok);
-      if (failed) {
-        throw new Error(await getErrorMessage(failed, "Artifact could not be deleted."));
-      }
-      toast.success(artifactIds.length > 1 ? "Artifact previews deleted." : "Artifact deleted.");
-    } catch (error) {
-      setArtifacts(previous);
-      toast.error(error instanceof Error ? error.message : "Artifact could not be deleted.");
-    } finally {
-      setDeletingIds((current) => {
-        const next = new Set(current);
-        artifactIds.forEach((artifactId) => next.delete(artifactId));
-        return next;
-      });
-    }
+  const handleBulkDelete = async () => {
+    const selectedItems = dashboardItems.filter((item) => selection.isSelected(item.key));
+    const ids = selectedItems.flatMap(itemArtifactIds);
+    if (ids.length === 0) return;
+    const confirmed = await confirm({
+      title: "Delete artifacts?",
+      description: `${ids.length} artifact preview(s) across ${selectedItems.length} card(s) will be removed from Conduut.`,
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    setBulkDeleting(true);
+    await runDelete(ids);
+    setBulkDeleting(false);
+    selection.exit();
   };
 
   return (
@@ -663,22 +748,48 @@ export default function ArtifactsPage() {
         </Link>
       </div>
 
-      <div className="mb-6 flex items-center gap-1 rounded-lg border border-border bg-card p-1">
-        {FILTERS.map((filter) => (
-          <button
-            key={filter.value}
-            type="button"
-            onClick={() => setServiceFilter(filter.value)}
-            className={`rounded-md px-3 py-1 text-[13px] font-medium transition-colors ${
-              serviceFilter === filter.value
-                ? "bg-muted text-foreground"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {filter.label}
-          </button>
-        ))}
+      <div className="mb-6 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-1">
+          {FILTERS.map((filter) => (
+            <button
+              key={filter.value}
+              type="button"
+              onClick={() => setServiceFilter(filter.value)}
+              className={`rounded-md px-3 py-1 text-[13px] font-medium transition-colors ${
+                serviceFilter === filter.value
+                  ? "bg-muted text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {filter.label}
+            </button>
+          ))}
+        </div>
+        <Button
+          type="button"
+          variant={selection.selecting ? "default" : "outline"}
+          size="sm"
+          onClick={() => (selection.selecting ? selection.exit() : selection.enter())}
+          disabled={dashboardItems.length === 0}
+          className="gap-1.5"
+        >
+          <CheckSquare className="h-4 w-4" />
+          {selection.selecting ? "Done" : "Select"}
+        </Button>
       </div>
+
+      {selection.selecting && (
+        <BulkActionBar
+          count={selection.selectedCount}
+          total={dashboardItems.length}
+          allSelected={dashboardItems.length > 0 && selection.selectedCount === dashboardItems.length}
+          busy={bulkDeleting}
+          onSelectAll={() => selection.selectAll(dashboardItems.map((item) => item.key))}
+          onClear={selection.clear}
+          onCancel={selection.exit}
+          onDelete={() => void handleBulkDelete()}
+        />
+      )}
 
       {loading ? (
         <div className="flex justify-center py-24">
@@ -686,25 +797,33 @@ export default function ArtifactsPage() {
         </div>
       ) : artifacts.length > 0 ? (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          {dashboardItems.map((item) => (
+          {dashboardItems.map((item) =>
             item.kind === "sheet" ? (
               <SheetsArtifactCard
                 key={item.key}
                 item={item}
                 deleting={item.artifactIds.some((artifactId) => deletingIds.has(artifactId))}
-                onDelete={(sheetItem) => void deleteArtifacts(sheetItem.artifactIds, sheetItem.title ?? "Google Sheet")}
+                selectable={selection.selecting}
+                selected={selection.isSelected(item.key)}
+                onToggleSelect={(sheetItem) => selection.toggle(sheetItem.key)}
+                onDelete={(sheetItem) =>
+                  void deleteArtifacts(sheetItem.artifactIds, sheetItem.title ?? "Google Sheet")
+                }
               />
             ) : (
               <GenericArtifactCard
                 key={item.key}
                 item={item}
                 deleting={deletingIds.has(item.artifact.id)}
+                selectable={selection.selecting}
+                selected={selection.isSelected(item.key)}
+                onToggleSelect={(genericItem) => selection.toggle(genericItem.key)}
                 onDelete={(genericItem) =>
                   void deleteArtifacts([genericItem.artifact.id], genericItem.artifact.title)
                 }
               />
             )
-          ))}
+          )}
         </div>
       ) : (
         <div className="flex flex-col items-center justify-center py-24 text-center">
