@@ -75,6 +75,15 @@ Webpack dev server tercih edilir.
   ister; yanlis menu tiklamasi veya stale UI durumunda dogrudan silme
   engellenir. Dialog altyapisi `ConfirmDialogProvider` + `useConfirm()`
   olarak reusable yazildi ve native `window.confirm` kullanimi kaldirildi.
+- Workflow listesinde **toplu secim** modu vardir: toolbar'daki `Select`
+  toggle'i secim moduna girer; kartlarda checkbox belirir, kart-ici
+  Run/activate/tekil-sil gizlenir, ustte `BulkActionBar` (N selected /
+  Select all / Cancel / Delete) cikar. Toplu silme simdilik tek toplu
+  aksiyondur; backend'e batch endpoint eklenmedi — tekil
+  `DELETE /api/workflows/{id}` cagrilari `Promise.allSettled` ile paralel
+  yapilir, kismi hata "N deleted, M failed" toast + refetch ile resync edilir.
+  Paylasilan parcalar: `components/ui/checkbox.tsx`,
+  `hooks/use-multi-select.ts`, `components/dashboard/bulk-action-bar.tsx`.
 - Activate/deactivate hatalarinda frontend artik agent/n8n hata mesajini
   gosterir. Eksik credential gibi durumlar genel `Could not update workflow
   status` mesaji arkasinda saklanmaz.
@@ -137,6 +146,11 @@ MVP siniri: shared n8n nedeniyle workflow'lar user ownership ile filtrelenmez.
   preview silindiginde ilgili artifact dokumani kaldirilir; Sheets resource
   karti birden fazla snapshot'i grupluyorsa silme aksiyonu o resource kartina
   ait tum preview dokumanlarini kaldirir.
+- Artifacts listesinde de ayni **toplu secim + toplu silme** deseni vardir
+  (paylasilan `useMultiSelect` + `BulkActionBar`, workflows ile ortak). Secim
+  kart bazlidir; bir Sheets karti gruplu oldugundan silmede altindaki tum
+  `artifactIds` duzlestirilir. `deleteArtifacts` artik `Promise.allSettled`
+  kullanir (kismi hata toast + refetch).
 - Tam spreadsheet/editor Conduut icinde acilmaz; kart yalniz kucuk preview ve
   Google Sheets `Open` linki tasir.
 - Bos durumda kullanici chat'e yonlendirilir.

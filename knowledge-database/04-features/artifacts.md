@@ -125,6 +125,12 @@ zaten dogru etiketler (degisiklik gerekmedi). Yeni testler:
 - `DELETE /api/artifacts/{artifactId}` current user altindaki kalici preview
   dokumanini siler. Chat message attachment snapshot'i conversation history'de
   kalmaya devam eder.
+- Dashboard `Artifacts` sayfasi toplu secim + toplu silmeyi destekler:
+  toolbar `Select` toggle'i, kart checkbox'lari, `BulkActionBar` (workflows ile
+  ortak `useMultiSelect` + `BulkActionBar`). Secim kart bazli; Sheets grup karti
+  secilince altindaki tum `artifactId`'ler silinir. Batch endpoint yok; tekil
+  `DELETE /api/artifacts/{id}` cagrilari `Promise.allSettled` ile paralel,
+  kismi hata toast + refetch.
 - Dashboard gosterimi backend'in dondurdugu ham action snapshot'larini
   degistirmez; yalniz UI'da `spreadsheetId`/URL bazli gruplayip spreadsheet
   adini, sheet/range bilgisini, son tarihi ve guvenli kucuk veri preview'ini
