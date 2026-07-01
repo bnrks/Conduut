@@ -177,7 +177,8 @@ Dogrulama: n8n-registry 9 passed, agent 381 passed (bagimli suite), ruff temiz.
 
 - ~~Agent-yonerge konsolidasyonu~~ ✅ Faz 2'de yapildi (yukari bak).
 - ~~`.gitignore` `*.md` blanket kurali~~ ✅ Faz 2'de kaldirildi.
-- **`README.md` bos** (sadece `# Conduut`) — icerik turu, temizlik degil; ertelendi.
+- ~~`README.md` bos~~ ✅ Yazildi (ozlu Ingilizce giris noktasi: ne oldugu +
+  monorepo yapisi + setup/verification + kanonik dokumanlara linkler; tekrar etmez).
 - **Phase C2 (test-helper dedup)** — Faz 3'te bilincli ertelendi (yukari bak);
   dusuk-getiri/yuksek-churn, gelecek tur icin acik.
 - ~~`agent-service.md` derin reconcile~~ ✅ Faz 5 (KB-3)'te tamamlandi.
