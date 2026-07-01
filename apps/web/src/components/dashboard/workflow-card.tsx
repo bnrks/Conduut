@@ -3,6 +3,7 @@
 import { Clock, Play, Trash2, Zap } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Spinner } from "@/components/ui/spinner";
 import type { Workflow, WorkflowStatus } from "@/types/workflow";
 import { cn } from "@/lib/utils";
@@ -30,6 +31,9 @@ function statusLabel(status: WorkflowStatus): string {
 interface WorkflowCardProps {
   workflow: Workflow;
   isRunning?: boolean;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (workflow: Workflow) => void;
   onRun?: (workflow: Workflow) => void;
   onToggle?: (workflow: Workflow) => void;
   onDelete?: (workflow: Workflow) => void;
@@ -38,31 +42,48 @@ interface WorkflowCardProps {
 export function WorkflowCard({
   workflow,
   isRunning,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
   onRun,
   onToggle,
   onDelete,
 }: WorkflowCardProps) {
   return (
-    <Card interactive className="flex flex-col">
+    <Card
+      interactive
+      onClick={selectable ? () => onToggleSelect?.(workflow) : undefined}
+      className={cn("flex flex-col", selectable && selected && "ring-2 ring-conduut-500")}
+    >
       <CardContent className="flex flex-col gap-3 p-5">
         {/* Header row */}
         <div className="flex items-start justify-between gap-2">
-          <div className="group relative flex min-w-0 max-w-full items-center gap-2">
-            <span className="block truncate text-[15px] font-medium text-foreground">
-              {workflow.name}
-            </span>
-            <span
-              role="tooltip"
-              className="pointer-events-none invisible absolute left-0 top-full z-40 mt-1 max-w-xs rounded-md border border-border bg-card px-2.5 py-1.5 text-[12px] font-medium leading-snug text-foreground opacity-0 shadow-lg shadow-black/10 transition-opacity group-hover:visible group-hover:opacity-100"
-            >
-              {workflow.name}
-            </span>
+          <div className="flex min-w-0 max-w-full items-center gap-2">
+            {selectable && (
+              <Checkbox
+                checked={selected}
+                onCheckedChange={() => onToggleSelect?.(workflow)}
+                onClick={(event) => event.stopPropagation()}
+                aria-label={`Select ${workflow.name}`}
+              />
+            )}
+            <div className="group relative flex min-w-0 items-center gap-2">
+              <span className="block truncate text-[15px] font-medium text-foreground">
+                {workflow.name}
+              </span>
+              <span
+                role="tooltip"
+                className="pointer-events-none invisible absolute left-0 top-full z-40 mt-1 max-w-xs rounded-md border border-border bg-card px-2.5 py-1.5 text-[12px] font-medium leading-snug text-foreground opacity-0 shadow-lg shadow-black/10 transition-opacity group-hover:visible group-hover:opacity-100"
+              >
+                {workflow.name}
+              </span>
+            </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <Badge variant={statusBadgeVariant(workflow.status)}>
               {statusLabel(workflow.status)}
             </Badge>
-            {onDelete && (
+            {!selectable && onDelete && (
               <button
                 type="button"
                 className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -99,45 +120,47 @@ export function WorkflowCard({
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
-            {onRun && (
+          {!selectable && (
+            <div className="flex items-center gap-2">
+              {onRun && (
+                <button
+                  type="button"
+                  disabled={isRunning}
+                  className={cn(
+                    "flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    isRunning && "cursor-not-allowed opacity-70 hover:bg-transparent hover:text-muted-foreground"
+                  )}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!isRunning) onRun(workflow);
+                  }}
+                >
+                  {isRunning ? <Spinner size="sm" /> : <Play className="h-3.5 w-3.5" />}
+                  {isRunning ? "Running…" : "Run"}
+                </button>
+              )}
+
               <button
-                type="button"
-                disabled={isRunning}
-                className={cn(
-                  "flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  isRunning && "cursor-not-allowed opacity-70 hover:bg-transparent hover:text-muted-foreground"
-                )}
+                role="switch"
+                aria-checked={workflow.status === "active"}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (!isRunning) onRun(workflow);
+                  onToggle?.(workflow);
                 }}
-              >
-                {isRunning ? <Spinner size="sm" /> : <Play className="h-3.5 w-3.5" />}
-                {isRunning ? "Running…" : "Run"}
-              </button>
-            )}
-
-            <button
-              role="switch"
-              aria-checked={workflow.status === "active"}
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggle?.(workflow);
-              }}
-              className={cn(
-                "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                workflow.status === "active" ? "bg-conduut-500" : "bg-gray-200"
-              )}
-            >
-              <span
                 className={cn(
-                  "pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm ring-0 transition-transform duration-200",
-                  workflow.status === "active" ? "translate-x-4" : "translate-x-0"
+                  "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  workflow.status === "active" ? "bg-conduut-500" : "bg-gray-200"
                 )}
-              />
-            </button>
-          </div>
+              >
+                <span
+                  className={cn(
+                    "pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm ring-0 transition-transform duration-200",
+                    workflow.status === "active" ? "translate-x-4" : "translate-x-0"
+                  )}
+                />
+              </button>
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>
