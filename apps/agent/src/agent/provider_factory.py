@@ -9,6 +9,8 @@ turns a tier's :class:`ThinkingSpec` into provider-specific ``model_settings``.
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
+from openai import AsyncOpenAI
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.groq import GroqModel
@@ -30,6 +32,27 @@ SUPPORTED_PROVIDERS = frozenset({"openai", "anthropic", "google", "groq", "openr
 # DeepSeek ships an OpenAI-compatible API, so we reuse OpenAIChatModel with a
 # custom base_url (see model-cost-research-2026-06 / deepseek bake-off).
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+
+# The OpenAI SDK defaults to a 600s (10-min) request timeout, so a hung DeepSeek
+# stream froze whole agent runs for ~10 minutes before erroring (ReadTimeout).
+# Cap it: no bytes for 120s fails fast and the SDK retries, without cutting off
+# healthy long generations (streamed chunks keep the read alive).
+_OPENAI_COMPAT_TIMEOUT = httpx.Timeout(connect=15.0, read=120.0, write=60.0, pool=15.0)
+
+
+def _openai_compatible_client(api_key: str, base_url: str | None = None) -> AsyncOpenAI:
+    """AsyncOpenAI client with a stall-safe timeout (shared by openai + deepseek,
+    both OpenAI-compatible). Overrides the SDK's 600s default so a stalled stream
+    fails in ~2min and retries instead of freezing the run."""
+
+    kwargs: dict[str, Any] = {
+        "api_key": api_key,
+        "timeout": _OPENAI_COMPAT_TIMEOUT,
+        "max_retries": 2,
+    }
+    if base_url:
+        kwargs["base_url"] = base_url
+    return AsyncOpenAI(**kwargs)
 
 
 @dataclass(frozen=True)
@@ -135,11 +158,16 @@ def build_model(provider: str, model: str, api_key: str) -> Any:
 
     match provider_key:
         case "openai":
-            return OpenAIChatModel(model_name, provider=OpenAIProvider(api_key=api_key))
+            return OpenAIChatModel(
+                model_name,
+                provider=OpenAIProvider(openai_client=_openai_compatible_client(api_key)),
+            )
         case "deepseek":
             return OpenAIChatModel(
                 model_name,
-                provider=OpenAIProvider(base_url=DEEPSEEK_BASE_URL, api_key=api_key),
+                provider=OpenAIProvider(
+                    openai_client=_openai_compatible_client(api_key, DEEPSEEK_BASE_URL)
+                ),
             )
         case "anthropic":
             return AnthropicModel(model_name, provider=AnthropicProvider(api_key=api_key))

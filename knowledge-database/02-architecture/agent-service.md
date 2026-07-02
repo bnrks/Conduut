@@ -185,6 +185,10 @@ Aktif yapi 3 dosyaya boluner:
   Conduut'un **kendi** key'inden Pydantic AI model instance'i kurar. Desteklenen
   provider'lar: `openai`, `anthropic`, `google`, `groq`, `openrouter`, `deepseek`
   (DeepSeek OpenAI-uyumlu oldugu icin `OpenAIChatModel` + custom `base_url`).
+  OpenAI-uyumlu istemciler (`openai`+`deepseek`) `_openai_compatible_client` ile
+  **stall-safe timeout** (`httpx.Timeout` read=120s + `max_retries=2`) alir; aksi
+  halde SDK'nin 600s default'u yuzunden hung bir DeepSeek stream'i run'i ~10dk
+  dondurur (bkz. [[known-issues]] "DeepSeek ~10dk stall").
   `normalize_model_name` eski LiteLLM prefix'lerini (`gemini/`, `google/`,
   `groq/`, `openrouter/`, ...) temizler; `normalize_provider` liste disindaki
   provider'i reddeder. `build_model_settings` bir tier'in `ThinkingSpec`'ini

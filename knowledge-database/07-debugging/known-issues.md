@@ -122,7 +122,33 @@ dogrulanmadi; deferred re-run'da E1 + bir kardes chat'ten kosulup teyit edilecek
 `model_profile="deepseek"`) ~10dk **stall→ReadTimeout** verdi (`agent_run_error`);
 "takildi" hissinin sebebi buydu, Conduut bug'i degil. Senaryo-bankasi kosulari
 guvenilir sinyal icin `default` profille yapilmali — bkz. [[scenario-bank]],
-[[claude-vs-deepseek-comparison-2026-06]].
+[[claude-vs-deepseek-comparison-2026-06]]. **(Update 2026-07-02: DeepSeek'te
+kalma karari verildi — dusuk maliyet + kalite; asagidaki timeout hardening ile
+stall hafifletildi.)**
+
+## DeepSeek ~10dk stall → ReadTimeout (OpenAI SDK 600s default timeout, 2026-07-02, cozuldu)
+
+**Belirti:** Senaryo bankasi E1 turunda (DeepSeek V4, conv `1e2e07e5`) agent run'i
+`07:00:43`→`07:10:44` arasi **~10 dakika** yanitsiz kaldi, sonra
+`agent_run_error: ReadTimeout` + `reliability_guard_garbage: provider_error`.
+Kullaniciya "takildi" gibi gorundu; gercek bir kullanici da 10dk donmus ekran gorurdu.
+
+**Kok neden:** `provider_factory.build_model` DeepSeek (ve openai) istemcisini
+`OpenAIProvider(base_url, api_key)` ile **ozel timeout/http_client vermeden**
+kuruyordu. OpenAI SDK varsayilan request timeout'u **600s (10dk)** → DeepSeek bir
+stream'i yanitsiz biraktiginda istemci tam 10dk bekleyip ReadTimeout veriyor.
+
+**Cozum (TDD):** `_openai_compatible_client(api_key, base_url)` helper'i
+`AsyncOpenAI`'yi `timeout=httpx.Timeout(connect=15, read=120, write=60, pool=15)`
++ `max_retries=2` ile kurar; `openai` + `deepseek` case'leri bunu
+`OpenAIProvider(openai_client=...)` ile kullanir. Stream'de 120sn byte gelmezse
+hizli basarisiz → SDK retry; saglikli uzun uretimi kesmez (chunk'lar read'i canli
+tutar). `test_provider_factory.py` +2, suite **399 passed**, ruff temiz.
+
+**Reliability data point (bake-off):** DeepSeek'in ~10dk stall vermesi
+[[model-cost-research-2026-06]] / [[claude-vs-deepseek-comparison-2026-06]] icin
+operasyonel guvenilirlik verisidir; timeout+retry ile hafifletildi ama
+saglayici-kaynakli stall'in kendisi maliyet/kalite kararinda not edilmeli.
 
 ## `/api/workflows` N+1 ile ~4sn (2026-06-22, cozuldu — canli dogrulama bekliyor)
 

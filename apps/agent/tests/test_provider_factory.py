@@ -1,6 +1,7 @@
 import pytest
 
 from src.agent.provider_factory import (
+    _OPENAI_COMPAT_TIMEOUT,
     UnsupportedProviderError,
     build_model,
     classify_provider_error,
@@ -50,6 +51,22 @@ def test_build_model_deepseek_uses_openai_class_with_deepseek_base_url():
     assert built.__class__.__name__ == "OpenAIChatModel"
     assert built.model_name == "deepseek-v4-pro"
     assert "deepseek" in str(built.client.base_url)
+
+
+def test_build_model_deepseek_has_stall_safe_timeout():
+    # DeepSeek streams stalled ~10min on the OpenAI SDK's 600s default timeout,
+    # freezing the whole run. Cap it so a hung request fails fast and retries.
+    built = build_model("deepseek", "deepseek-v4-pro", "test-key")
+
+    assert built.client.timeout == _OPENAI_COMPAT_TIMEOUT
+    assert built.client.max_retries == 2
+
+
+def test_build_model_openai_has_stall_safe_timeout():
+    built = build_model("openai", "gpt-4o-mini", "test-key")
+
+    assert built.client.timeout == _OPENAI_COMPAT_TIMEOUT
+    assert built.client.max_retries == 2
 
 
 def test_build_model_rejects_unsupported_provider():
