@@ -591,6 +591,62 @@ def _normalize_google_sheets_schema(nodes: list[dict[str, Any]], repairs: list[s
             }
             repairs.append(f"set googleSheets append autoMap columns on '{name}'")
 
+        columns = parameters.get("columns")
+        if isinstance(columns, dict):
+            _normalize_sheets_columns_shape(columns, name, repairs)
+
+
+def _sheets_schema_entry(column: str) -> dict[str, Any]:
+    """One googleSheets v4 ResourceMapper schema entry for a defineBelow column."""
+
+    return {
+        "id": column,
+        "displayName": column,
+        "required": False,
+        "defaultMatch": False,
+        "display": True,
+        "type": "string",
+        "canBeUsedToMatch": True,
+        "removed": False,
+    }
+
+
+def _normalize_sheets_columns_shape(columns: dict[str, Any], name: Any, repairs: list[str]) -> None:
+    """Normalize a googleSheets ``defineBelow`` column mapping to the shape n8n v4
+    actually executes: a flat ``value`` map plus a ``schema`` array. The model
+    sometimes emits the values as ``value: {"mappingValues": [{"column",
+    "mappingValue"}]}`` and omits ``schema`` -> n8n throws "Could not get
+    parameter: columns.schema" at runtime (confirmed on scenario E1). Correct
+    mappings and ``autoMapInputData`` (which needs no value/schema) are left alone.
+    """
+
+    value = columns.get("value")
+    changed = False
+
+    # Flatten value.mappingValues[{column, mappingValue}] -> {column: expr}.
+    if isinstance(value, dict) and isinstance(value.get("mappingValues"), list):
+        flat: dict[str, Any] = {}
+        for item in value["mappingValues"]:
+            if isinstance(item, dict) and item.get("column"):
+                flat[str(item["column"])] = item.get("mappingValue", "")
+        columns["value"] = flat
+        value = flat
+        columns.setdefault("mappingMode", "defineBelow")
+        changed = True
+
+    mode = str(columns.get("mappingMode") or "").lower()
+    if mode == "definebelow" and isinstance(value, dict) and value:
+        # Synthesize the schema from the mapped columns when absent; without it
+        # n8n cannot read columns.schema and fails at runtime.
+        schema = columns.get("schema")
+        if not (isinstance(schema, list) and schema):
+            columns["schema"] = [_sheets_schema_entry(col) for col in value]
+            changed = True
+        columns.setdefault("matchingColumns", [])
+
+    if changed:
+        repairs.append(f"normalized googleSheets column mapping on '{name}'")
+
 
 def _normalize_resource_locators(nodes: list[dict[str, Any]], repairs: list[str]) -> None:
     """Wrap bare-string resourceLocator params (e.g. googleSheets documentId/

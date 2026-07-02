@@ -769,9 +769,9 @@ def test_google_sheets_append_missing_columns_gets_automap():
     assert any("autoMap" in r for r in repairs)
 
 
-def test_google_sheets_append_existing_columns_preserved():
-    # An explicit column mapping must be preserved (only fill when absent).
-    explicit = {"mappingMode": "defineBelow", "value": {"ad": "={{ $json.ad }}"}}
+def test_google_sheets_append_defineBelow_value_preserved_and_schema_synthesized():
+    # An explicit defineBelow value must be preserved (not replaced by autoMap),
+    # but a missing schema is synthesized so n8n can execute it (columns.schema).
     nodes = [
         _node(
             "Sheets",
@@ -781,13 +781,89 @@ def test_google_sheets_append_existing_columns_preserved():
                 "operation": "append",
                 "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
                 "sheetName": {"__rl": True, "mode": "name", "value": "Log"},
-                "columns": explicit,
+                "columns": {"mappingMode": "defineBelow", "value": {"ad": "={{ $json.ad }}"}},
             },
         ),
     ]
     repaired, _conns, _ = repair_workflow(nodes, None, registry=REGISTRY)
-    params = next(n for n in repaired if n["name"] == "Sheets")["parameters"]
-    assert params["columns"] == explicit
+    cols = next(n for n in repaired if n["name"] == "Sheets")["parameters"]["columns"]
+    assert cols["mappingMode"] == "defineBelow"
+    assert cols["value"] == {"ad": "={{ $json.ad }}"}
+    assert [s["id"] for s in cols["schema"]] == ["ad"]
+
+
+def test_google_sheets_columns_mappingvalues_flattened_with_schema():
+    # Confirmed E1 rebuild bug: the model wrote defineBelow columns as
+    # value.mappingValues[{column, mappingValue}] and omitted schema -> n8n throws
+    # "Could not get parameter: columns.schema". Flatten to a value map + synth schema.
+    nodes = [
+        _node(
+            "Sheets",
+            "n8n-nodes-base.googleSheets",
+            parameters={
+                "resource": "sheet",
+                "operation": "append",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "sheetName": {"__rl": True, "mode": "name", "value": "Kayıtlar"},
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "mappingValues": [
+                            {"column": "Ad", "mappingValue": "={{ $json.body.ad }}"},
+                            {"column": "E-posta", "mappingValue": "={{ $json.body.eposta }}"},
+                        ]
+                    },
+                },
+            },
+        ),
+    ]
+    repaired, _conns, repairs = repair_workflow(nodes, None, registry=REGISTRY)
+    cols = next(n for n in repaired if n["name"] == "Sheets")["parameters"]["columns"]
+    assert cols["value"] == {
+        "Ad": "={{ $json.body.ad }}",
+        "E-posta": "={{ $json.body.eposta }}",
+    }
+    assert [s["id"] for s in cols["schema"]] == ["Ad", "E-posta"]
+    assert cols["schema"][0]["canBeUsedToMatch"] is True
+    assert any("column mapping" in r for r in repairs)
+
+
+def test_google_sheets_columns_correct_shape_left_alone():
+    # A defineBelow mapping that already has a schema is executable -> untouched.
+    schema = [
+        {
+            "id": "ad",
+            "displayName": "ad",
+            "required": False,
+            "defaultMatch": False,
+            "display": True,
+            "type": "string",
+            "canBeUsedToMatch": True,
+            "removed": False,
+        }
+    ]
+    nodes = [
+        _node(
+            "Sheets",
+            "n8n-nodes-base.googleSheets",
+            parameters={
+                "resource": "sheet",
+                "operation": "append",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "sheetName": {"__rl": True, "mode": "name", "value": "Log"},
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {"ad": "={{ $json.ad }}"},
+                    "schema": schema,
+                    "matchingColumns": [],
+                },
+            },
+        ),
+    ]
+    repaired, _conns, repairs = repair_workflow(nodes, None, registry=REGISTRY)
+    cols = next(n for n in repaired if n["name"] == "Sheets")["parameters"]["columns"]
+    assert cols["schema"] == schema
+    assert not any("column mapping" in r for r in repairs)
 
 
 # --------------------------------------------------------------------------

@@ -114,9 +114,22 @@ bostan geciyordu.
 
 **Genellik guard (senaryo-bankasi kurali):** fix task metnine degil node-tipi/desen
 duzeyinde; ayni duzeltme M3 (webhook→Sheets append) ve M1/H1/H2 (Sheets read/update)
-satir-op'larini da kapsar. **ACIK KALAN — uctan uca deferred (kullanici secimi):**
-append `autoMapInputData` default'unun basliksiz sheet'teki runtime davranisi canli
-dogrulanmadi; deferred re-run'da E1 + bir kardes chat'ten kosulup teyit edilecek.
+satir-op'larini da kapsar.
+
+**2. tur — `columns.schema` (2026-07-02, cozuldu, ampirik dogrulandi):** sheetName
+fix'i sonrasi E1 chat'ten yeniden kuruldu → workflow artik pre-flight'i geciyor
+(Webhook+Sheets execute oluyor), ama Sheets node runtime'da **`Could not get
+parameter: columns.schema`** ile patliyor. Kok neden: bu rebuild'de Set node yoktu
+(Webhook→Sheets direkt), model `columns`'u `defineBelow` ile ama **yanlis yapida**
+yazdi: `value: {"mappingValues": [{"column","mappingValue"}]}` + `schema` yok.
+n8n v4 duz `value` map + `schema` dizisi bekler. **Ampirik zemin:** test workflow'un
+columns'u kanonik sekle (`value` map + synth `schema`) cevrilip webhook tetiklendi →
+execution #217 **status=success**, satir dustu. **Cozum (repair.py):**
+`_normalize_sheets_columns_shape` — `value.mappingValues[]` → duz map'e flatten +
+defineBelow'da `schema` eksikse kolon adlarindan synth (`_sheets_schema_entry`);
+dogru sekiller ve autoMapInputData dokunulmaz. `test_repair.py` +3, suite **401 passed**.
+**Kalan:** agent'in gercek uretim yolundan (chat rebuild) uctan-uca geciş — repair
+canli (uvicorn reload), sonraki rebuild'de dogrulanacak.
 
 **Not (test ortami):** ayni testte DeepSeek profili (`config.py` default
 `model_profile="deepseek"`) ~10dk **stall→ReadTimeout** verdi (`agent_run_error`);
