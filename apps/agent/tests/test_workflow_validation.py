@@ -368,6 +368,7 @@ def test_google_sheets_update_matching_column_missing_from_value_fails_validatio
             {
                 "resource": "sheet",
                 "operation": "update",
+                "sheetName": {"__rl": True, "mode": "name", "value": "Siparisler"},
                 "columns": {
                     "mappingMode": "defineBelow",
                     "matchingColumns": ["siparis_no"],
@@ -391,6 +392,7 @@ def test_google_sheets_update_automap_does_not_require_value():
             {
                 "resource": "sheet",
                 "operation": "update",
+                "sheetName": {"__rl": True, "mode": "name", "value": "Siparisler"},
                 "columns": {
                     "mappingMode": "autoMapInputData",
                     "matchingColumns": ["siparis_no"],
@@ -409,6 +411,7 @@ def test_google_sheets_update_columns_without_matching_fails_validation():
             {
                 "resource": "sheet",
                 "operation": "update",
+                "sheetName": {"__rl": True, "mode": "name", "value": "Siparisler"},
                 "columns": {"mappingMode": "defineBelow", "value": {"teslim_mail": "evet"}},
             }
         )
@@ -432,6 +435,25 @@ def test_google_sheets_read_not_flagged_for_columns():
     )
     errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
     assert not any("columns" in error for error in errors)
+
+
+def test_google_sheets_row_op_missing_sheetname_fails_validation():
+    # v4 row ops address the tab via a sheetName resourceLocator. When the model
+    # leaves the tab in a top-level range (or omits it) and repair could not derive
+    # it, n8n rejects the workflow ("has issues, cannot be executed"). Backstop it.
+    nodes = valid_nodes()
+    nodes.append(
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "append",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "range": "Kayıtlar",
+            }
+        )
+    )
+    errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+    assert any("sheetName" in error for error in errors)
 
 
 def test_gmail_send_placeholder_recipient_fails_validation():

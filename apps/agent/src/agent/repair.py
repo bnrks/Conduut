@@ -81,6 +81,10 @@ _GOOGLE_SHEETS_TYPE = "n8n-nodes-base.googleSheets"
 # ambiguous ops (create/delete exist under both resources) are deliberately
 # excluded so a genuine "delete spreadsheet" is never rewritten.
 _SHEET_ROW_OPERATIONS = frozenset({"read", "update", "append", "appendOrUpdate", "clear", "remove"})
+# A1 notation with no sheet/tab prefix, e.g. "A", "A1", "A:F", "A1:C10". A bare
+# googleSheets ``range`` that matches this is a real cell range (left for
+# validation); a bare value that does NOT match is a tab name -> sheetName.
+_A1_RANGE_RE = re.compile(r"^[A-Za-z]{1,3}\d*(?::[A-Za-z]{1,3}\d*)?$")
 
 _INPUT_EXPR_RE = re.compile(r"\{\{\s*input\.(\w+)\s*\}\}")
 _JSON_DOT_RE = re.compile(r"\$json\.(?!body\.)(\w+)")
@@ -556,12 +560,36 @@ def _normalize_google_sheets_schema(nodes: list[dict[str, Any]], repairs: list[s
             repairs.append(f"mapped googleSheets spreadsheetId->documentId on '{name}'")
 
         range_value = parameters.get("range")
-        if isinstance(range_value, str) and "!" in range_value and "sheetName" not in parameters:
-            tab = range_value.split("!", 1)[0].lstrip("=").strip().strip("'\"")
+        if isinstance(range_value, str) and range_value.strip() and "sheetName" not in parameters:
+            raw = range_value.lstrip("=").strip().strip("'\"")
+            if "!" in raw:
+                # "Tab!A:F" -> the tab is the literal before "!".
+                tab = raw.split("!", 1)[0].strip().strip("'\"")
+            elif raw and not _A1_RANGE_RE.match(raw):
+                # Bare value, no "!", not A1 notation ("Kayıtlar", "Orders",
+                # "Sheet1") -> it is the tab name. A bare A1 range ("A:F",
+                # "A1:C10") has no v4 field and is left for validation.
+                tab = raw
+            else:
+                tab = ""
             if tab:
                 del parameters["range"]
                 parameters["sheetName"] = tab
                 repairs.append(f"mapped googleSheets range->sheetName on '{name}'")
+
+        # v4 append needs a column mapping to know what to write; the model often
+        # omits it, so n8n rejects the node. autoMapInputData (n8n's "Map
+        # Automatically") maps the incoming item fields to same-named columns --
+        # the only unambiguous default for append. update/appendOrUpdate need a
+        # matching column, so they are NOT auto-filled (left to validation). Only
+        # fills when absent; an explicit mapping is preserved.
+        if operation == "append" and "columns" not in parameters:
+            parameters["columns"] = {
+                "mappingMode": "autoMapInputData",
+                "matchingColumns": [],
+                "schema": [],
+            }
+            repairs.append(f"set googleSheets append autoMap columns on '{name}'")
 
 
 def _normalize_resource_locators(nodes: list[dict[str, Any]], repairs: list[str]) -> None:

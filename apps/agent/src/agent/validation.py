@@ -302,7 +302,17 @@ def _validate_gmail_node(node: Mapping[str, Any], label: str) -> list[str]:
 # validates but n8n v4 ignores -> the write silently does nothing (e.g. a
 # "mark as sent" step that never marks, so the workflow re-sends every run).
 _GOOGLE_SHEETS_COLUMN_MAP_OPS = {"update", "appendorupdate"}
+# Row-level ops that address a specific tab; all need a v4 sheetName resourceLocator.
+_GOOGLE_SHEETS_ROW_OPS = {"read", "append", "update", "appendorupdate", "clear", "remove"}
 _GOOGLE_SHEETS_LEGACY_KEYS = ("dataMode", "values", "range")
+
+
+def _has_sheet_name(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, Mapping):
+        return bool(str(value.get("value") or "").strip())
+    return False
 
 
 def _validate_google_sheets_node(node: Mapping[str, Any], label: str) -> list[str]:
@@ -312,6 +322,17 @@ def _validate_google_sheets_node(node: Mapping[str, Any], label: str) -> list[st
     if not isinstance(parameters, Mapping):
         return [f"Google Sheets node '{label}' parameters must be an object"]
     operation = str(parameters.get("operation") or "").lower()
+
+    # v4 row ops address the tab via a sheetName resourceLocator; a top-level range
+    # leaves n8n unable to find the sheet ("workflow has issues, cannot execute").
+    if operation in _GOOGLE_SHEETS_ROW_OPS and not _has_sheet_name(parameters.get("sheetName")):
+        return [
+            f"Google Sheets node '{label}' operation '{operation}' is missing "
+            "parameters.sheetName. n8n v4 addresses the tab via a resourceLocator, not a "
+            'top-level range: set parameters.sheetName = {"__rl": true, "mode": "name", '
+            '"value": "<tab name>"}.'
+        ]
+
     if operation not in _GOOGLE_SHEETS_COLUMN_MAP_OPS:
         return []
 

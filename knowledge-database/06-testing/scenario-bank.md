@@ -47,6 +47,11 @@ n8n.io workflow seç  →  doğal-dil task'a çevir (referans yapıyı sakla)
   **geçti/kaldı** kararını verir.
 - "Farklı yapı ama amacı karşılıyor" = **geçti**. Runtime crash, boş/yanlış
   çıktı, niyeti karşılamama, ya da build/validation reddi = **kaldı**.
+- **Model profili:** koşuları **güvenilir profille** (`default` — Sonnet/Gemini)
+  yap, DeepSeek bake-off ile değil. `config.py` default'u `model_profile="deepseek"`
+  ve o profil canlıda ~10dk **stall→ReadTimeout** verdi (E1 ilk turu, conv
+  `1e2e07e5`); bu, workflow-üretim sinyalini kirletir ("takıldı" sanılır). Bkz.
+  [[claude-vs-deepseek-comparison-2026-06]].
 - Sheets v4 bug'ı hatırlatması: build+validation'dan geçen bir workflow
   **runtime'da** patlayabilir (bkz. [[known-issues]] madde 1). Bu yüzden "workflow
   oluştu" tek başına geçme kriteri değildir — çalıştırıp görmek gerekir.

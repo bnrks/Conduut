@@ -86,6 +86,44 @@ crash gitti. `test_repair.py` +5 test, tum agent suite **386 passed**, ruff temi
    varsayimi (`teslim_mail`/`urun_kodlari`) gercek basliklarla eslesmezse kirilir.
    Bunlar repair kapsaminda degil; prompt/few-shot veya agent-akisi isi.
 
+### E1 (webhook→Sheets append): bare `range` tab adi + eksik `columns` → workflow "has issues", hic calismadi (2026-07-02, cozuldu; uctan-uca deferred)
+
+**Belirti:** Senaryo bankasi E1 ("Iletisim Formu → Google Sheets", conv
+`1e2e07e5`, DeepSeek V4). Agent Webhook→Set→googleSheets(append) workflow'u kurup
+aktive etti; webhook POST → **HTTP 500**, n8n execution #212 `status=error`,
+**0 node** ("The workflow has issues and cannot be executed").
+
+**Kok neden:** append node tab'i v4'un zorunlu `sheetName` (`__rl`) alani yerine
+legacy top-level `range: "Kayitlar"` (`!` yok) olarak yazmis + `columns` eslemesi
+hic yok. `sheetName` olmadan n8n node'u gecersiz sayip workflow'u hic calistirmiyor.
+Iki katman boslugu: (a) repair Stage 6 `range→sheetName` YALNIZ `!` iceren
+range'lerde calisiyordu; bare "Kayitlar" "belirsiz" diye dokunulmadan birakiliyordu;
+(b) validation yalniz `update`/`appendOrUpdate`'i denetliyordu, duz `append`
+bostan geciyordu.
+
+**Cozum (TDD, genel; [[adr-0010-json-surface-repair-normalizer]]):**
+- **repair.py Stage 6 genisletildi:** bare `range` (`!` yok) A1 notasyonu DEGILSE
+  (`_A1_RANGE_RE`) → deterministik `sheetName`'e tasi, `range` sil (Stage 7 `__rl`
+  sarar). Gercek A1 araligi (`A:F`, `A1:C10`) validation'a birakilir. Ayrica
+  `operation=="append"` + `columns` yoksa → `mappingMode: autoMapInputData` (n8n
+  default; append icin tek belirsiz-olmayan esleme; update/appendOrUpdate dokunulmaz).
+- **validation.py emniyet agi:** her googleSheets satir-op'u (read/append/update/…)
+  `sheetName` yoksa hedef `__rl` seklini gosteren ModelRetry hint'iyle reddeder.
+- **test:** `test_repair.py` +4, `test_workflow_validation.py` +1 (3 mevcut update
+  fixture'ina gercekci `sheetName` eklendi). Suite **397 passed**, ruff temiz.
+
+**Genellik guard (senaryo-bankasi kurali):** fix task metnine degil node-tipi/desen
+duzeyinde; ayni duzeltme M3 (webhook→Sheets append) ve M1/H1/H2 (Sheets read/update)
+satir-op'larini da kapsar. **ACIK KALAN — uctan uca deferred (kullanici secimi):**
+append `autoMapInputData` default'unun basliksiz sheet'teki runtime davranisi canli
+dogrulanmadi; deferred re-run'da E1 + bir kardes chat'ten kosulup teyit edilecek.
+
+**Not (test ortami):** ayni testte DeepSeek profili (`config.py` default
+`model_profile="deepseek"`) ~10dk **stall→ReadTimeout** verdi (`agent_run_error`);
+"takildi" hissinin sebebi buydu, Conduut bug'i degil. Senaryo-bankasi kosulari
+guvenilir sinyal icin `default` profille yapilmali — bkz. [[scenario-bank]],
+[[claude-vs-deepseek-comparison-2026-06]].
+
 ## `/api/workflows` N+1 ile ~4sn (2026-06-22, cozuldu — canli dogrulama bekliyor)
 
 **Belirti:** Dashboard workflows sayfasi acilirken uzun suruyordu. Kullanici

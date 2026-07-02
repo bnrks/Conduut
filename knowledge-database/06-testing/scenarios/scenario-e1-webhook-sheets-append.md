@@ -32,4 +32,4 @@ olarak görünür. Yapı farklı olabilir; kayıt doğru düşüyorsa geçti.
 
 | Tarih | Geçti/Kaldı | Bulunan bug → kök-neden → katman → commit → kardeş-doğrulama |
 |-------|-------------|--------------------------------------------------------------|
-| — | — | — |
+| 2026-07-02 | KALDI → fix'lendi (uçtan-uca deferred) | Workflow kuruldu+aktif ama webhook POST → HTTP 500, execution #212 `error`, 0 node ("workflow has issues"). **Kök-neden:** googleSheets v4 append tab'ı `sheetName` yerine legacy `range:"Kayıtlar"` (`!` yok) + `columns` yok. **Katman 1 (repair.py Stage 6):** bare non-A1 `range`→`sheetName`; append `columns` yoksa `autoMapInputData`. **Katman 2 (validation):** satır-op'ta `sheetName` yoksa ModelRetry hint. Test: repair +4, validation +1, **397 passed**. Detay: [[known-issues]]. **Deferred:** append autoMap runtime'ı + kardeş (M3) uçtan-uca teyidi. **Not:** run DeepSeek profil stall'ı (ReadTimeout) ile kirlendi → koşuları `default` profille yap. |

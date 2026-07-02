@@ -134,6 +134,14 @@ kontrolü) kullanıldı. Katman 3 (`few_shots` modülü + Sheets-update örneği
 **ertelendi**: önce validation+ModelRetry'ın modeli canlıda toparlatıp
 toparlatamadığı gözlenecek; toparlamıyorsa eklenir. Detay: [[known-issues]] madde 1.
 
+**Güncelleme (2026-07-02, senaryo-bankası E1):** Stage 6 genişletildi — bare
+`range` (`!` yok) A1 notasyonu değilse (`_A1_RANGE_RE`) tab adı sayılıp
+`sheetName`'e taşınır (gerçek A1 aralığı validation'a bırakılır); `append` +
+`columns` yoksa `autoMapInputData` default'u yazılır. Katman 2: validation artık
+tüm satır-op'larında (yalnız update değil) eksik `sheetName`'i reddeder. Kaynak:
+E1 (webhook→Sheets append) build+aktif ama runtime "workflow has issues" ile hiç
+çalışmadı. Detay: [[known-issues]] E1 alt-başlığı, [[scenario-bank]].
+
 ## İlgili
 
 [[adr-0009-workflow-graph-compiler]], [[adr-0005-workflow-spec-compiler]],

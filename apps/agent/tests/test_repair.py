@@ -673,8 +673,8 @@ def test_google_sheets_schema_upgrade_idempotent():
 
 
 def test_google_sheets_range_without_tab_left_alone():
-    # A range with no "!" is ambiguous (bare tab vs bare A1 range) -> decline,
-    # leave for validation rather than guess a wrong sheetName.
+    # A bare range that IS A1 notation ("A:F") is a real cell range, not a tab ->
+    # decline, leave for validation rather than invent a wrong sheetName.
     nodes = [
         _node(
             "Read",
@@ -693,6 +693,101 @@ def test_google_sheets_range_without_tab_left_alone():
     assert params["resource"] == "sheet"
     assert "sheetName" not in params
     assert params["range"] == "A:F"
+
+
+def test_google_sheets_bare_range_tab_name_mapped_to_sheetname():
+    # Regression E1 (İletişim Formu → Sheets): the model wrote a v4 append with the
+    # tab in a top-level ``range: "Kayıtlar"`` (no "!") instead of sheetName, so n8n
+    # rejected the node ("workflow has issues") and never ran. A bare range that is
+    # NOT A1 notation is unambiguously the tab name -> move it to sheetName (which
+    # the resourceLocator stage then wraps into an __rl object).
+    nodes = [
+        _node(
+            "Webhook",
+            "n8n-nodes-base.webhook",
+            parameters={"httpMethod": "POST", "path": "contact-form"},
+        ),
+        _node(
+            "Sheets",
+            "n8n-nodes-base.googleSheets",
+            parameters={
+                "resource": "sheet",
+                "operation": "append",
+                "documentId": {"__rl": True, "mode": "id", "value": "18s2abc"},
+                "range": "Kayıtlar",
+            },
+        ),
+    ]
+    connections = {"Webhook": {"main": [[{"node": "Sheets", "type": "main", "index": 0}]]}}
+    repaired, _conns, repairs = repair_workflow(nodes, connections, registry=REGISTRY)
+    params = next(n for n in repaired if n["name"] == "Sheets")["parameters"]
+    assert params["sheetName"] == {"__rl": True, "mode": "name", "value": "Kayıtlar"}
+    assert "range" not in params
+    assert any("range->sheetName" in r for r in repairs)
+
+
+def test_google_sheets_bare_a1_range_with_row_still_left_alone():
+    # "A1:C10" is a real cell range, not a tab -> must NOT become a sheetName.
+    nodes = [
+        _node(
+            "Read",
+            "n8n-nodes-base.googleSheets",
+            parameters={
+                "resource": "sheet",
+                "operation": "read",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "range": "A1:C10",
+            },
+        ),
+    ]
+    repaired, _conns, _ = repair_workflow(nodes, None, registry=REGISTRY)
+    params = next(n for n in repaired if n["name"] == "Read")["parameters"]
+    assert "sheetName" not in params
+    assert params["range"] == "A1:C10"
+
+
+def test_google_sheets_append_missing_columns_gets_automap():
+    # v4 append needs a column mapping to know what to write; when the model omits
+    # it, default to autoMapInputData (n8n's "Map Automatically") so the incoming
+    # item fields land as a row. update/appendOrUpdate are NOT auto-filled (they
+    # need a matching column -> left to validation).
+    nodes = [
+        _node(
+            "Sheets",
+            "n8n-nodes-base.googleSheets",
+            parameters={
+                "resource": "sheet",
+                "operation": "append",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "sheetName": {"__rl": True, "mode": "name", "value": "Log"},
+            },
+        ),
+    ]
+    repaired, _conns, repairs = repair_workflow(nodes, None, registry=REGISTRY)
+    params = next(n for n in repaired if n["name"] == "Sheets")["parameters"]
+    assert params["columns"]["mappingMode"] == "autoMapInputData"
+    assert any("autoMap" in r for r in repairs)
+
+
+def test_google_sheets_append_existing_columns_preserved():
+    # An explicit column mapping must be preserved (only fill when absent).
+    explicit = {"mappingMode": "defineBelow", "value": {"ad": "={{ $json.ad }}"}}
+    nodes = [
+        _node(
+            "Sheets",
+            "n8n-nodes-base.googleSheets",
+            parameters={
+                "resource": "sheet",
+                "operation": "append",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "sheetName": {"__rl": True, "mode": "name", "value": "Log"},
+                "columns": explicit,
+            },
+        ),
+    ]
+    repaired, _conns, _ = repair_workflow(nodes, None, registry=REGISTRY)
+    params = next(n for n in repaired if n["name"] == "Sheets")["parameters"]
+    assert params["columns"] == explicit
 
 
 # --------------------------------------------------------------------------
