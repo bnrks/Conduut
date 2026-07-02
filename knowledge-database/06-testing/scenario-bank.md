@@ -158,6 +158,20 @@ H1 ↔ H2 bilinçli olarak **kardeş** (aynı read→filter→send→update-stat
 farklı yüzey). H1'de bulunan bir Sheets-update/column-map düzeltmesi H2'yi de
 geçirmelidir → genellik guard'ının canlı örneği.
 
+## Durum ve sonraki adım
+
+- **E1 — GEÇTİ ✅** (2026-07-02, uçtan uca). Tek senaryodan 4 genel repair/tool bug'ı
+  + 1 provider hardening çıktı (commit'ler `c043461`→`26fae89`, `fa3615b`). Detay:
+  [[scenario-e1-webhook-sheets-append]] "Sonuç geçmişi" + [[known-issues]].
+- **SONRAKİ (BEKLİYOR): [[scenario-h1-cold-outreach-status]]** — kullanıcının
+  onayıyla seçildi, ama **ertelendi** (daha öncelikli başka bir iş çıktı, 2026-07-02).
+  Odak: Sheets `update` column-map (`matchingColumns`) + write-back (tekrar-mail
+  engelleme). **Hazırlık gerektirir:** tek sekmede `Ad`·`Email`·`Durum` başlıklı bir
+  Google Sheet, `Email`=kullanıcının kendi adresi (test maili kendine gelsin), 2
+  satır `Durum="Yeni"`. Hazır olunca yeni sohbette H1 task'ı verilir, agent'ın kurduğu
+  workflow'daki `update` node'u (columns+matchingColumns) doğrulanır; kardeş H2 ile
+  genellik guard çalıştırılır.
+
 ## Güncelleme kuralı
 
 Yeni senaryo eklenince buradaki tabloya satır ekle. Bir senaryo çalıştırılıp
