@@ -163,6 +163,31 @@ tutar). `test_provider_factory.py` +2, suite **399 passed**, ruff temiz.
 operasyonel guvenilirlik verisidir; timeout+retry ile hafifletildi ama
 saglayici-kaynakli stall'in kendisi maliyet/kalite kararinda not edilmeli.
 
+## create_workflow, silinmis dedup id'sinde 404 → "Agent could not complete" (2026-07-02, cozuldu)
+
+**Belirti:** Kullanici ayni sohbette "otomasyonu sil ve bastan yap" dedi → agent
+uzun bir retry loop'una girip her `create_workflow`'da basarisiz oldu, sonunda
+generic **"Agent could not complete the task."**. Log: `n8n_request_error GET
+/workflows/<id> 404` + `tool_error create_workflow: Not Found`, tekrar tekrar
+(E1 rebuild, conv `1e2e07e5`, profil `default`/Sonnet).
+
+**Kok neden:** `create_workflow` tool'undaki dedup mantigi (`factory.py`): ayni
+sohbette ayni isimli workflow varsa create yerine **update** eder.
+`existing_id = conversation_workflows[name]` sohbet gecmisindeki
+`workflow_preview.id`'den gelir. Kullanici o workflow'u **sildigi** icin
+`get_workflow(existing_id)` → **404** → create_workflow recreate'e dusmeden
+tamamen patliyordu. (repair/columns fix'leri calisiyordu — `normalized
+googleSheets...` loglarda; sorun bu degildi.)
+
+**Cozum (TDD):** `_dedup_existing_workflow(existing_id)` helper — 404'te (workflow
+silinmis) `None` doner → caller stale id'yi `conversation_workflows`'tan unutup
+**fresh create** eder; non-404 hatalar propagate. `test_workflow_build.py` +4
+(none-id / present / 404→None / non-404 reraise). Suite **405 passed**, ruff temiz.
+
+**Not:** Bu run `default` profil (Sonnet) idi → DeepSeek stall'i yoktu; hata
+tamamen dedup-id bug'iydi (E1 Sheets fix'leriyle ilgisiz, ayni sohbetin
+kirli context'inden tetiklendi).
+
 ## `/api/workflows` N+1 ile ~4sn (2026-06-22, cozuldu — canli dogrulama bekliyor)
 
 **Belirti:** Dashboard workflows sayfasi acilirken uzun suruyordu. Kullanici

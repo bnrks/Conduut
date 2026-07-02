@@ -156,6 +156,23 @@ def _readiness_block_result(workflow_id: str, readiness: dict[str, Any]) -> dict
     return result
 
 
+async def _dedup_existing_workflow(existing_id: str | None) -> dict[str, Any] | None:
+    """The conversation's remembered workflow for create-dedup, or None to create
+    fresh. Returns None when there is no remembered id OR the workflow was deleted
+    (n8n 404) -- e.g. the user asked to delete and rebuild in the same chat, so the
+    dedup id is stale. Without this, create_workflow re-reads the gone id and dies
+    with "Not Found" instead of just recreating. Non-404 errors propagate."""
+
+    if not existing_id:
+        return None
+    try:
+        return await n8n_client.get_workflow(existing_id)
+    except n8n_client.N8nApiError as exc:
+        if exc.status_code == 404:
+            return None
+        raise
+
+
 def _normalized_user_input_request(
     question: str,
     missing_fields: list[str] | None,
@@ -407,8 +424,8 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         existing_id = ctx.deps.conversation_workflows.get(name)
 
         try:
-            if existing_id:
-                existing = await n8n_client.get_workflow(existing_id)
+            existing = await _dedup_existing_workflow(existing_id)
+            if existing_id and existing is not None:
                 workflow = await n8n_client.update_workflow(
                     workflow_id=existing_id,
                     name=name,
@@ -427,6 +444,15 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                     conversation_id=ctx.deps.conversation_id,
                 )
             else:
+                if existing_id:
+                    # Remembered workflow was deleted -> forget the stale id.
+                    ctx.deps.conversation_workflows.pop(name, None)
+                    log.info(
+                        "create_workflow_stale_dedup_recreate",
+                        name=name,
+                        workflow_id=existing_id,
+                        conversation_id=ctx.deps.conversation_id,
+                    )
                 workflow = await n8n_client.create_workflow(
                     name=name,
                     nodes=node_dicts,

@@ -3,6 +3,7 @@
 import pytest
 from pydantic_ai import ModelRetry
 
+from src import n8n_client
 from src.agent.schemas import (
     WorkflowInputField,
     WorkflowNode,
@@ -16,7 +17,7 @@ from src.agent.tools import (
     _workflow_with_conduut_webhook_trigger,
     _workflow_with_post_webhook_trigger,
 )
-from src.agent.tools.factory import _normalized_user_input_request
+from src.agent.tools.factory import _dedup_existing_workflow, _normalized_user_input_request
 
 
 def test_normalized_user_input_request_limits_missing_fields_to_current_step():
@@ -497,3 +498,40 @@ def test_validated_workflow_input_reports_missing_required_fields():
 
     assert payload == {"to": "person@example.com", "subject": "Hi"}
     assert missing == ["message"]
+
+
+# --------------------------------------------------------------------------
+# create_workflow dedup: tolerate a deleted (stale) remembered workflow id
+# --------------------------------------------------------------------------
+
+
+async def test_dedup_existing_workflow_none_id_returns_none():
+    assert await _dedup_existing_workflow(None) is None
+
+
+async def test_dedup_existing_workflow_returns_workflow_when_present(monkeypatch):
+    async def fake_get(wid):
+        return {"id": wid, "settings": {"executionOrder": "v1"}}
+
+    monkeypatch.setattr(n8n_client, "get_workflow", fake_get)
+    result = await _dedup_existing_workflow("wf-1")
+    assert result["id"] == "wf-1"
+
+
+async def test_dedup_existing_workflow_returns_none_on_404(monkeypatch):
+    # The user deleted the workflow and asked to rebuild in the same chat -> the
+    # remembered dedup id is gone. create_workflow must recreate, not die on 404.
+    async def fake_get(wid):
+        raise n8n_client.N8nApiError(404, "Not Found", method="GET", path=f"/workflows/{wid}")
+
+    monkeypatch.setattr(n8n_client, "get_workflow", fake_get)
+    assert await _dedup_existing_workflow("gone-id") is None
+
+
+async def test_dedup_existing_workflow_reraises_non_404(monkeypatch):
+    async def fake_get(wid):
+        raise n8n_client.N8nApiError(500, "Server Error", method="GET", path=f"/workflows/{wid}")
+
+    monkeypatch.setattr(n8n_client, "get_workflow", fake_get)
+    with pytest.raises(n8n_client.N8nApiError):
+        await _dedup_existing_workflow("boom-id")
