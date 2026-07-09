@@ -194,7 +194,23 @@ Aktif yapi 3 dosyaya boluner:
   provider'i reddeder. `build_model_settings` bir tier'in `ThinkingSpec`'ini
   saglayici-ozgu `model_settings`'e cevirir (Anthropic `anthropic_thinking`,
   Google `google_thinking_config`, OpenAI `openai_reasoning_effort`, DeepSeek
-  `extra_body.thinking`).
+  `extra_body.thinking`). Lokal kosularda root `.env` icindeki
+  `CONDUUT_MODEL_PROFILE` degeri runtime'i override eder; H1 senaryo kosusunda
+  bu deger `default` kaldigi icin DeepSeek profili yerine Sonnet calismisti
+  (2026-07-07), `.env` tekrar `deepseek` yapildi.
+
+> **Ayrim (2026-07-08):** Conduut agent'in kendi LLM router'i DeepSeek profile ile
+> calisirken bile uretilen workflow icinde ayrica n8n `Anthropic Chat Model`
+> node'u bulunabilir. Bu node kullanicinin/predefined Anthropic credential'iyle
+> n8n execution sirasinda Anthropic API'ye gider; bu, `provider_factory` secimi
+> degildir. H1 kosusunda bu node eski Claude ID'leri (`claude-3-haiku-20240307`,
+> `claude-3-5-sonnet-20241022`) yazdigi icin sandbox `AI Agent` node'unda dustu.
+> Duzeltme agent prompt'una veya validation'a hardcoded model ID gommek degil,
+> [[n8n-registry]] schema extraction'ini duzeltmek oldu: latest version'a uyan
+> `resourceLocator` `model` parametresi, default degeri ve `searchListMethod`
+> metadata'si artik `get_node_schema` ile agent'a gelir. Validation yalniz generic
+> `lmChat*` string model degerini `{__rl, mode, value}` resourceLocator bicimine
+> sarar; Anthropic'e ozel model katalogu tutmaz.
 
 `classify_provider_error` saglayici SDK hatalarini stabil kullanici mesajlarina
 esler: auth, model-not-found, rate-limit'e ek olarak `insufficient_quota`/quota/

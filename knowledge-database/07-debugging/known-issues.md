@@ -7,6 +7,60 @@ Bu not, repo icinde gorulen bilinen sorunlari ve dikkat noktalarini toplar.
 Kullanicinin yeni fark ettigi ve henuz triage edilmemis sorun/bug notlari icin
 ayri alan: [[issue-backlog]].
 
+## Workflow ici Anthropic Chat Model eski Claude model ID'leriyle patladi (2026-07-08, cozuldu)
+
+**Belirti:** H1 cold outreach workflow'u (`qTrjFjmakuZKGPI4`, conversation
+`890363de`, request `aaed022d`) DeepSeek Pro ile uretildi/onarildi
+(`profile=deepseek`, `provider=deepseek`, `model=deepseek-v4-pro`) ama sandbox
+testi `AI Agent` node'unda defalarca dustu. `sandbox_test_needs_attention`
+bulgusu: `"The resource you are requesting could not be found — model:
+claude-3-haiku-20240307"`; sonraki denemede `claude-3-5-sonnet-20241022` de
+ayni sekilde patladi.
+
+**Kok neden:** Bu Anthropic, Conduut'un kendi agent/router saglayicisi degil;
+n8n workflow icindeki `@n8n/n8n-nodes-langchain.lmChatAnthropic` node'unun
+Anthropic API credential'iyle cagirdigi modeldi. Ham n8n `nodes.json` icinde
+latest v1.3 `model` parametresi `resourceLocator` olarak vardi; fakat
+`packages/n8n-registry` loader'i `displayOptions` gordugu her parametreyi
+atladigi icin `get_node_schema` bu bilgiyi agent'a tasimiyordu. Bu nedenle
+agent eski template/hafiza etkisiyle Claude 3 / 3.5 ID'leri veya "Sonnet 4" gibi
+muallak adlar yazabiliyordu.
+
+**Cozum:** Asil duzeltme `packages/n8n-registry` katmaninda yapildi:
+`displayOptions.show/hide @version` kosullari latest/default node version'a gore
+degerlendiriliyor, latest `resourceLocator` parametreleri `keyParameters` icine
+aliniyor ve `modes.typeOptions.searchListMethod`, `loadOptionsMethod` gibi
+dinamik secim metadata'si kondanse ediliyor. `lmChatAnthropic` icin
+`get_node_schema` artik v1.3 `model` parametresini `resourceLocator` olarak,
+default `claude-sonnet-4-5-20250929` ve `searchModels` list method'u ile
+dondurur; `exampleNode.parameters.model` da n8n'in bekledigi
+`{__rl, mode, value}` formatinda gelir. Yanlis ara cozum olan Anthropic'e ozel
+hardcoded model normalizer/prompt kurali ve testleri kaldirildi. Canli
+`qTrjFjmakuZKGPI4` workflow'una daha once yapilan manuel model patch'i repo diff'i
+degildir; bu not onu geri almaz.
+
+## H1 kosusunda `.env` model profili `default` kalmis → DeepSeek yerine Sonnet calisti (2026-07-07, cozuldu)
+
+**Belirti:** Senaryo bankasi H1 kosusunda (`f7aa5f67`, request
+`6848d99e`) agent Sheet'i direct action ile basariyla inceledi
+(`GET .../values/A1:Z10` 200), artifact preview emit etti, sonra
+`search_n8n_nodes` ve iki `get_node_schema` cagrisi yapti. Hemen ardindan
+`agent_unexpected_model_behavior`: `Model token limit (provider default)
+exceeded before any response was generated` verdi. Hata workflow create/update
+asamasina gelmeden oldu; Sheets API veya n8n schema hatasi degildi.
+
+**Kok neden:** Kodda `Settings.model_profile` default'u `deepseek`, ama lokal
+root `.env` dosyasi `CONDUUT_MODEL_PROFILE=default` olarak kalmis. Bu override
+runtime'da DeepSeek Flash/Pro router yerine `PROFILE_DEFAULT`'u secti; loglarda
+`profile=default`, `provider=anthropic`, `model=claude-sonnet-4-6` goruldu. Yani
+hata DeepSeek davranisi degil, lokal config drift idi.
+
+**Cozum:** Root `.env` `CONDUUT_MODEL_PROFILE=deepseek` olarak duzeltildi.
+Yanlis ara teshisle eklenen Anthropic `max_tokens` kod degisikligi geri alindi.
+Hedefli testler (`test_thinking_builder.py`, `test_runner.py`) ve ruff temiz.
+H1 ayni task ile yeniden kosulacak; asil Sheets update/matchingColumns oracle'i
+hala bekliyor.
+
 ## googleSheets v4 sema uyumsuzlugu → workflow runtime'da crash (2026-07-01, fatal kisim cozuldu)
 
 **Belirti:** "Sipariş Onay Maili" testinde (kullanici log incelemesi,

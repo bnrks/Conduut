@@ -187,6 +187,19 @@ def _apply_node_specific_guidance(schema: dict, node: NodeInfo) -> None:
         schema["exampleNode"] = _set_node_example(node)
 
 
+def _example_parameter_value(prop: dict):
+    default = prop.get("default")
+    if prop.get("type") == "resourceLocator":
+        if isinstance(default, dict):
+            value = default.get("value")
+            if value is None:
+                return None
+            return {"__rl": True, "mode": default.get("mode") or "list", "value": value}
+        if isinstance(default, str) and default:
+            return {"__rl": True, "mode": "list", "value": default}
+    return default
+
+
 def build_schema_response(node: NodeInfo) -> dict:
     """
     LLM'e gönderilecek kondanse şema dict'ini oluşturur.
@@ -230,7 +243,7 @@ def build_schema_response(node: NodeInfo) -> dict:
             break
     for prop in node.key_properties:
         name = prop.get("name")
-        default = prop.get("default")
+        default = _example_parameter_value(prop)
         if name and default is not None and name not in example_params:
             example_params[name] = default
 

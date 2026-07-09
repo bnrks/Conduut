@@ -65,6 +65,17 @@ veya daha yuksek limit isteyerek tekrar arayabilir. Registry tarafinda limit
 1-50 araligina clamp edilir, boylece tum `nodes.json` context'e basilmadan
 ilgili aday havuzu genisletilebilir.
 
+`loader.py` `keyParameters` cikarirken `displayOptions` gordugu her parametreyi
+artik otomatik atmaz. `show/hide @version` kosullari latest/default node
+version'a gore degerlendirilir; resource/operation gibi baska kosullara bagli
+parametreler hala konservatif olarak disarida tutulur. Bu sayede
+`@n8n/n8n-nodes-langchain.lmChatAnthropic` v1.3 gibi node'larda latest
+`model` parametresi `resourceLocator` olarak schema'ya girer. `modes`,
+`searchListMethod`, `loadOptionsMethod/loadOptions` ve default deger gibi
+dinamik secim metadata'si kondanse edilerek agent'a tasinir. `search.py`
+`exampleNode` uretirken resourceLocator default'larini n8n'in bekledigi
+`{__rl, mode, value}` bicimine cevirir.
+
 WorkflowSpec compiler pilotu registry'yi yalnizca lookup icin degil,
 deterministic JSON uretimi icin de kullanir. Gmail on-demand compiler'i Webhook
 ve Gmail node `typeVersion` degerlerini; Google Sheets -> Filter -> Gmail

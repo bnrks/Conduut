@@ -76,15 +76,119 @@ def _extract_resources_and_ops(
     return resources, operations
 
 
-def _extract_key_properties(properties: list[dict]) -> list[dict]:
-    """Sadece top-level, koşulsuz (displayOptions olmayan) parametreleri döner."""
+def _as_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _version_condition_matches(condition: Any, version: int | float) -> bool:
+    current = _as_float(version)
+    if current is None:
+        return False
+
+    if isinstance(condition, dict):
+        raw_ops = condition.get("_cnd")
+        if not isinstance(raw_ops, dict):
+            raw_ops = condition
+        for op, expected in raw_ops.items():
+            expected_number = _as_float(expected)
+            if expected_number is None:
+                return False
+            if op in {"eq", "equals"} and current != expected_number:
+                return False
+            if op in {"neq", "notEquals"} and current == expected_number:
+                return False
+            if op == "gte" and current < expected_number:
+                return False
+            if op == "gt" and current <= expected_number:
+                return False
+            if op == "lte" and current > expected_number:
+                return False
+            if op == "lt" and current >= expected_number:
+                return False
+        return True
+
+    expected = _as_float(condition)
+    return expected is not None and current == expected
+
+
+def _version_conditions_match(values: Any, version: int | float) -> bool:
+    if isinstance(values, list):
+        return any(_version_condition_matches(value, version) for value in values)
+    return _version_condition_matches(values, version)
+
+
+def _display_options_match_latest(prop: dict, version: int | float) -> bool:
+    display_options = prop.get("displayOptions")
+    if not isinstance(display_options, dict):
+        return True
+
+    show = display_options.get("show")
+    if isinstance(show, dict):
+        if any(key != "@version" for key in show):
+            return False
+        version_show = show.get("@version")
+        if version_show is None or not _version_conditions_match(version_show, version):
+            return False
+
+    hide = display_options.get("hide")
+    if isinstance(hide, dict):
+        version_hide = hide.get("@version")
+        if version_hide is not None and _version_conditions_match(version_hide, version):
+            return False
+
+    return True
+
+
+def _extract_type_options_metadata(type_options: Any) -> dict[str, Any]:
+    if not isinstance(type_options, dict):
+        return {}
+
+    metadata: dict[str, Any] = {}
+    for key in ("loadOptionsMethod", "loadOptionsDependsOn", "searchListMethod", "searchable"):
+        if key in type_options:
+            metadata[key] = type_options[key]
+    if "loadOptions" in type_options:
+        metadata["loadOptions"] = True
+    return metadata
+
+
+def _extract_modes_metadata(modes: Any) -> list[dict[str, Any]]:
+    if not isinstance(modes, list):
+        return []
+
+    result: list[dict[str, Any]] = []
+    for mode in modes:
+        if not isinstance(mode, dict):
+            continue
+        condensed = {
+            "name": mode.get("name"),
+            "displayName": mode.get("displayName"),
+            "type": mode.get("type"),
+        }
+        type_options = _extract_type_options_metadata(mode.get("typeOptions"))
+        if type_options:
+            condensed["typeOptions"] = type_options
+        result.append({key: value for key, value in condensed.items() if value is not None})
+    return result
+
+
+def _extract_key_properties(properties: list[dict], version: int | float) -> list[dict]:
+    """Latest/default node version'a uyan top-level parametreleri döner."""
     result = []
     for prop in properties:
         if prop.get("name") in ("resource", "operation"):
             # Zaten resources/operations'da var
             continue
-        if "displayOptions" in prop:
-            # Koşullu parametre — çok karmaşık, skip
+        if not _display_options_match_latest(prop, version):
             continue
         condensed = {
             "name": prop.get("name"),
@@ -95,10 +199,20 @@ def _extract_key_properties(properties: list[dict]) -> list[dict]:
         }
         if prop.get("type") == "options" and "options" in prop:
             condensed["options"] = [o.get("value") for o in prop["options"] if isinstance(o, dict)]
+        type_options = _extract_type_options_metadata(prop.get("typeOptions"))
+        if type_options:
+            condensed["typeOptions"] = type_options
+        modes = _extract_modes_metadata(prop.get("modes"))
+        if modes:
+            condensed["modes"] = modes
         result.append(condensed)
-        if len(result) >= 8:  # LLM için fazla detay olmasın
-            break
-    return result
+
+    selected = result[:8]
+    selected_names = {prop.get("name") for prop in selected}
+    for prop in result[8:]:
+        if prop.get("type") == "resourceLocator" and prop.get("name") not in selected_names:
+            selected.append(prop)
+    return selected
 
 
 def _parse_node(raw: dict[str, Any]) -> NodeInfo | None:
@@ -112,14 +226,15 @@ def _parse_node(raw: dict[str, Any]) -> NodeInfo | None:
     if not isinstance(properties, list):
         properties = []
 
+    version = _extract_version(raw)
     resources, operations = _extract_resources_and_ops(properties)
-    key_props = _extract_key_properties(properties)
+    key_props = _extract_key_properties(properties, version)
 
     node = NodeInfo(
         type_name=type_name,
         display_name=display_name,
         description=description,
-        type_version=_extract_version(raw),
+        type_version=version,
         credentials=_extract_credentials(raw),
         category=_extract_category(raw),
         is_trigger=_is_trigger(raw),
