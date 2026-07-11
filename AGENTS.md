@@ -88,6 +88,35 @@ workspace refactor (Faz 2); see `knowledge-database/01-project/workspace-refacto
   wikilinks when that makes the memory graph more useful. Do not wait for the
   user to ask.
 
+## Codex Multi-Agent Operating Model
+
+The main Codex thread is the project owner and final decision-maker. It owns
+requirements, architecture, task decomposition, integration, final diff review,
+verification acceptance, and the mandatory `knowledge-database` update.
+
+- Use project agents from `.codex/agents/` for bounded work that benefits from
+  specialization or independent context. Prefer delegation for codebase
+  exploration, targeted implementation, test/log analysis, and final review.
+- Keep the main thread on the strongest user-selected model. Project subagents
+  intentionally use lower-tier models: `gpt-5.4-mini` for exploration and
+  verification, and `gpt-5.4` for implementation or deep review.
+- Delegate only work with a concrete scope, owned paths, expected evidence, and
+  a clear return format. The main thread must inspect and integrate the result;
+  a subagent success message is not acceptance evidence.
+- Parallelize read-heavy work freely when independent. Parallelize writes only
+  when file ownership cannot overlap. Never assign two agents to edit the same
+  code or knowledge-database note concurrently.
+- Keep nesting at one level: subagents do not spawn their own subagents. The
+  main thread coordinates all fan-out and waits for required results.
+- Workers report the knowledge note that should change, but the main thread
+  normally performs the final knowledge-database edit after reconciling all
+  results. A worker edits knowledge notes only when explicitly assigned them.
+- Use `repo_explorer` for read-only mapping, `backend_worker` for the current
+  FastAPI/Firebase backend, `frontend_worker` for Next.js 16 web work,
+  `workflow_specialist` for n8n/agent generation behavior, `infra_worker` for
+  current Docker/local-dev infrastructure, `verifier` for independent proof,
+  and `reviewer` for the final read-only risk pass.
+
 ## Verification Commands
 
 - Web lint: `cd apps/web && pnpm lint`

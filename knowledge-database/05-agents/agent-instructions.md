@@ -51,7 +51,30 @@ tasindi: `knowledge-database/99-archive/claude-md-snapshot-2026-06-29.md`.
 - `.claude/skills/`: tekrar kullanilabilir is akislari — `setup-service`,
   `api-endpoint`, `db-migration`, `docker-container`, `n8n-node`, `review`.
 
-`.codex/agents/` altinda ayni 3 rolun Codex karsiligi (`*.toml`) bulunur.
+`.codex/agents/` artik eski uc genel rolun birebir kopyasi degildir. Codex icin
+Conduut'a ozgu, dar sorumluluklu multi-agent kadrosu vardir:
+
+- `repo_explorer` (`gpt-5.4-mini`, medium, read-only): execution path ve kanit
+  haritalama.
+- `backend_worker` (`gpt-5.4`, medium): mevcut FastAPI/Firebase/Firestore
+  backend uygulamasi.
+- `frontend_worker` (`gpt-5.4`, medium): Next.js 16 web ve BFF uygulamasi.
+- `workflow_specialist` (`gpt-5.4`, high): n8n registry, native JSON
+  repair/validation, sandbox ve scenario davranisi.
+- `infra_worker` (`gpt-5.4`, medium): mevcut Docker Compose/local-dev/env
+  altyapisi.
+- `verifier` (`gpt-5.4-mini`, medium): kod degistirmeden hedefli proof task,
+  test ve fonksiyonel kanit.
+- `reviewer` (`gpt-5.4`, high, read-only): final correctness/regression/
+  security review.
+
+Ana thread kullanicinin sectigi en guclu modelde proje sahibi olarak kalir;
+gereksinim, mimari karar, gorev dagitimi, entegrasyon, final diff kabulu ve KB
+guncellemesi ondadir. `.codex/config.toml` `max_threads=4`, `max_depth=1`
+kullanir: ana thread + en fazla uc paralel subagent, recursive fan-out yok.
+Read-heavy isler paralel olabilir; yazma isleri yalniz dosya sahipligi
+cakismiyorsa paralel verilir. Subagent sonucu tek basina kabul kaniti degildir;
+ana thread diff'i inceler ve verifier ile gercek invariant'i dogrular.
 
 ## Kaldirilanlar (2026-06-29 Faz 2)
 
