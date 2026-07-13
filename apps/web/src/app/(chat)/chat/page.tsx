@@ -14,7 +14,12 @@ import { useAuth } from "@/hooks/use-auth";
 import { streamChat } from "@/lib/chat/sse";
 import { setConversationCache } from "@/lib/chat/conversation-cache";
 import { toolActivityLabel } from "@/lib/chat/tool-activity";
-import type { Message, MessageAttachment, AgentStep } from "@/types/chat";
+import {
+  assistantStreamFields,
+  createAssistantStreamState,
+  reduceAssistantStreamEvent,
+} from "@/lib/chat/stream-state";
+import type { Message } from "@/types/chat";
 
 function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -67,35 +72,12 @@ export default function NewChatPage() {
     };
 
     const assistantMessageId = createId("assistant");
-    let assistantContent = "";
-    const assistantSteps: AgentStep[] = [];
-
-    const addTokenStep = (text: string) => {
-      const last = assistantSteps[assistantSteps.length - 1];
-      if (!last || last.kind !== "text") assistantSteps.push({ kind: "text", text: "" });
-      (assistantSteps[assistantSteps.length - 1] as { kind: "text"; text: string }).text += text;
-    };
-    const addActivityStep = (tool: string) => {
-      const last = assistantSteps[assistantSteps.length - 1];
-      if (!last || last.kind !== "activity") assistantSteps.push({ kind: "activity", actions: [] });
-      (assistantSteps[assistantSteps.length - 1] as { kind: "activity"; actions: string[] }).actions.push(tool);
-    };
-    const cloneSteps = (): AgentStep[] | undefined =>
-      assistantSteps.length
-        ? assistantSteps.map((s) =>
-            s.kind === "text" ? { kind: "text", text: s.text } : { kind: "activity", actions: [...s.actions] }
-          )
-        : undefined;
-    let assistantThinking = "";
-    let assistantAttachments: MessageAttachment[] = [];
+    let assistantStream = createAssistantStreamState();
     let createdConversationId = "";
-    let doneProvider: string | undefined;
-    let doneModel: string | undefined;
-    let doneTier: string | undefined;
-    let revealAssistantAttachments = false;
+    let streamCompleted = false;
 
     const upsertAssistantMessage = () => {
-      const visibleAttachments = revealAssistantAttachments ? assistantAttachments : [];
+      const fields = assistantStreamFields(assistantStream);
 
       setMessages((prev) => {
         const normalized: Message[] = prev.map((msg) =>
@@ -110,20 +92,17 @@ export default function NewChatPage() {
             msg.id === assistantMessageId
               ? {
                   ...msg,
-                  content: assistantContent,
-                  thinking: assistantThinking || undefined,
-                  attachments: visibleAttachments,
-                  steps: cloneSteps(),
+                  ...fields,
                   conversationId: createdConversationId || msg.conversationId,
-                  provider: doneProvider ?? msg.provider,
-                  model: doneModel ?? msg.model,
-                  tier: doneTier ?? msg.tier,
+                  provider: fields.provider ?? msg.provider,
+                  model: fields.model ?? msg.model,
+                  tier: fields.tier ?? msg.tier,
                 }
               : msg
           );
         }
 
-        if (!assistantContent && !assistantThinking && visibleAttachments.length === 0 && assistantSteps.length === 0) {
+        if (!fields.content && !fields.thinking && fields.attachments.length === 0 && !fields.steps) {
           return normalized;
         }
 
@@ -133,14 +112,8 @@ export default function NewChatPage() {
             id: assistantMessageId,
             conversationId: createdConversationId,
             role: "agent",
-            content: assistantContent,
-            thinking: assistantThinking || undefined,
-            attachments: visibleAttachments,
-            steps: cloneSteps(),
+            ...fields,
             createdAt: now,
-            provider: doneProvider,
-            model: doneModel,
-            tier: doneTier,
           },
         ];
       });
@@ -155,80 +128,57 @@ export default function NewChatPage() {
       await streamChat({
         token,
         body: { content },
-        onEvent: ({ event, data }) => {
-          const streamConversationId =
-            typeof data.conversation_id === "string" ? data.conversation_id : "";
-          if (streamConversationId) {
-            createdConversationId = streamConversationId;
-          }
+        onEvent: (event) => {
+          const result = reduceAssistantStreamEvent(assistantStream, event);
+          if (!result.accepted) return;
+          assistantStream = result.state;
+          if (result.conversationId) createdConversationId = result.conversationId;
 
-          if (event === "error") {
-            const message = typeof data.message === "string" ? data.message : "An error occurred. Please try again.";
-            toast.error(message);
+          if (result.kind === "error") {
+            toast.error(result.errorMessage);
             setMessages((prev) => prev.filter((msg) => msg.id !== assistantMessageId));
             return;
           }
 
-          if (event === "done") {
-            doneProvider = typeof data.provider === "string" ? data.provider : undefined;
-            doneModel = typeof data.model === "string" ? data.model : undefined;
-            doneTier = typeof data.tier === "string" ? data.tier : undefined;
-            revealAssistantAttachments = true;
-            setAgentActivity("Finishing the response");
-            setAgentActivities((prev) => appendRecentActivity(prev, "Finishing the response"));
+          if (result.kind === "recovery") {
+            const recoveryMessage = result.activity ?? "Retrying the response";
+            setAgentActivity(recoveryMessage);
+            setAgentActivities([recoveryMessage]);
             upsertAssistantMessage();
             return;
           }
 
-          if (event === "tool_call") {
-            const label = toolActivityLabel(data.tool);
+          if (result.kind === "done") {
+            streamCompleted = true;
+            const activity = result.activity ?? "Finishing the response";
+            setAgentActivity(activity);
+            setAgentActivities((prev) => appendRecentActivity(prev, activity));
+            upsertAssistantMessage();
+            return;
+          }
+
+          if (event.event === "tool_call") {
+            const label = toolActivityLabel(event.data.tool);
             setAgentActivity(label);
             setAgentActivities((prev) => appendRecentActivity(prev, label));
-            if (typeof data.tool === "string" && data.tool) addActivityStep(data.tool);
-            upsertAssistantMessage();
-            return;
-          }
-
-          if (event === "token") {
-            const text = typeof data.text === "string" ? data.text : "";
-            if (!text) return;
-            assistantContent += text;
-            addTokenStep(text);
-          } else if (event === "thinking") {
-            const text = typeof data.text === "string" ? data.text : "";
-            if (!text) return;
-            assistantThinking += text;
-          } else if (event === "attachment") {
-            assistantAttachments = [
-              ...assistantAttachments,
-              {
-                type: data.type as MessageAttachment["type"],
-                data: (data.data || {}) as Record<string, unknown>,
-              },
-            ];
-            if (!revealAssistantAttachments) return;
-          } else {
-            return;
           }
 
           upsertAssistantMessage();
         },
       });
 
-      if (createdConversationId) {
+      if (createdConversationId && streamCompleted) {
+        const finalFields = assistantStreamFields(assistantStream, { ephemeral: false });
         const finalMessages: Message[] = [
           { ...userMessage, conversationId: createdConversationId },
           {
             id: assistantMessageId,
             conversationId: createdConversationId,
             role: "agent",
-            content: assistantContent,
-            attachments: assistantAttachments.length > 0 ? assistantAttachments : undefined,
-            steps: cloneSteps(),
+            ...finalFields,
+            attachments:
+              finalFields.attachments.length > 0 ? finalFields.attachments : undefined,
             createdAt: now,
-            provider: doneProvider,
-            model: doneModel,
-            tier: doneTier,
           },
         ];
         setConversationCache(createdConversationId, finalMessages);

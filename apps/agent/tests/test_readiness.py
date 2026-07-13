@@ -58,9 +58,13 @@ async def test_reuses_openai_credential_from_another_workflow(monkeypatch):
     )
 
     node = {"name": "OpenAI Chat Model", "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi"}
-    ok = await readiness._attach_existing_credential_if_available("new", node, "openAiApi")
+    mutations: list[str] = []
+    ok = await readiness._attach_existing_credential_if_available(
+        "new", node, "openAiApi", lambda: mutations.append("attach")
+    )
 
     assert ok is True
+    assert mutations == ["attach"]
     assert node["credentials"]["openAiApi"] == {"id": "cred123", "name": "OpenAi account"}
     assert attached and attached[0]["id"] == "cred123"
 
@@ -76,9 +80,13 @@ async def test_returns_false_when_no_matching_credential(monkeypatch):
     )
 
     node = {"name": "OpenAI Chat Model", "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi"}
-    ok = await readiness._attach_existing_credential_if_available("new", node, "openAiApi")
+    mutations: list[str] = []
+    ok = await readiness._attach_existing_credential_if_available(
+        "new", node, "openAiApi", lambda: mutations.append("attach")
+    )
 
     assert ok is False
+    assert mutations == []
     assert attached == []
 
 

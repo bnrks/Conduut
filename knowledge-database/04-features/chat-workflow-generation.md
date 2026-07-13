@@ -58,6 +58,10 @@ bir provider/model/effort yoktur.
   `user_input_request` gibi ekleri mesaja ekler. Google Sheets sonuc
   onizlemeleri icin `artifact_preview` attachment'i de ayni SSE sozlesmesini
   kullanir.
+- `recovery`: Yalniz DeepSeek reliability guard tetiklenince gelir. `attempt_id`
+  sozlesmesiyle yarim content/thinking/steps/attachment state'ini temizler, gec kalan eski
+  attempt event'lerini yok sayar ve "Agent tarafinda bir sorun olustu. Bastan tekrar
+  deniyorum…" aktivitesini ephemeral gosterir. Recovery assistant content/history'ye girmez.
 - Gecmis conversation yuklemelerinde web tarafinda `normalizeMessages`
   kullanilir: backend snake_case zaman alanlari dondurse veya Firestore'daki
   rol `assistant` olsa bile UI mesajlari `createdAt`, `conversationId`, `agent`
@@ -74,6 +78,12 @@ bir provider/model/effort yoktur.
   metadata'yi mesajda saklar, ancak chat mesajlarinin hover alaninda model
   ismini gostermez; kartlarin yaninda yalnizca zaman bilgisi kalir.
 - `error`: toast ile hata gosterir.
+
+DeepSeek artik guard nedeniyle tum run'i buffer edip sonradan replay etmez. Kisa tool-imza
+look-behind'i disinda gercek token/thinking/tool aktivitesi canlidir. Replay-unsafe bir tool
+basladiysa recovery otomatik tekrar yapmaz; gecerli attachment'lari korur ve ayni islemin
+tekrarlanmadigini bildirir. Her iki chat route'u ayni attempt-aware stream-state reducer'ini
+kullanir.
 
 ## Workflow Preview
 

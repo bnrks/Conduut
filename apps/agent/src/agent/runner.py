@@ -3,6 +3,7 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from uuid import uuid4
 
 import structlog
 from pydantic_ai import (
@@ -32,21 +33,66 @@ from src.agent.model_registry import resolve
 from src.agent.platform_state import gather_user_state
 from src.agent.provider_factory import build_model, build_model_settings, classify_provider_error
 from src.agent.reliability_guard import (
-    CONDUUT_TOOL_NAMES,
     MAX_ATTEMPTS,
-    REPLAY_CHUNK,
-    REPLAY_DELAY,
-    RUNAWAY_CHARS,
-    looks_like_garbage,
+    IncrementalReliabilityGuard,
 )
 from src.agent.router import classify_tier
 from src.agent.schemas import AgentDeps, AgentEvent
-from src.agent.step_assembler import StepAssembler, build_steps
+from src.agent.step_assembler import StepAssembler
+from src.agent.tool_safety import CONDUUT_TOOL_NAMES
 from src.agent.tools import create_agent
 from src.config import key_for_provider, settings
 from src.logging_config import bind_log_context, clear_log_context
 
 log = structlog.get_logger()
+
+_INTERNAL_CONTEXT_MARKER = "[Conduut internal context"
+
+
+class _GuardedTextEmitter:
+    """Quarantine a bounded suffix until it cannot become a leaked tool call."""
+
+    def __init__(self, guard: IncrementalReliabilityGuard) -> None:
+        self.guard = guard
+        longest_tool = max((len(name) for name in CONDUUT_TOOL_NAMES), default=0)
+        self._quarantine_chars = max(longest_tool + 4, len(_INTERNAL_CONTEXT_MARKER) - 1)
+        self._pending = ""
+        self._internal_context = False
+
+    def feed(self, chunk: str) -> str:
+        if not chunk or self.guard.reason or self._internal_context:
+            return ""
+        self.guard.feed(chunk)
+        if self.guard.reason:
+            self._pending = ""
+            return ""
+
+        self._pending += chunk
+        marker_index = self._pending.find(_INTERNAL_CONTEXT_MARKER)
+        if marker_index >= 0:
+            safe = self._pending[:marker_index].rstrip()
+            self._pending = ""
+            self._internal_context = True
+            return safe
+
+        release = len(self._pending) - self._quarantine_chars
+        if release <= 0:
+            return ""
+        safe = self._pending[:release]
+        self._pending = self._pending[release:]
+        return safe
+
+    def finish_model_response(self) -> str:
+        """Release a clean response tail and reset per-response sanitization."""
+
+        if self.guard.reason or self._internal_context:
+            safe = ""
+        else:
+            safe = strip_internal_context(self._pending)
+        self._pending = ""
+        self._internal_context = False
+        self.guard.finish_model_response()
+        return safe
 
 
 def _sse(event: str, data: dict) -> str:
@@ -87,6 +133,9 @@ async def _emit_stream_event(
     event_queue: asyncio.Queue[AgentEvent],
     conv_id: str,
     text_chunks: list[str],
+    *,
+    attempt_id: str | None = None,
+    guarded_text: _GuardedTextEmitter | None = None,
 ) -> None:
     """Pydantic AI model-stream event'ini SSE event'ine çevirip queue'ya koyar.
 
@@ -97,21 +146,37 @@ async def _emit_stream_event(
     if isinstance(event, PartStartEvent):
         part = event.part
         if isinstance(part, TextPart) and part.content:
-            text_chunks.append(part.content)
-            await event_queue.put(("token", {"text": part.content, "conversation_id": conv_id}))
+            visible = guarded_text.feed(part.content) if guarded_text else part.content
+            text_chunks.append(visible)
+            if not visible:
+                return
+            data = {"text": visible, "conversation_id": conv_id}
+            if attempt_id:
+                data["attempt_id"] = attempt_id
+            await event_queue.put(("token", data))
         elif isinstance(part, ThinkingPart) and part.content:
-            await event_queue.put(("thinking", {"text": part.content, "conversation_id": conv_id}))
+            data = {"text": part.content, "conversation_id": conv_id}
+            if attempt_id:
+                data["attempt_id"] = attempt_id
+            await event_queue.put(("thinking", data))
     elif isinstance(event, PartDeltaEvent):
         delta = event.delta
         if isinstance(delta, TextPartDelta) and delta.content_delta:
-            text_chunks.append(delta.content_delta)
-            await event_queue.put(
-                ("token", {"text": delta.content_delta, "conversation_id": conv_id})
+            visible = (
+                guarded_text.feed(delta.content_delta) if guarded_text else delta.content_delta
             )
+            text_chunks.append(visible)
+            if not visible:
+                return
+            data = {"text": visible, "conversation_id": conv_id}
+            if attempt_id:
+                data["attempt_id"] = attempt_id
+            await event_queue.put(("token", data))
         elif isinstance(delta, ThinkingPartDelta) and delta.content_delta:
-            await event_queue.put(
-                ("thinking", {"text": delta.content_delta, "conversation_id": conv_id})
-            )
+            data = {"text": delta.content_delta, "conversation_id": conv_id}
+            if attempt_id:
+                data["attempt_id"] = attempt_id
+            await event_queue.put(("thinking", data))
 
 
 async def run(
@@ -126,6 +191,7 @@ async def run(
     clear_log_context()
     bind_log_context(request_id=request_id, user_id=user_id, conversation_id=conv_id)
     log.info("agent_run_started", message_count=len(messages))
+    initial_attempt_id = uuid4().hex
     platform_resources = _platform_resources_from_messages(messages)
     conversation_workflows = _conversation_workflows_from_messages(messages)
     user_prompt, message_history = _history_from_store_messages(messages)
@@ -152,22 +218,30 @@ async def run(
             error_type=type(exc).__name__,
             error=str(exc),
         )
-        yield _sse("error", {"code": "model_config", "message": classify_provider_error(exc)})
+        yield _sse(
+            "error",
+            {
+                "code": "model_config",
+                "message": classify_provider_error(exc),
+                "attempt_id": initial_attempt_id,
+            },
+        )
         clear_log_context()
         return
 
-    def make_deps() -> AgentDeps:
+    def make_deps(attempt_id: str) -> AgentDeps:
         return AgentDeps(
             user_id=user_id,
             conversation_id=conv_id,
             event_queue=asyncio.Queue(),
+            attempt_id=attempt_id,
             platform_resources=platform_resources,
             conversation_workflows=conversation_workflows,
             platform_state=platform_state,
         )
 
     if settings.enable_reliability_guard and choice.provider == "deepseek":
-        stream = _run_buffered_with_retry(
+        stream = _run_guarded_with_retry(
             choice=choice,
             tier=tier,
             model=model,
@@ -177,6 +251,7 @@ async def run(
             message_history=message_history,
             user_id=user_id,
             conv_id=conv_id,
+            initial_attempt_id=initial_attempt_id,
         )
     else:
         stream = _run_live(
@@ -184,11 +259,12 @@ async def run(
             tier=tier,
             model=model,
             model_settings=model_settings,
-            deps=make_deps(),
+            deps=make_deps(initial_attempt_id),
             user_prompt=user_prompt,
             message_history=message_history,
             user_id=user_id,
             conv_id=conv_id,
+            attempt_id=initial_attempt_id,
         )
     async for sse in stream:
         yield sse
@@ -205,6 +281,7 @@ async def _run_live(
     message_history: list[ModelMessage],
     user_id: str,
     conv_id: str,
+    attempt_id: str,
 ) -> AsyncIterator[str]:
     """Stream a single agent run live to the client (non-DeepSeek path)."""
 
@@ -232,7 +309,13 @@ async def _run_live(
                 if Agent.is_model_request_node(node):
                     async with node.stream(agent_run.ctx) as request_stream:
                         async for event in request_stream:
-                            await _emit_stream_event(event, event_queue, conv_id, text_chunks)
+                            await _emit_stream_event(
+                                event,
+                                event_queue,
+                                conv_id,
+                                text_chunks,
+                                attempt_id=attempt_id,
+                            )
             return agent_run.result
 
     assembler = StepAssembler()
@@ -264,6 +347,7 @@ async def _run_live(
             {
                 "code": "max_rounds",
                 "message": "Agent could not complete the task. Please try again.",
+                "attempt_id": attempt_id,
             },
         )
         clear_log_context()
@@ -279,6 +363,7 @@ async def _run_live(
             {
                 "code": "model_behavior",
                 "message": "The model could not produce a valid response. Please try again.",
+                "attempt_id": attempt_id,
             },
         )
         clear_log_context()
@@ -291,7 +376,14 @@ async def _run_live(
             attachment_count=len(deps.attachments),
             exc_info=True,
         )
-        yield _sse("error", {"code": "unknown", "message": classify_provider_error(exc)})
+        yield _sse(
+            "error",
+            {
+                "code": "unknown",
+                "message": classify_provider_error(exc),
+                "attempt_id": attempt_id,
+            },
+        )
         clear_log_context()
         return
 
@@ -303,7 +395,15 @@ async def _run_live(
     except Exception:
         usage = None
     async for sse in _persist_and_done(
-        deps, full_content, choice, tier, user_id, conv_id, usage=usage, steps=assembler.steps()
+        deps,
+        full_content,
+        choice,
+        tier,
+        user_id,
+        conv_id,
+        usage=usage,
+        steps=assembler.steps(),
+        attempt_id=attempt_id,
     ):
         yield sse
 
@@ -318,6 +418,7 @@ async def _persist_and_done(
     *,
     usage=None,
     steps: list[dict] | None = None,
+    attempt_id: str | None = None,
 ) -> AsyncIterator[str]:
     """Log usage, persist the assistant message + artifacts, emit the done event."""
 
@@ -394,15 +495,74 @@ async def _persist_and_done(
             "provider": choice.provider,
             "model": choice.model,
             "tier": tier.value,
+            **({"attempt_id": attempt_id} if attempt_id else {}),
         },
     )
     clear_log_context()
 
 
-# --- DeepSeek reliability guard (#1244): buffer + retry + replay ------------
+# --- DeepSeek reliability guard (#1244): live attempt + visible recovery ----
+
+RECOVERY_MESSAGE = "Agent tarafında bir sorun oluştu. Baştan tekrar deniyorum…"
+DEGRADED_MESSAGE = "İşlem tamamlandı; yanıtı oluştururken sorun oluştu. Aynı işlemi tekrar etmedim."
+RECOVERY_INSTRUCTION = (
+    "[Internal recovery instruction: the previous attempt emitted a tool call as "
+    "plain text or entered an invalid loop. Restart the task from the beginning. "
+    "Use structured tool calling only; never print a tool name with arguments.]"
+)
 
 
-async def _collect_attempt(
+def _attempt_id() -> str:
+    return uuid4().hex
+
+
+def _provider_error_is_terminal(exc: Exception) -> bool:
+    """Auth, billing/quota and missing-model failures cannot heal on retry."""
+
+    status = getattr(exc, "status_code", None)
+    response = getattr(exc, "response", None)
+    if status is None and response is not None:
+        status = getattr(response, "status_code", None)
+    name = type(exc).__name__.lower()
+    message = str(exc).lower()
+    return bool(
+        status in (401, 403, 404)
+        or "auth" in name
+        or "unauthorized" in message
+        or "notfound" in name
+        or "not found" in message
+        or "insufficient_quota" in message
+        or "quota" in message
+        or "billing" in message
+    )
+
+
+def _recovery_event(
+    *,
+    conversation_id: str,
+    failed_attempt_id: str,
+    next_attempt_id: str | None,
+    attempt: int,
+    reason: str,
+    retrying: bool,
+    message: str,
+) -> str:
+    return _sse(
+        "recovery",
+        {
+            "conversation_id": conversation_id,
+            "failed_attempt_id": failed_attempt_id,
+            "next_attempt_id": next_attempt_id,
+            "attempt": attempt,
+            "max_attempts": MAX_ATTEMPTS,
+            "reason_code": reason,
+            "retrying": retrying,
+            "message": message,
+        },
+    )
+
+
+async def _run_guarded_attempt(
     *,
     choice,
     model,
@@ -411,18 +571,14 @@ async def _collect_attempt(
     user_prompt: str,
     message_history: list[ModelMessage],
 ) -> AsyncIterator:
-    """Run one agent attempt, buffering every event instead of streaming it.
-
-    Yields keep-alive pings (str) while the attempt runs so the connection stays
-    open, then yields one final ``(buffer, full_content, error_code, usage)`` tuple.
-    ``error_code`` is ``None`` on a normal finish, else "runaway"/"model_error"/
-    "provider_error".
-    """
+    """Stream one attempt immediately and finish with an internal result marker."""
 
     queue = deps.event_queue
     agent = create_agent(model)
     text_chunks: list[str] = []
-    buffer: list[AgentEvent] = []
+    assembler = StepAssembler()
+    guard = IncrementalReliabilityGuard()
+    guarded_text = _GuardedTextEmitter(guard)
 
     async def _stream():
         async with agent.iter(
@@ -440,37 +596,59 @@ async def _collect_attempt(
                     async with node.stream(agent_run.ctx) as request_stream:
                         async for event in request_stream:
                             await _emit_stream_event(
-                                event, queue, deps.conversation_id, text_chunks
+                                event,
+                                queue,
+                                deps.conversation_id,
+                                text_chunks,
+                                attempt_id=deps.attempt_id,
+                                guarded_text=guarded_text,
                             )
+                            if guard.reason:
+                                return None
+                    tail = guarded_text.finish_model_response()
+                    if tail:
+                        text_chunks.append(tail)
+                        await queue.put(
+                            (
+                                "token",
+                                {
+                                    "text": tail,
+                                    "conversation_id": deps.conversation_id,
+                                    "attempt_id": deps.attempt_id,
+                                },
+                            )
+                        )
             return agent_run.result
 
     task = asyncio.create_task(_stream())
-    runaway = False
-    while not task.done():
+    while not task.done() or not queue.empty():
         try:
             item = await asyncio.wait_for(queue.get(), timeout=2.0)
-            buffer.append(item)
-            if sum(len(chunk) for chunk in text_chunks) > RUNAWAY_CHARS:
-                runaway = True
-                task.cancel()
-                break
+            assembler.add(item[0], item[1])
+            yield _event_to_sse(item)
         except asyncio.TimeoutError:
-            yield ": keep-alive\n\n"
-    while not queue.empty():
-        buffer.append(queue.get_nowait())
+            if not task.done():
+                yield ": keep-alive\n\n"
 
     full_content = "".join(text_chunks)
-    if runaway:
-        try:
-            await task
-        except (asyncio.CancelledError, Exception):
-            pass
-        yield (buffer, full_content, "runaway", None)
+    if guard.reason:
+        yield (
+            full_content,
+            guard.reason,
+            None,
+            None,
+            assembler.steps(),
+            guard.diagnostics,
+        )
         return
+
     try:
         result = task.result()
-    except (UsageLimitExceeded, UnexpectedModelBehavior):
-        yield (buffer, full_content, "model_error", None)
+    except UsageLimitExceeded as exc:
+        yield (full_content, "max-rounds", exc, None, assembler.steps(), guard.diagnostics)
+        return
+    except UnexpectedModelBehavior as exc:
+        yield (full_content, "model-behavior", exc, None, assembler.steps(), guard.diagnostics)
         return
     except Exception as exc:
         log.error(
@@ -480,51 +658,23 @@ async def _collect_attempt(
             attachment_count=len(deps.attachments),
             exc_info=True,
         )
-        yield (buffer, full_content, "provider_error", None)
+        yield (full_content, "provider-error", exc, None, assembler.steps(), guard.diagnostics)
         return
     try:
         usage = result.usage()
     except Exception:
         usage = None
-    yield (buffer, full_content, None, usage)
-
-
-async def _replay_buffer(buffer: list[AgentEvent]) -> AsyncIterator[str]:
-    """Replay buffered events as a simulated stream: non-token events immediately,
-    token text re-chunked with a small delay for a live-typing feel. Consecutive
-    token events (one text segment) are grouped so an echoed internal-context
-    annotation that spans token boundaries is stripped before display."""
-
-    index = 0
-    total = len(buffer)
-    while index < total:
-        event, data = buffer[index]
-        if event == "token":
-            conv = data.get("conversation_id")
-            text = ""
-            while index < total and buffer[index][0] == "token":
-                text += str(buffer[index][1].get("text", ""))
-                index += 1
-            text = strip_internal_context(text)
-            for start in range(0, len(text), REPLAY_CHUNK):
-                yield _sse(
-                    "token",
-                    {"text": text[start : start + REPLAY_CHUNK], "conversation_id": conv},
-                )
-                await asyncio.sleep(REPLAY_DELAY)
-        else:
-            yield _event_to_sse((event, data))
-            index += 1
-
-
-def _degraded_message() -> str:
-    return (
-        "İşlemi yaptım, ama yanıtı toparlarken bir sorun oluştu. Sonucu yukarıda "
-        "görebilirsin; yine de bir şey eksikse tekrar yazar mısın?"
+    yield (
+        full_content or (result.output or ""),
+        None,
+        None,
+        usage,
+        assembler.steps(),
+        guard.diagnostics,
     )
 
 
-async def _run_buffered_with_retry(
+async def _run_guarded_with_retry(
     *,
     choice,
     tier,
@@ -535,36 +685,31 @@ async def _run_buffered_with_retry(
     message_history: list[ModelMessage],
     user_id: str,
     conv_id: str,
+    initial_attempt_id: str,
 ) -> AsyncIterator[str]:
-    """DeepSeek path: buffer each attempt, retry from scratch on a #1244 failure
-    when no real action ran, then replay the clean attempt as a stream."""
+    """DeepSeek path: live stream each attempt and explicitly reset on retry."""
 
-    attempt = 0
-    while attempt < MAX_ATTEMPTS:
-        attempt += 1
-        deps = make_deps()
-        yield ": keep-alive\n\n"
-
+    attempt_id = initial_attempt_id
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        deps = make_deps(attempt_id)
+        prompt = user_prompt if attempt == 1 else f"{user_prompt}\n\n{RECOVERY_INSTRUCTION}"
         result_marker = None
-        async for item in _collect_attempt(
+        async for item in _run_guarded_attempt(
             choice=choice,
             model=model,
             model_settings=model_settings,
             deps=deps,
-            user_prompt=user_prompt,
+            user_prompt=prompt,
             message_history=message_history,
         ):
             if isinstance(item, str):
                 yield item
             else:
                 result_marker = item
-        buffer, full_content, error_code, usage = result_marker
-        reason = error_code or looks_like_garbage(full_content, CONDUUT_TOOL_NAMES)
 
+        full_content, reason, exc, usage, steps, guard_diagnostics = result_marker
         if reason is None:
-            log.info("reliability_guard_clean", attempt=attempt)
-            async for sse in _replay_buffer(buffer):
-                yield sse
+            log.info("reliability_guard_clean", attempt=attempt, attempt_id=attempt_id)
             async for sse in _persist_and_done(
                 deps,
                 full_content,
@@ -573,7 +718,8 @@ async def _run_buffered_with_retry(
                 user_id,
                 conv_id,
                 usage=usage,
-                steps=build_steps(buffer),
+                steps=steps,
+                attempt_id=attempt_id,
             ):
                 yield sse
             return
@@ -581,22 +727,83 @@ async def _run_buffered_with_retry(
         log.warning(
             "reliability_guard_garbage",
             attempt=attempt,
+            attempt_id=attempt_id,
             reason=reason,
-            real_action=deps.real_action_executed,
+            replay_unsafe=deps.real_action_executed,
+            replay_unsafe_tool=deps.replay_unsafe_tool,
+            **guard_diagnostics,
         )
 
         if deps.real_action_executed:
-            # A real external action ran; retrying would duplicate it. Show the
-            # attachments + a graceful line instead of the garbage text.
-            for event, data in buffer:
-                if event == "attachment":
-                    yield _event_to_sse((event, data))
-            degraded = _degraded_message()
-            yield _sse("token", {"text": degraded, "conversation_id": conv_id})
-            async for sse in _persist_and_done(deps, degraded, choice, tier, user_id, conv_id):
+            yield _recovery_event(
+                conversation_id=conv_id,
+                failed_attempt_id=attempt_id,
+                next_attempt_id=None,
+                attempt=attempt,
+                reason=reason,
+                retrying=False,
+                message=DEGRADED_MESSAGE,
+            )
+            # The UI discarded the failed attempt, so publish valid cards again.
+            for attachment in deps.attachments:
+                data = {
+                    "conversation_id": conv_id,
+                    "attempt_id": attempt_id,
+                    "type": attachment.get("type"),
+                    "data": attachment.get("data"),
+                }
+                yield _sse("attachment", data)
+            yield _sse(
+                "token",
+                {"text": DEGRADED_MESSAGE, "conversation_id": conv_id, "attempt_id": attempt_id},
+            )
+            async for sse in _persist_and_done(
+                deps,
+                DEGRADED_MESSAGE,
+                choice,
+                tier,
+                user_id,
+                conv_id,
+                attempt_id=attempt_id,
+            ):
                 yield sse
             return
-        # else: discard buffer and retry from scratch (loop)
+
+        if exc is not None and _provider_error_is_terminal(exc):
+            yield _sse(
+                "error",
+                {
+                    "code": "provider_error",
+                    "message": classify_provider_error(exc),
+                    "attempt_id": attempt_id,
+                },
+            )
+            clear_log_context()
+            return
+
+        if attempt < MAX_ATTEMPTS:
+            next_attempt_id = _attempt_id()
+            yield _recovery_event(
+                conversation_id=conv_id,
+                failed_attempt_id=attempt_id,
+                next_attempt_id=next_attempt_id,
+                attempt=attempt,
+                reason=reason,
+                retrying=True,
+                message=RECOVERY_MESSAGE,
+            )
+            attempt_id = next_attempt_id
+            continue
+
+        yield _recovery_event(
+            conversation_id=conv_id,
+            failed_attempt_id=attempt_id,
+            next_attempt_id=None,
+            attempt=attempt,
+            reason=reason,
+            retrying=False,
+            message="Agent yanıtı tamamlayamadı.",
+        )
 
     log.error("reliability_guard_exhausted", attempts=MAX_ATTEMPTS)
     yield _sse(
@@ -604,6 +811,7 @@ async def _run_buffered_with_retry(
         {
             "code": "model_behavior",
             "message": "The model had trouble responding. Please try again.",
+            "attempt_id": attempt_id,
         },
     )
     clear_log_context()

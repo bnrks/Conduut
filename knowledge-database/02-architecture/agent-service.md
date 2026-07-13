@@ -154,6 +154,17 @@ metni akmaya baslayinca **gizlenir** (`message-list.tsx` `showTypingIndicator`);
 prop'u true iken, canli markdown korunur, index-key ile sadece yeni kelimeler
 animasyon alir). Detay: [[chat-workflow-generation]].
 
+**DeepSeek canli reliability recovery (2026-07-11):** Eski #1244 guard'i DeepSeek
+attempt'inin tum event'lerini sona kadar buffer edip temiz sonucu replay ediyordu; bu yol
+kaldirildi. DeepSeek de `token`/`thinking`/`tool_call` event'lerini canli yollar. Her event
+`attempt_id` tasir; incremental guard duz-metin tool call/runaway/repetition yakalarsa
+`recovery` SSE (`failed_attempt_id`, `next_attempt_id`, `attempt`, `max_attempts`,
+`reason_code`, `retrying`, `message`) emit eder. Frontend eski attempt state'ini siler ve
+yeni attempt'i canli izler. Ilk deneme + en cok iki retry vardir. Merkezi tool replay-safety
+katalogu dis mutation baslamissa retry'yi fail-closed durdurur; boylece workflow, credential
+ve platform aksiyonlari iki kez calismaz. Bozuk attempt ve recovery aktivitesi history'ye
+yazilmaz. Detay: [[model-cost-research-2026-06]].
+
 Conversation history modele aktarilirken assistant attachment'lari da korunur.
 `workflow_preview` workflow id baglamini, `workflow_run_result` execution
 baglamini, `user_input_request` ise agent'in once sordugu eksik bilgi

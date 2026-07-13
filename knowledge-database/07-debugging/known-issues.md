@@ -217,6 +217,43 @@ tutar). `test_provider_factory.py` +2, suite **399 passed**, ruff temiz.
 operasyonel guvenilirlik verisidir; timeout+retry ile hafifletildi ama
 saglayici-kaynakli stall'in kendisi maliyet/kalite kararinda not edilmeli.
 
+## DeepSeek guard UI'i run sonuna kadar bos birakiyordu (2026-07-11, cozuldu)
+
+**Belirti:** #1244 tool-call-as-text korumasi DeepSeek attempt'inin tum event'lerini buffer
+ettigi icin uzun build sirasinda UI yalniz "Conduut is thinking" gosteriyor; tool asamalari ve
+thinking ancak run bittikten sonra replay ediliyordu. Guard calissa bile urun takilmis hissi
+veriyordu.
+
+**Cozum:** Whole-run buffer/replay kaldirildi. Incremental guard + kisa look-behind ile event'ler
+`attempt_id` tasiyarak canli akar. Hata replay-safe asamada yakalanirsa `recovery` SSE UI'daki
+yarim attempt'i temizler ve en fazla iki kez sifirdan dener. Merkezi replay-safety katalogu
+workflow/credential/platform mutation'i baslamissa otomatik retry'yi engeller; duplicate yan
+etki yerine gecerli kartlar ve guvenli toparlama mesaji dondurulur. Bozuk attempt persist edilmez.
+Ilgili: [[model-cost-research-2026-06]], [[chat-workflow-generation]], [[agent-service]].
+
+### Repetition detector normal cok-turlu ozeti loop sandi (2026-07-12, cozuldu)
+
+Canli salt-okuma testi (conversation `5d560203-2adc-44d9-914a-c3e1022564ab`)
+uc attempt'te de `list_workflows` ve `get_workflow` tool'larini basariyla calistirdi;
+ancak guard her seferinde `reason=repetition` verip temiz sonucu reddetti ve sonunda
+`reliability_guard_exhausted` uretti. Kok neden DeepSeek task basarisizligi degil,
+ayni 20 karakterlik pencerenin attempt'in farkli model response'lari boyunca dort kez
+gorulmesini loop sayan fazla genis detector'du.
+
+Fix: repetition state her model response sonunda sifirlanir. Detector
+`20/40/80/160/320/640/1280` karakter pencerelerinde yakin eslesmeleri arar ve
+false-positive'i azaltmak icin tum tekrar periyodunun gercekten ayni oldugunu dogrular;
+boylece 8K siniri icinde dort kez tekrarlanabilen yaklasik 2.000 karaktere kadar tum
+periyotlar runaway sinirini beklemeden yakalanir. Exact tool-call-as-text ve attempt-geneli
+8.000 karakter
+runaway korumalari degismedi. Failure logu ham icerik yerine SHA-256 fingerprint, pencere/
+periyot boyutu, tekrar sayisi, gap ve karakter sayaclari tasir. Regresyon testleri normal
+cok-turlu narrasyon/yapilandirilmis ozeti kabul ederken kisa ve uzun split-chunk loop'lari
+reddeder. Streaming detector her karakter icin cok-olcekli rolling 64-bit hash gunceller;
+tool regex'i yalniz kisa suffix'i tarar. Hash yalniz aday uretir, karar dort tam periyodun
+birebir karsilastirilmasiyla verilir; dorduncu blok tamamlanmadiysa aday `required_end`'e
+kadar bekletilir. 7.999 tek-karakter chunk benchmark'i yaklasik 0,21 sn'dir.
+
 ## create_workflow, silinmis dedup id'sinde 404 → "Agent could not complete" (2026-07-02, cozuldu)
 
 **Belirti:** Kullanici ayni sohbette "otomasyonu sil ve bastan yap" dedi → agent

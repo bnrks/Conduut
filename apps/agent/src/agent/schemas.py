@@ -296,6 +296,7 @@ class AgentDeps:
     user_id: str
     conversation_id: str
     event_queue: asyncio.Queue[AgentEvent]
+    attempt_id: str | None = None
     attachments: list[dict[str, Any]] = field(default_factory=list)
     platform_resources: dict[str, dict[str, Any]] = field(default_factory=dict)
     awaiting_user_input: bool = False
@@ -308,9 +309,10 @@ class AgentDeps:
     # Real-execution failures per workflow id (bounds the execute retry loop so a
     # workflow that keeps failing surfaces to the user instead of thrashing budget).
     workflow_execution_failures: dict[str, int] = field(default_factory=dict)
-    # True once a real external action (workflow execution / platform action) has
-    # run this attempt — the reliability guard must not retry from scratch then.
+    # True once any replay-unsafe tool starts its external mutation. Kept under
+    # the legacy field name for compatibility with existing tests/callers.
     real_action_executed: bool = False
+    replay_unsafe_tool: str | None = None
     # Per-conversation platform self-awareness state (connected services, saved
     # credentials, existing automations). Set by runner.run; read by the agent's
     # dynamic @instructions. Typed Any to avoid a schemas<->platform_state import
@@ -324,9 +326,19 @@ class AgentDeps:
             user_id=self.user_id,
             conversation_id=self.conversation_id,
         )
-        await self.event_queue.put(
-            ("tool_call", {"tool": tool, "conversation_id": self.conversation_id})
-        )
+        data = {"tool": tool, "conversation_id": self.conversation_id}
+        if self.attempt_id:
+            data["attempt_id"] = self.attempt_id
+        await self.event_queue.put(("tool_call", data))
+
+    def mark_replay_unsafe(self, tool: str) -> None:
+        """Fail closed before a tool starts a potentially mutating call."""
+
+        from src.agent.tool_safety import ReplaySafety, replay_safety
+
+        if replay_safety(tool) is ReplaySafety.REPLAY_UNSAFE:
+            self.real_action_executed = True
+            self.replay_unsafe_tool = tool
 
     async def emit_attachment(self, attachment: AgentAttachment) -> None:
         payload = attachment.model_dump(exclude_none=True)
@@ -339,14 +351,17 @@ class AgentDeps:
             user_id=self.user_id,
             conversation_id=self.conversation_id,
         )
+        data = {
+            "conversation_id": self.conversation_id,
+            "type": payload["type"],
+            "data": payload["data"],
+        }
+        if self.attempt_id:
+            data["attempt_id"] = self.attempt_id
         await self.event_queue.put(
             (
                 "attachment",
-                {
-                    "conversation_id": self.conversation_id,
-                    "type": payload["type"],
-                    "data": payload["data"],
-                },
+                data,
             )
         )
 

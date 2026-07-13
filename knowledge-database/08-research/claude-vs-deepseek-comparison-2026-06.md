@@ -28,6 +28,8 @@ system prompt + registry göndermesi DeepSeek'te neredeyse bedava. **Bu boyutta 
   Bu oturumda **canlı bir kez gerçekleşti** (conv 979e17c9). Mitigasyon: **reliability guard**
   (buffer+retry+replay, [[model-cost-research-2026-06]] §7d). Bir band-aid; production frekansı
   hâlâ bilinmiyor → **en büyük teknik risk.**
+  **2026-07-11:** Buffer+retry+replay mitigasyonu canli incremental guard + gorunur
+  `recovery`/retry akisina cevrildi ([[model-cost-research-2026-06]] §7d).
 
 ## 3. Build kalitesi 🟢 Denk
 
@@ -44,6 +46,8 @@ Kullanıcı: "baya hızlı." Thinking-OFF router/flash düşük latency.
 - Thinking: Sonnet native panel; DeepSeek config gerekti (router OFF / pro ON) + content'e sızma riski.
 - Canlı yazma: Sonnet gerçek stream; DeepSeek **buffered→replay** (guard nedeniyle "simüle stream",
   gerçek değil — garbage'ı gizlemenin bedeli). Kabul edilebilir gerileme.
+  **2026-07-11 guncelleme:** Bu UX gerilemesi cozuldu; DeepSeek artik gercek stream
+  eder, hatali attempt gorunur recovery ile temizlenir.
 
 ## 6. Operasyonel / uyumluluk 🟡
 - API: ikisi de olgun/kolay (DeepSeek OpenAI-uyumlu).
@@ -64,6 +68,7 @@ Geçiş çabasının ~yarısı aslında tüm modellere fayda sağlayan Conduut b
 ## 8. Risk register
 - 🔴 #1244 production frekansı bilinmiyor (guard band-aid).
 - 🟡 Buffered streaming = UX gerilemesi.
+- 🟢 2026-07-11 canli recovery ile buffered streaming kaldirildi.
 - 🟡 Bakiye/402 operasyonel dikkat.
 - 🟡 Çinli sağlayıcı — compliance/data residency.
 - 🟢 Cache-bağımlı maliyet — taban yine ~7x ucuz, güvenli.

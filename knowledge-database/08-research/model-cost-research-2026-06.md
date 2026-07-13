@@ -208,7 +208,7 @@ clone'a `responseNode` atar (yoksa lastNode). +1 sandbox test. **309 passed, ruf
 **Toplam 308→309 passed, ruff temiz.** Bake-off çıkarımı pekişti: gördüğümüz fail'lerin çoğu
 DeepSeek build kalitesi değil, Conduut repair/sandbox bug'larıydı (testlerle yüzeye çıktı).
 
-## 7d. Reliability guard — #1244 buffer+retry (2026-06-25)
+## 7d. Reliability guard — #1244 buffer+retry (2026-06-25; 2026-07-11 canli recovery)
 
 Canlı bulgu (conv 979e17c9): IF/branch senaryosunda sandbox geçtikten sonra DeepSeek-pro
 `execute_workflow`'u **düz metin olarak** yazıp degenerate loop'a girdi (gerçek tool call
@@ -236,6 +236,31 @@ yok. Buffered+replay normal işleyişi bozmuyor. (#1244 intermittent olduğundan
 tetiklenmedi.) **Cost-logging fix:** ilk versiyonda buffered yol `usage=None` ile token
 loglamıyordu → `_collect_attempt` artık `result.usage()`'ı 4'lü tuple ile geçiriyor →
 `_persist_and_done` deepseek maliyetini yine logluyor (bake-off ölçümü korundu).
+
+**2026-07-11 canli recovery revizyonu:** Whole-run buffer + sonradan simule replay
+kaldirildi. DeepSeek `token`/`thinking`/`tool_call` event'lerini `attempt_id` ile canli
+yollar; incremental guard kisa bir look-behind icinde chunk-sinirli tool imzasi,
+runaway-length ve repetition yakalar.
+
+- Garbage replay-safe asamada yakalanirsa `recovery` SSE UI'daki yarim attempt'i
+  temizler, "Agent tarafinda bir sorun olustu. Bastan tekrar deniyorum…" aktivitesini
+  gosterir ve yeni `attempt_id` ile sifirdan dener (ilk deneme + en cok 2 retry).
+- Replay-unsafe tool basladiysa retry yapilmaz. Merkezi tool-safety katalogu workflow,
+  credential ve platform mutation'larini fail-closed isaretler; gecerli attachment'lar
+  ve "Ayni islemi tekrar etmedim" mesaji korunur.
+- Bozuk attempt Firestore'a yazilmaz; recovery aktivitesi ephemeral'dir. Non-DeepSeek
+  yolu ve `config.enable_reliability_guard` kill switch'i degismez.
+
+**2026-07-12 repetition kalibrasyonu:** Canli basit salt-okuma testinde model iki read-only
+tool'u dogru calistirmasina ragmen eski detector normal cok-turlu metni uc kez
+`reason=repetition` ile reddetti. Repetition sayaci artik response-scope'tur; cok olcekli
+`20/40/80/160/320/640/1280` pencere + tam periyot dogrulamasi normal tekrarlanan
+basliklari ayirirken 8K altinda dort kez tekrarlanabilen yaklasik 2.000 karaktere kadar
+gercek loop'lari da yakalar. Attempt-wide length ve exact tool-call-as-text
+korumalari korunur. Iceriksiz fingerprint/window/period/count/gap loglari false-positive
+analizini destekler. Streaming yolu kisa tool suffix + rolling hash kullanir; hash sonucu
+tek basina karar degildir, dort tam tekrar exact karsilastirilir ve eksik dorduncu periyot
+tamamlanana kadar pending tutulur. Detay: [[known-issues]].
 
 ## 8. İlk bake-off sonuçları (2026-06-24, restart sonrası)
 

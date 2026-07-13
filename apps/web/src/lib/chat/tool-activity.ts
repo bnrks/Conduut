@@ -1,5 +1,7 @@
 "use client";
 
+import { RECOVERY_ACTION_PREFIX } from "@/lib/chat/stream-state";
+
 const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   search_n8n_nodes: "Checking available n8n steps",
   get_node_schema: "Reading step requirements",
@@ -33,7 +35,9 @@ export function activityLineLabel(actions: string[]): string {
   const seen = new Set<string>();
   const labels: string[] = [];
   for (const action of actions) {
-    const label = toolActivityLabel(action);
+    const label = action.startsWith(RECOVERY_ACTION_PREFIX)
+      ? action.slice(RECOVERY_ACTION_PREFIX.length)
+      : toolActivityLabel(action);
     if (!seen.has(label)) {
       seen.add(label);
       labels.push(label);

@@ -288,8 +288,8 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             return _waiting_for_user_input_result()
         await ctx.deps.emit_tool_call("run_platform_action")
         started_at = perf_counter()
+        ctx.deps.mark_replay_unsafe("run_platform_action")
         result = await run_platform_action_payload(ctx.deps, plan)
-        ctx.deps.real_action_executed = True
         payload = result.model_dump(exclude_none=True)
         _log_tool_finished("run_platform_action", started_at, payload)
         return payload
@@ -426,6 +426,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         try:
             existing = await _dedup_existing_workflow(existing_id)
             if existing_id and existing is not None:
+                ctx.deps.mark_replay_unsafe("create_workflow")
                 workflow = await n8n_client.update_workflow(
                     workflow_id=existing_id,
                     name=name,
@@ -453,6 +454,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                         workflow_id=existing_id,
                         conversation_id=ctx.deps.conversation_id,
                     )
+                ctx.deps.mark_replay_unsafe("create_workflow")
                 workflow = await n8n_client.create_workflow(
                     name=name,
                     nodes=node_dicts,
@@ -530,6 +532,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
 
         try:
             existing_workflow = await n8n_client.get_workflow(workflow_id)
+            ctx.deps.mark_replay_unsafe("update_workflow")
             workflow = await n8n_client.update_workflow(
                 workflow_id=workflow_id,
                 name=name,
@@ -588,11 +591,14 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         try:
             workflow = await _get_workflow_for_reference(workflow_id)
             workflow_id = str(workflow.get("id") or workflow_id)
-            readiness = await _emit_missing_credentials(ctx, workflow)
+            readiness = await _emit_missing_credentials(
+                ctx, workflow, replay_unsafe_tool="activate_workflow"
+            )
             block = _readiness_block_result(workflow_id, readiness)
             if block:
                 _log_tool_finished("activate_workflow", started_at, block)
                 return block
+            ctx.deps.mark_replay_unsafe("activate_workflow")
             await n8n_client.activate_workflow(workflow_id)
             result = {"success": True, "workflow_id": workflow_id}
             _log_tool_finished("activate_workflow", started_at, result)
@@ -612,6 +618,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         await ctx.deps.emit_tool_call("deactivate_workflow")
         started_at = perf_counter()
         try:
+            ctx.deps.mark_replay_unsafe("deactivate_workflow")
             await n8n_client.deactivate_workflow(workflow_id)
             result = {"success": True, "workflow_id": workflow_id}
             _log_tool_finished("deactivate_workflow", started_at, result)
@@ -637,7 +644,9 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         try:
             workflow = await _get_workflow_for_reference(workflow_id)
             workflow_id = str(workflow.get("id") or workflow_id)
-            readiness = await _emit_missing_credentials(ctx, workflow)
+            readiness = await _emit_missing_credentials(
+                ctx, workflow, replay_unsafe_tool="execute_workflow"
+            )
             block = _readiness_block_result(workflow_id, readiness)
             if block:
                 _log_tool_finished("execute_workflow", started_at, block)
@@ -679,7 +688,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                     _log_tool_finished("execute_workflow", started_at, gate)
                     return gate
 
-            ctx.deps.real_action_executed = True
+            ctx.deps.mark_replay_unsafe("execute_workflow")
             result = await run_workflow_with_input(
                 workflow,
                 user_id=ctx.deps.user_id,
@@ -721,7 +730,13 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         started_at = perf_counter()
         try:
             workflow = await _get_workflow_for_reference(workflow_id)
-            readiness = await analyze_workflow_readiness_payload(workflow, user_id=ctx.deps.user_id)
+            readiness = await analyze_workflow_readiness_payload(
+                workflow,
+                user_id=ctx.deps.user_id,
+                before_mutation=lambda: ctx.deps.mark_replay_unsafe(
+                    "analyze_workflow_readiness"
+                ),
+            )
             for attachment in readiness["missing_credentials"]:
                 await ctx.deps.emit_attachment(attachment)
             if readiness["missing_credentials"]:
@@ -808,6 +823,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         await ctx.deps.emit_tool_call("delete_workflow")
         started_at = perf_counter()
         try:
+            ctx.deps.mark_replay_unsafe("delete_workflow")
             await n8n_client.delete_workflow(workflow_id)
             result = {"success": True, "workflow_id": workflow_id}
             _log_tool_finished("delete_workflow", started_at, result)
@@ -851,6 +867,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
 
         await ctx.deps.emit_tool_call("attach_credential")
         started_at = perf_counter()
+        ctx.deps.mark_replay_unsafe("attach_credential")
         result = await attach_credential_payload(ctx.deps, workflow_id, node_name, credential_id)
         _log_tool_finished("attach_credential", started_at, result)
         return result
@@ -874,6 +891,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         await ctx.deps.emit_tool_call("prepare_api_credential")
         started_at = perf_counter()
         try:
+            ctx.deps.mark_replay_unsafe("prepare_api_credential")
             result = await prepare_api_credential_payload(
                 ctx.deps, api_or_url, workflow_id, node_name
             )
@@ -907,6 +925,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         await ctx.deps.emit_tool_call("add_service_credential")
         started_at = perf_counter()
         try:
+            ctx.deps.mark_replay_unsafe("add_service_credential")
             result = await add_service_credential_payload(
                 ctx.deps, service_or_type, workflow_id, node_name
             )

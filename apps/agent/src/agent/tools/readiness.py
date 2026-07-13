@@ -1,5 +1,6 @@
 """Credential readiness analysis for n8n workflows."""
 
+from collections.abc import Callable
 from typing import Any
 
 import structlog
@@ -191,6 +192,7 @@ async def _attach_managed_connection_if_available(
     workflow_id: str,
     node: dict[str, Any],
     credential_type: str,
+    before_mutation: Callable[[], None] | None = None,
 ) -> bool:
     config = _managed_google_connection_for_node(node, credential_type)
     if not user_id or not workflow_id or not config:
@@ -208,6 +210,8 @@ async def _attach_managed_connection_if_available(
     if not node_name:
         return False
 
+    if before_mutation:
+        before_mutation()
     await n8n_client.attach_credential_to_workflow(
         workflow_id,
         node_name,
@@ -265,7 +269,10 @@ async def _discover_existing_credential(
 
 
 async def _attach_existing_credential_if_available(
-    workflow_id: str, node: dict[str, Any], credential_type: str
+    workflow_id: str,
+    node: dict[str, Any],
+    credential_type: str,
+    before_mutation: Callable[[], None] | None = None,
 ) -> bool:
     if not workflow_id or credential_type in _MANAGED_CREDENTIAL_TYPES:
         return False
@@ -276,6 +283,8 @@ async def _attach_existing_credential_if_available(
     if not found:
         return False
     credential_id, credential_name = found
+    if before_mutation:
+        before_mutation()
     await n8n_client.attach_credential_to_workflow(
         workflow_id,
         node_name,
@@ -414,6 +423,7 @@ async def analyze_workflow_readiness_payload(
     workflow: dict[str, Any],
     *,
     user_id: str | None = None,
+    before_mutation: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     missing: list[AgentAttachment] = []
     reuse_candidates: list[dict[str, Any]] = []
@@ -439,6 +449,7 @@ async def analyze_workflow_readiness_payload(
                     workflow_id,
                     node,
                     credential_type,
+                    before_mutation,
                 )
                 if managed_connection
                 else False
@@ -518,7 +529,7 @@ async def analyze_workflow_readiness_payload(
         # Non-HTTP, managed-less types (e.g. openAiApi): cross-workflow reuse bridge.
         try:
             attached = await _attach_existing_credential_if_available(
-                workflow_id, node, credential_type
+                workflow_id, node, credential_type, before_mutation
             )
         except Exception as exc:
             log.warning(
@@ -620,7 +631,10 @@ async def attach_unambiguous_reuse_candidates(
 
 
 async def _emit_missing_credentials(
-    ctx: RunContext[AgentDeps], workflow: dict[str, Any]
+    ctx: RunContext[AgentDeps],
+    workflow: dict[str, Any],
+    *,
+    replay_unsafe_tool: str | None = None,
 ) -> dict[str, Any]:
     """Emit missing-credential cards and return counts + reuse suggestions.
 
@@ -629,7 +643,14 @@ async def _emit_missing_credentials(
     confirmation via request_user_input, which sets the flag itself).
     """
 
-    readiness = await analyze_workflow_readiness_payload(workflow, user_id=ctx.deps.user_id)
+    before_mutation = (
+        lambda: ctx.deps.mark_replay_unsafe(replay_unsafe_tool)
+    ) if replay_unsafe_tool else None
+    readiness = await analyze_workflow_readiness_payload(
+        workflow,
+        user_id=ctx.deps.user_id,
+        before_mutation=before_mutation,
+    )
     missing = readiness["missing_credentials"]
     for attachment in missing:
         await ctx.deps.emit_attachment(attachment)

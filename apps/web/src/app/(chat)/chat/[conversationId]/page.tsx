@@ -15,7 +15,12 @@ import { streamChat } from "@/lib/chat/sse";
 import { popConversationCache } from "@/lib/chat/conversation-cache";
 import { normalizeMessages } from "@/lib/chat/messages";
 import { toolActivityLabel } from "@/lib/chat/tool-activity";
-import type { Conversation, Message, MessageAttachment, AgentStep } from "@/types/chat";
+import {
+  assistantStreamFields,
+  createAssistantStreamState,
+  reduceAssistantStreamEvent,
+} from "@/lib/chat/stream-state";
+import type { Conversation, Message } from "@/types/chat";
 
 interface ConversationDetailResponse extends Conversation {
   messages: Message[];
@@ -111,35 +116,11 @@ export default function ConversationPage() {
     };
 
     const assistantMessageId = createId("assistant");
-    let assistantContent = "";
-    const assistantSteps: AgentStep[] = [];
-
-    const addTokenStep = (text: string) => {
-      const last = assistantSteps[assistantSteps.length - 1];
-      if (!last || last.kind !== "text") assistantSteps.push({ kind: "text", text: "" });
-      (assistantSteps[assistantSteps.length - 1] as { kind: "text"; text: string }).text += text;
-    };
-    const addActivityStep = (tool: string) => {
-      const last = assistantSteps[assistantSteps.length - 1];
-      if (!last || last.kind !== "activity") assistantSteps.push({ kind: "activity", actions: [] });
-      (assistantSteps[assistantSteps.length - 1] as { kind: "activity"; actions: string[] }).actions.push(tool);
-    };
-    const cloneSteps = (): AgentStep[] | undefined =>
-      assistantSteps.length
-        ? assistantSteps.map((s) =>
-            s.kind === "text" ? { kind: "text", text: s.text } : { kind: "activity", actions: [...s.actions] }
-          )
-        : undefined;
-    let assistantThinking = "";
-    let assistantAttachments: MessageAttachment[] = [];
+    let assistantStream = createAssistantStreamState();
     const assistantCreatedAt = now;
-    let doneProvider: string | undefined;
-    let doneModel: string | undefined;
-    let doneTier: string | undefined;
-    let revealAssistantAttachments = false;
 
     const upsertAssistantMessage = () => {
-      const visibleAttachments = revealAssistantAttachments ? assistantAttachments : [];
+      const fields = assistantStreamFields(assistantStream);
 
       setMessages((prev) => {
         const exists = prev.some((msg) => msg.id === assistantMessageId);
@@ -148,19 +129,16 @@ export default function ConversationPage() {
             msg.id === assistantMessageId
               ? {
                   ...msg,
-                  content: assistantContent,
-                  thinking: assistantThinking || undefined,
-                  attachments: visibleAttachments,
-                  steps: cloneSteps(),
-                  provider: doneProvider ?? msg.provider,
-                  model: doneModel ?? msg.model,
-                  tier: doneTier ?? msg.tier,
+                  ...fields,
+                  provider: fields.provider ?? msg.provider,
+                  model: fields.model ?? msg.model,
+                  tier: fields.tier ?? msg.tier,
                 }
               : msg
           );
         }
 
-        if (!assistantContent && !assistantThinking && visibleAttachments.length === 0 && assistantSteps.length === 0) {
+        if (!fields.content && !fields.thinking && fields.attachments.length === 0 && !fields.steps) {
           return prev;
         }
 
@@ -170,14 +148,8 @@ export default function ConversationPage() {
             id: assistantMessageId,
             conversationId,
             role: "agent",
-            content: assistantContent,
-            thinking: assistantThinking || undefined,
-            attachments: visibleAttachments,
-            steps: cloneSteps(),
+            ...fields,
             createdAt: assistantCreatedAt,
-            provider: doneProvider,
-            model: doneModel,
-            tier: doneTier,
           },
         ];
       });
@@ -195,54 +167,37 @@ export default function ConversationPage() {
           content,
           conversation_id: conversationId,
         },
-        onEvent: ({ event, data }) => {
-          if (event === "error") {
-            const message = typeof data.message === "string" ? data.message : "An error occurred. Please try again.";
-            toast.error(message);
+        onEvent: (event) => {
+          const result = reduceAssistantStreamEvent(assistantStream, event);
+          if (!result.accepted) return;
+          assistantStream = result.state;
+
+          if (result.kind === "error") {
+            toast.error(result.errorMessage);
             setMessages((prev) => prev.filter((msg) => msg.id !== assistantMessageId));
             return;
           }
 
-          if (event === "done") {
-            doneProvider = typeof data.provider === "string" ? data.provider : undefined;
-            doneModel = typeof data.model === "string" ? data.model : undefined;
-            doneTier = typeof data.tier === "string" ? data.tier : undefined;
-            revealAssistantAttachments = true;
-            setAgentActivity("Finishing the response");
-            setAgentActivities((prev) => appendRecentActivity(prev, "Finishing the response"));
+          if (result.kind === "recovery") {
+            const recoveryMessage = result.activity ?? "Retrying the response";
+            setAgentActivity(recoveryMessage);
+            setAgentActivities([recoveryMessage]);
             upsertAssistantMessage();
             return;
           }
 
-          if (event === "tool_call") {
-            const label = toolActivityLabel(data.tool);
+          if (result.kind === "done") {
+            const activity = result.activity ?? "Finishing the response";
+            setAgentActivity(activity);
+            setAgentActivities((prev) => appendRecentActivity(prev, activity));
+            upsertAssistantMessage();
+            return;
+          }
+
+          if (event.event === "tool_call") {
+            const label = toolActivityLabel(event.data.tool);
             setAgentActivity(label);
             setAgentActivities((prev) => appendRecentActivity(prev, label));
-            if (typeof data.tool === "string" && data.tool) addActivityStep(data.tool);
-            upsertAssistantMessage();
-            return;
-          }
-
-          if (event === "token") {
-            const text = typeof data.text === "string" ? data.text : "";
-            if (!text) return;
-            assistantContent += text;
-            addTokenStep(text);
-          } else if (event === "thinking") {
-            const text = typeof data.text === "string" ? data.text : "";
-            if (!text) return;
-            assistantThinking += text;
-          } else if (event === "attachment") {
-            assistantAttachments = [
-              ...assistantAttachments,
-              {
-                type: data.type as MessageAttachment["type"],
-                data: (data.data || {}) as Record<string, unknown>,
-              },
-            ];
-            if (!revealAssistantAttachments) return;
-          } else {
-            return;
           }
 
           upsertAssistantMessage();

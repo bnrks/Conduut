@@ -1,4 +1,6 @@
+import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 from pydantic_ai.messages import (
@@ -143,6 +145,23 @@ def _parse_sse(raw: str):
         if line.startswith("data:"):
             data = json.loads(line.removeprefix("data:").strip())
     return event, data
+
+
+class _ProviderError(Exception):
+    def __init__(self, message: str, status_code: int):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def test_provider_retry_disposition_treats_auth_quota_and_missing_model_as_terminal():
+    assert runner._provider_error_is_terminal(_ProviderError("unauthorized", 401))
+    assert runner._provider_error_is_terminal(_ProviderError("insufficient_quota", 429))
+    assert runner._provider_error_is_terminal(_ProviderError("model not found", 404))
+
+
+def test_provider_retry_disposition_allows_rate_limit_and_timeout_retry():
+    assert not runner._provider_error_is_terminal(_ProviderError("rate limit", 429))
+    assert not runner._provider_error_is_terminal(TimeoutError("read timed out"))
 
 
 @pytest.fixture(autouse=True)
@@ -402,7 +421,7 @@ def _text_events(text: str):
 
 
 @pytest.mark.asyncio
-async def test_buffered_guard_retries_on_garbage_then_replays_clean(monkeypatch):
+async def test_live_guard_streams_then_recovers_to_clean_attempt(monkeypatch):
     saved = {}
 
     async def fake_add_message(*args, **kwargs):
@@ -411,7 +430,7 @@ async def test_buffered_guard_retries_on_garbage_then_replays_clean(monkeypatch)
     async def fake_classify(*_a, **_k):
         return Tier.MEDIUM
 
-    # Force the DeepSeek (buffered) path.
+    # Force the DeepSeek guarded path.
     monkeypatch.setattr(runner.settings, "model_profile", "deepseek")
     monkeypatch.setattr(runner.settings, "enable_reliability_guard", True)
     monkeypatch.setattr(runner, "classify_tier", fake_classify)
@@ -434,16 +453,23 @@ async def test_buffered_guard_retries_on_garbage_then_replays_clean(monkeypatch)
         if raw.startswith("event:")
     ]
     names = [e for e, _ in events]
-    token_text = "".join(d["text"] for e, d in events if e == "token")
+    recovery = next(d for e, d in events if e == "recovery")
+    clean_attempt = recovery["next_attempt_id"]
+    clean_token_text = "".join(
+        d["text"] for e, d in events if e == "token" and d["attempt_id"] == clean_attempt
+    )
 
     assert names[-1] == "done"
-    assert "execute_workflow(" not in token_text  # garbage never shown
-    assert token_text == "Hazır, workflow'u çalıştırdım."  # clean retry replayed
+    assert recovery["retrying"] is True
+    assert recovery["reason_code"] == "tool-call-as-text:execute_workflow"
+    assert "execute_workflow(" not in "".join(d["text"] for e, d in events if e == "token")
+    assert clean_token_text == "Hazır, workflow'u çalıştırdım."
+    assert all(d.get("attempt_id") for e, d in events if e != "recovery")
     assert saved["content"] == "Hazır, workflow'u çalıştırdım."
 
 
 @pytest.mark.asyncio
-async def test_buffered_guard_no_retry_after_real_action(monkeypatch):
+async def test_live_guard_no_retry_after_replay_unsafe_action(monkeypatch):
     async def fake_add_message(*_a, **_k):
         return None
 
@@ -474,11 +500,69 @@ async def test_buffered_guard_no_retry_after_real_action(monkeypatch):
         if raw.startswith("event:")
     ]
     names = [e for e, _ in events]
-    token_text = "".join(d["text"] for e, d in events if e == "token")
+    recovery = next(d for e, d in events if e == "recovery")
+    final_attempt = recovery["failed_attempt_id"]
+    final_tokens = [
+        d["text"] for e, d in events if e == "token" and d["attempt_id"] == final_attempt
+    ]
 
     assert names[-1] == "done"  # graceful, not an error loop
     assert calls["n"] == 1  # NO retry — a real action had run
-    assert "execute_workflow(" not in token_text  # garbage still not shown
+    assert recovery["retrying"] is False
+    assert final_tokens[-1] == runner.DEGRADED_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_terminal_provider_error_after_unsafe_action_uses_degraded_recovery(monkeypatch):
+    async def fake_attempt(**kwargs):
+        kwargs["deps"].real_action_executed = True
+        kwargs["deps"].replay_unsafe_tool = "execute_workflow"
+        yield (
+            "",
+            "provider-error",
+            _ProviderError("insufficient_quota", 429),
+            None,
+            [],
+            {},
+        )
+
+    async def fake_persist(*_args, **kwargs):
+        yield runner._sse("done", {"attempt_id": kwargs["attempt_id"]})
+
+    monkeypatch.setattr(runner, "_run_guarded_attempt", fake_attempt)
+    monkeypatch.setattr(runner, "_persist_and_done", fake_persist)
+
+    def make_deps(attempt_id):
+        from src.agent.schemas import AgentDeps
+
+        return AgentDeps(
+            user_id="u1",
+            conversation_id="c1",
+            event_queue=asyncio.Queue(),
+            attempt_id=attempt_id,
+        )
+
+    events = [
+        _parse_sse(raw)
+        async for raw in runner._run_guarded_with_retry(
+            choice=SimpleNamespace(provider="deepseek", model="deepseek-v4-pro"),
+            tier=Tier.MEDIUM,
+            model=object(),
+            model_settings=None,
+            make_deps=make_deps,
+            user_prompt="run it",
+            message_history=[],
+            user_id="u1",
+            conv_id="c1",
+            initial_attempt_id="attempt-1",
+        )
+        if raw.startswith("event:")
+    ]
+
+    recovery = next(data for event, data in events if event == "recovery")
+    assert recovery["retrying"] is False
+    assert recovery["message"] == runner.DEGRADED_MESSAGE
+    assert all(event != "error" for event, _data in events)
 
 
 @pytest.mark.asyncio
@@ -822,6 +906,43 @@ async def test_buffered_path_strips_echoed_internal_context(monkeypatch):
     assert token_text == "Hazır, ne yapmak istersin?"
     assert "[Conduut internal context" not in saved["content"]  # persisted content stripped
     assert saved["content"] == "Hazır, ne yapmak istersin?"
+
+
+@pytest.mark.asyncio
+async def test_guarded_path_strips_internal_context_split_across_deltas(monkeypatch):
+    saved = {}
+
+    async def fake_add_message(*args, **kwargs):
+        saved["content"] = args[3]
+
+    async def fake_classify(*_a, **_k):
+        return Tier.MEDIUM
+
+    events = [
+        PartStartEvent(index=0, part=TextPart(content="Hazır.\n\n[Conduut internal")),
+        PartDeltaEvent(
+            index=0,
+            delta=TextPartDelta(content_delta=" context for future tool calls: secret]"),
+        ),
+    ]
+    monkeypatch.setattr(runner.settings, "model_profile", "deepseek")
+    monkeypatch.setattr(runner.settings, "enable_reliability_guard", True)
+    monkeypatch.setattr(runner, "classify_tier", fake_classify)
+    monkeypatch.setattr(runner, "key_for_provider", lambda *_a: "key")
+    monkeypatch.setattr(runner, "build_model", lambda *_a: object())
+    monkeypatch.setattr(runner, "create_agent", lambda _m: FakeStreamingAgent(events))
+    monkeypatch.setattr(runner.store, "add_message", fake_add_message)
+    _recognize_fake_model_node(monkeypatch)
+
+    parsed = [
+        _parse_sse(raw)
+        async for raw in runner.run("u", "c", [{"role": "user", "content": "x"}])
+        if raw.startswith("event:")
+    ]
+    token_text = "".join(data["text"] for event, data in parsed if event == "token")
+
+    assert token_text == "Hazır."
+    assert saved["content"] == "Hazır."
 
 
 @pytest.mark.asyncio
