@@ -7,6 +7,39 @@ Bu not, repo icinde gorulen bilinen sorunlari ve dikkat noktalarini toplar.
 Kullanicinin yeni fark ettigi ve henuz triage edilmemis sorun/bug notlari icin
 ayri alan: [[issue-backlog]].
 
+## Agent local webhook icin kullaniciya yanlis host'lu POST URL'si verdi (2026-07-13, acik)
+
+**Belirti:** Yeniden baseline edilen E1 workflow'u (`jnaF9rQvckjOhGcX`) fonksiyonel
+olarak gecti; webhook execution `#261` ve `#262` success, Google Sheets append
+dogru. Ancak agent kullaniciya POST atmasi icin local makineden erisilebilir URL
+yerine yanlis host'lu bir link verdi. Workflow'un gercek webhook path'i
+`contact-form`; Docker host port mapping'i nedeniyle local kullanici URL'si
+`http://localhost:6180/webhook/contact-form` olmali.
+
+**Etki:** Workflow dogru ve calisiyor, fakat kullanici agent'in verdigi linki
+dogrudan kullanirsa webhook'a ulasamayabilir. Bu nedenle E1 fonksiyonel olarak
+GEÇTİ; endpoint sunumu ayri bir UX/platform-ortam-farkindaligi bug'i olarak acik.
+
+**Durum:** Henuz kod duzeltmesi yapilmadi. Endpoint sunan agent/tool katmani,
+n8n'in container-internal adresi ile kullaniciya acik host adresini ayirmali.
+
+## Agent image `groq` paketi olmadan `GroqModel` eager import ediyor (2026-07-13, acik)
+
+**Belirti:** Temiz senaryo-bankasi baseline'inda guncel `conduut-agent` image'i
+baslangicta exit 1 oldu. Traceback, `src/agent/provider_factory.py` icindeki
+`pydantic_ai.models.groq.GroqModel` importundan `ModuleNotFoundError: No module
+named 'groq'` ve optional group kurulum uyarisi verdi. Web servisi agent health
+dependency'si nedeniyle baslayamadi; E1 workflow uretimine ulasilamadi.
+
+**Kok neden adayi:** `apps/agent/pyproject.toml` genel `pydantic-ai` paketini
+kuruyor fakat Groq extra/paketini kurmuyor; provider factory Groq kullanilmasa
+bile Groq siniflarini modul yuklenirken eager import ediyor.
+
+**Durum:** Acik. Henuz kod/dependency duzeltmesi yapilmadi. Once en kucuk dogru
+katman secilmeli (Groq destegi gercekten aktifse dependency; opsiyonelse lazy
+import/provider izolasyonu), sonra agent boot dogrulanip
+[[scenario-e1-webhook-sheets-append]] yeniden baslatilmali.
+
 ## Workflow ici Anthropic Chat Model eski Claude model ID'leriyle patladi (2026-07-08, cozuldu)
 
 **Belirti:** H1 cold outreach workflow'u (`qTrjFjmakuZKGPI4`, conversation

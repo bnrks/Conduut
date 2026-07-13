@@ -31,6 +31,9 @@ Kaynak/biçim farklı olabilir; içerik çekilip maille gidiyorsa geçti.
 
 ## Sonuç geçmişi
 
+**Güncel durum (2026-07-13): TEST EDİLMEDİ.** Yeniden baseline turunda en baştan
+çalıştırılacak.
+
 | Tarih | Geçti/Kaldı | Bulunan bug → kök-neden → katman → commit → kardeş-doğrulama |
 |-------|-------------|--------------------------------------------------------------|
 | — | — | — |

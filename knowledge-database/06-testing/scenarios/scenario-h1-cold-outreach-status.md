@@ -38,6 +38,10 @@ satırı güncellemeli (matchingColumns doğru olmalı).
 
 ## Sonuç geçmişi
 
+**Güncel durum (2026-07-13): TEST EDİLMEDİ.** Aşağıdaki eski koşular sırasında
+kullanılan patch'ler geri alındığı için sonuçlar mevcut kod tabanı için geçerli
+kabul/regresyon kanıtı değildir; yalnız tarihsel bulgu olarak korunur.
+
 | Tarih | Geçti/Kaldı | Bulunan bug → kök-neden → katman → commit → kardeş-doğrulama |
 |-------|-------------|--------------------------------------------------------------|
 | 2026-07-07 | Kaldı | Sheet inceleme (`run_platform_action` → `GET .../values/A1:Z10`) başarılıydı; agent `search_n8n_nodes` + iki `get_node_schema` çağrısından sonra `agent_unexpected_model_behavior`: "Model token limit ... exceeded before any response was generated" verdi. Kök neden workflow JSON veya DeepSeek değil, lokal config drift: root `.env` `CONDUUT_MODEL_PROFILE=default` kaldığı için runtime `profile=default`, `provider=anthropic`, `model=claude-sonnet-4-6` seçti. Düzeltme: `.env` `CONDUUT_MODEL_PROFILE=deepseek`; yanlış ara teshisle eklenen Anthropic token-budget kodu geri alındı. Test: `test_thinking_builder.py` + `test_runner.py` hedefli suite ve ruff temiz. Kardeş-doğrulama bekliyor; H1 aynı task ile yeniden koşulacak. |

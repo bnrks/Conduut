@@ -160,17 +160,17 @@ geçirmelidir → genellik guard'ının canlı örneği.
 
 ## Durum ve sonraki adım
 
-- **E1 — GEÇTİ ✅** (2026-07-02, uçtan uca). Tek senaryodan 4 genel repair/tool bug'ı
-  + 1 provider hardening çıktı (commit'ler `c043461`→`26fae89`, `fa3615b`). Detay:
-  [[scenario-e1-webhook-sheets-append]] "Sonuç geçmişi" + [[known-issues]].
-- **SONRAKİ (BEKLİYOR): [[scenario-h1-cold-outreach-status]]** — kullanıcının
-  onayıyla seçildi, ama **ertelendi** (daha öncelikli başka bir iş çıktı, 2026-07-02).
-  Odak: Sheets `update` column-map (`matchingColumns`) + write-back (tekrar-mail
-  engelleme). **Hazırlık gerektirir:** tek sekmede `Ad`·`Email`·`Durum` başlıklı bir
-  Google Sheet, `Email`=kullanıcının kendi adresi (test maili kendine gelsin), 2
-  satır `Durum="Yeni"`. Hazır olunca yeni sohbette H1 task'ı verilir, agent'ın kurduğu
-  workflow'daki `update` node'u (columns+matchingColumns) doğrulanır; kardeş H2 ile
-  genellik guard çalıştırılır.
+- **2026-07-13 yeniden baseline:** Önceki testler sırasında kullanılan patch'ler
+  daha sonra topluca geri alındı. Bu nedenle eski koşular tarihsel bulgu olarak
+  senaryo notlarında korunur, fakat mevcut kod tabanı için kabul/regresyon kanıtı
+  sayılmaz. **9 senaryonun tamamının güncel durumu: TEST EDİLMEDİ.**
+- **E1 — GEÇTİ ✅ (2026-07-13):** Workflow `jnaF9rQvckjOhGcX` aktif;
+  `Webhook → Google Sheets → Respond` akışı ve iki gerçek webhook execution'ı
+  (`#261`, `#262`) başarılı. Tek kalan bulgu fonksiyonel akışta değil, agent'ın
+  kullanıcıya yanlış host'lu POST URL'si vermesi: doğru local URL
+  `http://localhost:6180/webhook/contact-form` olmalıydı.
+- **SONRAKİ: [[scenario-e2-gmail-to-sheets-log]].**
+- Yeniden test sırası: **E1 → E2 → E3 → M1 → M2 → M3 → H1 → H2 → H3**.
 
 ## Güncelleme kuralı
 
