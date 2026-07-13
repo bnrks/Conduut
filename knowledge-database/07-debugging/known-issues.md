@@ -797,6 +797,18 @@ koduna degil.)_ Secenekler: (A) credential broker'i API-key'lere genislet,
 katmani. Bkz. [[issue-backlog]]; per-user container + credential saklama Claude
 memory'sinde (`per-user-container-credentials`).
 
+## Markdown tablo dark tema hover kontrastı (2026-07-13, çözüldü)
+
+Chat içindeki agent Markdown tablolarında `th` ve hover satırı açık tema
+renklerini sabit (`#F4F4F5` / `#FAFAFA`) kullanıyordu. Dark temada metin
+`var(--foreground)` ile açık kaldığı için başlık ve hover satırındaki yazılar
+kontrastını kaybediyordu. `apps/web/src/app/globals.css` içinde light ve dark
+tema için `--markdown-table-header` / `--markdown-table-hover` değişkenleri
+tanımlandı ve tablo kuralları bunlara bağlandı. Dark değerler koyu yüzeyler
+kullandığı için açık metin başlıkta ve hover sırasında görünür kalıyor.
+Canlı `localhost:3007` kontrolünde `.dark` altında hesaplanan değerler sırasıyla
+`#18181b` ve `#27272a`; yüklenen CSS kuralları da bu değişkenleri kullanıyor.
+
 ## Mock Dashboard Areas
 
 - Usage sayfasi mock data.

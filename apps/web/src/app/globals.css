@@ -12,6 +12,8 @@
   --input: #e4e4e7;
   --card: #ffffff;
   --card-foreground: #18181b;
+  --markdown-table-header: #f4f4f5;
+  --markdown-table-hover: #fafafa;
 }
 
 .dark {
@@ -24,6 +26,8 @@
   --input: #27272a;
   --card: #0f0f11;
   --card-foreground: #fafafa;
+  --markdown-table-header: #18181b;
+  --markdown-table-hover: #27272a;
 }
 
 @theme inline {
@@ -194,7 +198,7 @@ select:focus-visible {
   border: 1px solid var(--border);
 }
 .markdown th {
-  background: #F4F4F5;
+  background: var(--markdown-table-header);
   font-weight: 600;
   text-align: left;
   padding: 0.5em 0.75em;
@@ -208,7 +212,7 @@ select:focus-visible {
   color: var(--foreground);
 }
 .markdown tr:last-child td { border-bottom: none; }
-.markdown tr:hover td { background: #FAFAFA; }
+.markdown tr:hover td { background: var(--markdown-table-hover); }
 
 /* Checkbox lists (GFM task lists) */
 .markdown input[type="checkbox"] {
