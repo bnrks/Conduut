@@ -88,6 +88,19 @@ def _redact_processor(
     return redact_for_logging(event_dict)
 
 
+def _run_log_processor(
+    _logger: logging.Logger,
+    _method_name: str,
+    event_dict: dict[str, Any],
+) -> dict[str, Any]:
+    # Imported lazily so run_logging can reuse settings without creating a
+    # logging_config <-> run_logging import cycle.
+    from src.run_logging import capture_run_event
+
+    capture_run_event(event_dict)
+    return event_dict
+
+
 def _level() -> int:
     return getattr(logging, settings.log_level.upper(), logging.INFO)
 
@@ -156,6 +169,7 @@ def configure_logging(*, force: bool = False) -> None:
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.format_exc_info,
         _redact_processor,
+        _run_log_processor,
         structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
     ]
     structlog.configure(
@@ -165,6 +179,11 @@ def configure_logging(*, force: bool = False) -> None:
         cache_logger_on_first_use=False,
     )
     _CONFIGURED = True
+
+    if settings.run_log_enabled:
+        from src.run_logging import cleanup_run_logs
+
+        cleanup_run_logs(settings.log_dir, settings.run_log_retention_days)
 
 
 def bind_log_context(**values: Any) -> dict[str, Any]:

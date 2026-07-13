@@ -83,6 +83,21 @@ gelistirme icin ayrica rotating JSONL dosyasi yazar. Varsayilan dosya
 `start-local-dev.bat` lokal uvicorn akisi icin `CONDUUT_LOG_DIR` degerini repo
 root `logs\agent` klasorune ayarlar.
 
+Global JSONL'e ek olarak her chat agent calismasi icin insan ve LLM tarafindan
+kolay okunabilen tek bir timeline uretilir:
+`logs/agent/runs/YYYY-MM-DD/HH-MM-SS_<run-id>.log`. `run_id`, model
+`attempt_id`'lerinden bagimsizdir ve global JSONL baglamina da eklenir; boylece
+iki log gorunumu birbiriyle eslestirilebilir. Ayni run icindeki DeepSeek retry
+denemeleri ayri dosyalara bolunmez. Dosya baslik, guvenli/kisa task preview,
+INFO+ structured event timeline'i ve success/error/cancelled final ozetinden
+olusur. Token/thinking stream parcalari, `user_id`, raw payload/body ve ucuncu
+parti stdlib loglari run timeline'ina alinmaz; event detaylari denylist yerine
+guvenli alan allowlist'iyle secilir. Prompt/final preview'leri inline
+Bearer/JWT/API-key/secret kaliplarini maskeler ve varsayilan 300 karakterde
+kesilir. Browser/SSE stream'i erken kapanirsa ic model task'i cancel+await
+edilir; timeline `cancelled` ozetiyle kapanirken arka planda tool/aksiyon
+calismaya devam etmez.
+
 Ilgili env ayarlari:
 
 - `CONDUUT_LOG_LEVEL`
@@ -91,9 +106,18 @@ Ilgili env ayarlari:
 - `CONDUUT_LOG_MAX_BYTES`
 - `CONDUUT_LOG_BACKUP_COUNT`
 - `CONDUUT_LOG_PAYLOAD_PREVIEW_CHARS`
+- `CONDUUT_RUN_LOG_ENABLED` (varsayilan `true`)
+- `CONDUUT_RUN_LOG_RETENTION_DAYS` (varsayilan `30`)
+- `CONDUUT_RUN_LOG_PREVIEW_CHARS` (varsayilan `300`)
 - `CONDUUT_CONNECTION_ENCRYPTION_KEY` direct Google API icin refresh token'lari
   encrypted saklamayi acan secret'tir; Docker Compose bu env'i agent
   container'ina passthrough eder.
+
+Run log dizini ayrica ayarlanmaz; her zaman `<CONDUUT_LOG_DIR>/runs` olarak
+turetilir. Agent startup'inda yalniz bu agac altindaki retention suresini asan
+`.log` dosyalari ve bos tarih klasorleri temizlenir. Run-log dosya sistemi
+hatalari fail-open'dir ve chat/agent akisini durdurmaz. Retention degeri sifir
+veya negatifse guvenli bicimde temizlik yapilmaz.
 
 Loglar hata triage icin tasarlanmistir. FastAPI middleware her istege
 `X-Request-ID` uretir veya gelen degeri korur; web BFF route'lari bu header'i

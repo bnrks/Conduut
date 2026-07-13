@@ -3,6 +3,7 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from uuid import uuid4
 
 import structlog
@@ -43,8 +44,19 @@ from src.agent.tool_safety import CONDUUT_TOOL_NAMES
 from src.agent.tools import create_agent
 from src.config import key_for_provider, settings
 from src.logging_config import bind_log_context, clear_log_context
+from src.run_logging import note_run_attempt, set_run_final_preview, start_run_log
 
 log = structlog.get_logger()
+
+
+async def _cancel_background_task(task: asyncio.Task) -> None:
+    """Cancel and consume an inner model task when its SSE generator closes."""
+
+    if not task.done():
+        task.cancel()
+    with suppress(asyncio.CancelledError, Exception):
+        await task
+
 
 _INTERNAL_CONTEXT_MARKER = "[Conduut internal context"
 
@@ -190,11 +202,61 @@ async def run(
 
     clear_log_context()
     bind_log_context(request_id=request_id, user_id=user_id, conversation_id=conv_id)
+    user_prompt, message_history = _history_from_store_messages(messages)
+    run_session = start_run_log(
+        request_id=request_id,
+        conversation_id=conv_id,
+        task_preview=user_prompt,
+    )
+    if run_session is not None:
+        bind_log_context(run_id=run_session.run_id)
+    completed = False
+    terminal_status = "error"
+    try:
+        async for event in _run_agent_stream(
+            user_id,
+            conv_id,
+            messages,
+            user_prompt=user_prompt,
+            message_history=message_history,
+        ):
+            yield event
+        completed = True
+        terminal_status = "success" if run_session is not None and run_session.success else "error"
+    except (GeneratorExit, asyncio.CancelledError):
+        terminal_status = "cancelled"
+        raise
+    except Exception as exc:
+        log.error(
+            "agent_run_unhandled_error",
+            error_type=type(exc).__name__,
+            error=str(exc),
+            exc_info=True,
+        )
+        terminal_status = "error"
+        raise
+    finally:
+        if run_session is not None:
+            if not completed and terminal_status != "cancelled":
+                terminal_status = "error"
+            run_session.finish(terminal_status)
+        clear_log_context()
+
+
+async def _run_agent_stream(
+    user_id: str,
+    conv_id: str,
+    messages: list[dict],
+    *,
+    user_prompt: str,
+    message_history: list[ModelMessage],
+) -> AsyncIterator[str]:
+    """Internal stream implementation owned by the outer run-log lifecycle."""
+
     log.info("agent_run_started", message_count=len(messages))
     initial_attempt_id = uuid4().hex
     platform_resources = _platform_resources_from_messages(messages)
     conversation_workflows = _conversation_workflows_from_messages(messages)
-    user_prompt, message_history = _history_from_store_messages(messages)
 
     tier, platform_state = await asyncio.gather(
         classify_tier(user_prompt, message_history),
@@ -321,18 +383,22 @@ async def _run_live(
     assembler = StepAssembler()
     task = asyncio.create_task(_agent_stream())
 
-    while not task.done():
-        try:
-            item = await asyncio.wait_for(event_queue.get(), timeout=2.0)
+    try:
+        while not task.done():
+            try:
+                item = await asyncio.wait_for(event_queue.get(), timeout=2.0)
+                assembler.add(item[0], item[1])
+                yield _event_to_sse(item)
+            except asyncio.TimeoutError:
+                yield ": keep-alive\n\n"
+
+        while not event_queue.empty():
+            item = event_queue.get_nowait()
             assembler.add(item[0], item[1])
             yield _event_to_sse(item)
-        except asyncio.TimeoutError:
-            yield ": keep-alive\n\n"
-
-    while not event_queue.empty():
-        item = event_queue.get_nowait()
-        assembler.add(item[0], item[1])
-        yield _event_to_sse(item)
+    except BaseException:
+        await _cancel_background_task(task)
+        raise
 
     try:
         result = task.result()
@@ -425,6 +491,7 @@ async def _persist_and_done(
     # The model occasionally echoes the "[Conduut internal context ...]" history
     # scaffolding into its reply; strip it from everything the user sees/reloads.
     full_content = strip_internal_context(full_content)
+    set_run_final_preview(full_content)
 
     attachment_types = [str(a.get("type")) for a in deps.attachments if isinstance(a, dict)]
     # Per-run token usage for cost analysis (bake-off). Field names avoid the
@@ -621,14 +688,18 @@ async def _run_guarded_attempt(
             return agent_run.result
 
     task = asyncio.create_task(_stream())
-    while not task.done() or not queue.empty():
-        try:
-            item = await asyncio.wait_for(queue.get(), timeout=2.0)
-            assembler.add(item[0], item[1])
-            yield _event_to_sse(item)
-        except asyncio.TimeoutError:
-            if not task.done():
-                yield ": keep-alive\n\n"
+    try:
+        while not task.done() or not queue.empty():
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=2.0)
+                assembler.add(item[0], item[1])
+                yield _event_to_sse(item)
+            except asyncio.TimeoutError:
+                if not task.done():
+                    yield ": keep-alive\n\n"
+    except BaseException:
+        await _cancel_background_task(task)
+        raise
 
     full_content = "".join(text_chunks)
     if guard.reason:
@@ -691,6 +762,7 @@ async def _run_guarded_with_retry(
 
     attempt_id = initial_attempt_id
     for attempt in range(1, MAX_ATTEMPTS + 1):
+        note_run_attempt(attempt)
         deps = make_deps(attempt_id)
         prompt = user_prompt if attempt == 1 else f"{user_prompt}\n\n{RECOVERY_INSTRUCTION}"
         result_marker = None

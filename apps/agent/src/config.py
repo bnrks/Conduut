@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     log_max_bytes: int = 10 * 1024 * 1024
     log_backup_count: int = 5
     log_payload_preview_chars: int = 1000
+    run_log_enabled: bool = True
+    run_log_retention_days: int = 30
+    run_log_preview_chars: int = 300
 
     # LLM — Conduut-managed models (no per-user provider connection).
     # CONDUUT_MODEL_PROFILE selects the tier→model mapping (see agent/model_registry.py).

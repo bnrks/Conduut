@@ -92,12 +92,76 @@ class FakeStreamingAgent:
         return _FakeRun(deps, self._emit, self._events)
 
 
+class _BlockingRun:
+    def __init__(self, deps, cancelled: asyncio.Event):
+        self._deps = deps
+        self._cancelled = cancelled
+        self.ctx = object()
+        self.result = FakeResult()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return False
+
+    async def __aiter__(self):
+        await self._deps.emit_tool_call("blocking_tool")
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            self._cancelled.set()
+            raise
+        yield  # pragma: no cover - cancellation is the expected exit
+
+
+class _BlockingAgent:
+    def __init__(self, cancelled: asyncio.Event):
+        self._cancelled = cancelled
+
+    def iter(self, _prompt, *, deps, message_history, model_settings, usage_limits):
+        return _BlockingRun(deps, self._cancelled)
+
+
 def _recognize_fake_model_node(monkeypatch):
     monkeypatch.setattr(
         runner.Agent,
         "is_model_request_node",
         staticmethod(lambda node: isinstance(node, _FakeModelRequestNode)),
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("guarded", [False, True])
+async def test_closing_stream_cancels_inner_model_task(monkeypatch, make_agent_deps, guarded):
+    cancelled = asyncio.Event()
+    monkeypatch.setattr(runner, "create_agent", lambda _model: _BlockingAgent(cancelled))
+    choice = SimpleNamespace(request_limit=3, tool_calls_limit=3)
+    deps = make_agent_deps()
+    common = {
+        "choice": choice,
+        "model": object(),
+        "model_settings": {},
+        "deps": deps,
+        "user_prompt": "wait",
+        "message_history": [],
+    }
+    if guarded:
+        stream = runner._run_guarded_attempt(**common)
+    else:
+        stream = runner._run_live(
+            **common,
+            tier=Tier.MEDIUM,
+            user_id="user",
+            conv_id="conversation",
+            attempt_id="attempt",
+        )
+
+    first = await asyncio.wait_for(anext(stream), timeout=1)
+    assert "blocking_tool" in str(first)
+    await stream.aclose()
+
+    await asyncio.wait_for(cancelled.wait(), timeout=1)
 
 
 async def _emit_workflow_tool_and_attachment(deps):

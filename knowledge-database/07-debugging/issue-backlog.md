@@ -344,6 +344,19 @@ Ornek format:
   local agent icin `CONDUUT_LOG_DIR` ayarlar. Dogrulamalar: `ruff check`,
   `ruff format --check`, `pytest`, `pnpm lint`, `pnpm exec tsc --noEmit`,
   `docker compose config`. (2026-05-16)
+- [x] Agent run bazli insan/LLM-okunabilir timeline loglari eklendi - Global
+  `conduut-agent.jsonl` korunurken her run
+  `logs/agent/runs/YYYY-MM-DD/HH-MM-SS_<run-id>.log` altinda baslik, INFO+
+  event timeline'i ve success/error/cancelled ozetine ayrilir. `run_id` global
+  JSONL'e de baglanir; retry attempt'leri ayni dosyada kalir. Prompt/final
+  preview'leri inline secret redaction sonrasi 300 karakterle sinirlidir;
+  `user_id`, raw payload ve token/thinking stream yazilmaz; event alanlari
+  allowlist'le secilir. SSE iptalinde ic model task'i cancel+await edilir.
+  Varsayilan retention 30 gundur, non-positive deger temizlik yapmaz ve dosya
+  hatalari agent akisini bozmaz. Dogrulamalar: hedefli logging/runner testleri,
+  tam agent `pytest`, `ruff check`,
+  degisen Python dosyalarinda `ruff format --check`, `docker compose config`.
+  (2026-07-13)
 
 ## Ilgili Dugumler
 
