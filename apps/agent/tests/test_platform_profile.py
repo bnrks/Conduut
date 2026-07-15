@@ -11,3 +11,9 @@ def test_capability_catalog_is_jargon_free():
     text = CAPABILITY_CATALOG.lower()
     for jargon in ("n8n", "webhook", "node"):
         assert jargon not in text, f"jargon leaked into catalog: {jargon}"
+
+
+def test_external_trigger_boundary_names_conduut_limit_and_editor_alternative():
+    profile = render_static_profile()
+    assert "Conduut chat limitation" in profile
+    assert "Execute workflow" in profile

@@ -1,6 +1,7 @@
 """Readiness analysis and OAuth/credential auto-attach tests."""
 
 import pytest
+from n8n_registry.models import CredentialTypeInfo
 
 from src import store
 from src.agent.tools import analyze_workflow_readiness_payload
@@ -406,6 +407,159 @@ async def test_gmail_send_readiness_emits_oauth_prompt_without_connection(monkey
     assert attachment.type == "oauth_prompt"
     assert attachment.data.service == "Google Gmail"
     assert attachment.data.authorizePath == "/api/oauth/google/authorize?service=gmail"
+
+
+@pytest.mark.asyncio
+async def test_gmail_trigger_readiness_auto_attaches_connected_read_connection(monkeypatch):
+    monkeypatch.setattr(
+        "src.agent.tools.registry.get_node_schema",
+        lambda node_type: (
+            {"credentials": ["gmailOAuth2"]} if node_type == "n8n-nodes-base.gmailTrigger" else None
+        ),
+    )
+
+    async def fake_get_connection(user_id: str, connection_id: str):
+        assert user_id == "user_1"
+        assert connection_id == "google_gmail"
+        return store.AppConnection(
+            id="google_gmail",
+            provider="google",
+            service="gmail",
+            account_email="user@example.com",
+            google_sub="google_sub",
+            credential_type="gmailOAuth2",
+            n8n_credential_id="gmail_read_cred",
+            n8n_credential_name="Google Gmail - user@example.com - Conduut",
+            status="connected",
+            scopes=["https://www.googleapis.com/auth/gmail.readonly"],
+            created_at="now",
+            updated_at="now",
+        )
+
+    attached: dict[str, str] = {}
+
+    async def fake_attach(workflow_id, node_name, credential_type, credential_id, credential_name):
+        attached.update(
+            {
+                "workflow_id": workflow_id,
+                "node_name": node_name,
+                "credential_type": credential_type,
+                "credential_id": credential_id,
+                "credential_name": credential_name,
+            }
+        )
+        return {}
+
+    monkeypatch.setattr("src.agent.tools.store.get_connection", fake_get_connection)
+    monkeypatch.setattr(
+        "src.agent.tools.n8n_client.attach_credential_to_workflow",
+        fake_attach,
+    )
+
+    workflow = {
+        "id": "wf_trigger",
+        "name": "Log incoming mail",
+        "nodes": [
+            {
+                "name": "Gmail Trigger",
+                "type": "n8n-nodes-base.gmailTrigger",
+                "parameters": {"pollTimes": {"item": [{"mode": "everyMinute"}]}},
+            }
+        ],
+    }
+
+    readiness = await analyze_workflow_readiness_payload(workflow, user_id="user_1")
+
+    assert readiness["ready"] is True
+    assert readiness["missing_credentials"] == []
+    assert attached["credential_id"] == "gmail_read_cred"
+    assert workflow["nodes"][0]["credentials"]["gmailOAuth2"]["id"] == "gmail_read_cred"
+
+
+@pytest.mark.asyncio
+async def test_gmail_trigger_readiness_emits_oauth_prompt_without_connection(monkeypatch):
+    monkeypatch.setattr(
+        "src.agent.tools.registry.get_node_schema",
+        lambda node_type: (
+            {"credentials": ["gmailOAuth2"]} if node_type == "n8n-nodes-base.gmailTrigger" else None
+        ),
+    )
+
+    async def fake_get_connection(_user_id: str, _connection_id: str):
+        return None
+
+    async def fail_schema(*_args, **_kwargs):
+        raise AssertionError("managed Gmail OAuth must not load a generic credential form")
+
+    monkeypatch.setattr("src.agent.tools.store.get_connection", fake_get_connection)
+    monkeypatch.setattr("src.agent.tools.n8n_client.get_credential_schema", fail_schema)
+
+    readiness = await analyze_workflow_readiness_payload(
+        {
+            "id": "wf_trigger",
+            "name": "Log incoming mail",
+            "nodes": [
+                {
+                    "name": "Gmail Trigger",
+                    "type": "n8n-nodes-base.gmailTrigger",
+                    "parameters": {},
+                }
+            ],
+        },
+        user_id="user_1",
+    )
+
+    assert readiness["ready"] is False
+    attachment = readiness["missing_credentials"][0]
+    assert attachment.type == "oauth_prompt"
+    assert attachment.data.service == "Google Gmail"
+    assert attachment.data.authorizePath == "/api/oauth/google/authorize?service=gmail"
+
+
+@pytest.mark.asyncio
+async def test_unknown_oauth_never_emits_generic_credential_fields(monkeypatch):
+    monkeypatch.setattr(
+        "src.agent.tools.registry.get_node_schema",
+        lambda _node_type: {"credentials": ["slackOAuth2Api"]},
+    )
+    monkeypatch.setattr(
+        "src.agent.tools.registry.get_credential_definition",
+        lambda _credential_type: CredentialTypeInfo(
+            name="slackOAuth2Api",
+            display_name="Slack OAuth2",
+            is_oauth=True,
+        ),
+    )
+
+    async def fail_schema(*_args, **_kwargs):
+        raise AssertionError("OAuth credentials must not expose serverUrl or client secrets")
+
+    async def no_workflows():
+        return []
+
+    monkeypatch.setattr("src.agent.tools.n8n_client.get_credential_schema", fail_schema)
+    monkeypatch.setattr("src.agent.tools.n8n_client.list_workflows_raw", no_workflows)
+
+    readiness = await analyze_workflow_readiness_payload(
+        {
+            "id": "wf_oauth",
+            "name": "Slack workflow",
+            "nodes": [
+                {
+                    "name": "Slack",
+                    "type": "n8n-nodes-base.slack",
+                    "parameters": {"authentication": "oAuth2"},
+                }
+            ],
+        }
+    )
+
+    assert readiness["ready"] is False
+    attachment = readiness["missing_credentials"][0]
+    assert attachment.type == "user_input_request"
+    assert attachment.data.missingFields == []
+    assert "Connections" in attachment.data.question
+    assert "serverUrl" not in attachment.data.question
 
 
 @pytest.mark.asyncio

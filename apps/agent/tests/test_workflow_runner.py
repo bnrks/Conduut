@@ -15,6 +15,44 @@ from src.agent.tools import (
 
 
 @pytest.mark.asyncio
+async def test_external_trigger_run_reports_conduut_limit_and_editor_alternative(monkeypatch):
+    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str):
+        return store.WorkflowMetadata(
+            workflow_id=workflow_id,
+            input_schema=[],
+            resources={},
+            created_at="now",
+            updated_at="now",
+        )
+
+    monkeypatch.setattr("src.agent.tools.store.get_workflow_metadata", fake_get_workflow_metadata)
+    monkeypatch.setattr("src.agent.tools.registry.get_node_schema", lambda _node_type: None)
+
+    with pytest.raises(ValueError) as exc_info:
+        await run_workflow_with_input(
+            {
+                "id": "wf_external",
+                "name": "Incoming Gmail",
+                "active": True,
+                "nodes": [
+                    {
+                        "name": "Gmail Trigger",
+                        "type": "n8n-nodes-base.gmailTrigger",
+                        "parameters": {"event": "messageReceived"},
+                    }
+                ],
+                "connections": {},
+            },
+            user_id="user_1",
+            input_payload={},
+        )
+
+    message = str(exc_info.value)
+    assert "Conduut chat cannot start it manually yet" in message
+    assert "Execute workflow in the n8n editor" in message
+
+
+@pytest.mark.asyncio
 async def test_run_workflow_with_input_sends_payload_to_webhook(monkeypatch):
     sent: dict = {}
 
@@ -539,6 +577,29 @@ def test_summarize_execution_surfaces_error_description():
     assert "Bad request - please check your parameters" in result.error
     assert "category parameter is for premium subscribers only." in result.error
     assert "category parameter is for premium subscribers only." in result.summary
+
+
+def test_summarize_execution_surfaces_n8n_parameter_name():
+    result = _summarize_execution(
+        {
+            "id": "265",
+            "workflowId": "wf_e2",
+            "status": "error",
+            "data": {
+                "resultData": {
+                    "error": {
+                        "node": {"name": "Google Sheets"},
+                        "message": "Could not get parameter",
+                        "extra": {"parameterName": "columns.schema"},
+                    }
+                }
+            },
+        }
+    )
+
+    assert result.failedNode == "Google Sheets"
+    assert result.error == "Could not get parameter — Parameter: columns.schema"
+    assert "columns.schema" in result.summary
 
 
 def test_summarize_execution_hides_webhook_transport_metadata():

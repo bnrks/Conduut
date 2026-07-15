@@ -287,7 +287,11 @@ async def _prepare_workflow_for_conduut_run(
     webhook_nodes = readiness["webhook_nodes"]
     if not webhook_nodes:
         log.warning("workflow_run_not_testable", workflow_id=workflow_id)
-        raise ValueError("Only webhook-triggered workflows can run from Conduut now.")
+        raise ValueError(
+            "This workflow uses an external trigger. Conduut chat cannot start it "
+            "manually yet; use Execute workflow in the n8n editor, or wait for the "
+            "configured trigger."
+        )
 
     if converted_trigger and workflow.get("active"):
         log.info("workflow_run_deactivating_for_trigger_patch", workflow_id=workflow_id)

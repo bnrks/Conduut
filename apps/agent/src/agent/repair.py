@@ -623,6 +623,13 @@ def _normalize_sheets_columns_shape(columns: dict[str, Any], name: Any, repairs:
     value = columns.get("value")
     changed = False
 
+    # ``define`` is a plausible model shorthand, but it is not a ResourceMapper
+    # mode understood by the Google Sheets v4 node. n8n then reaches for
+    # ``columns.schema`` using an invalid shape and fails at execution time.
+    if str(columns.get("mappingMode") or "").lower() == "define":
+        columns["mappingMode"] = "defineBelow"
+        changed = True
+
     # Flatten value.mappingValues[{column, mappingValue}] -> {column: expr}.
     if isinstance(value, dict) and isinstance(value.get("mappingValues"), list):
         flat: dict[str, Any] = {}

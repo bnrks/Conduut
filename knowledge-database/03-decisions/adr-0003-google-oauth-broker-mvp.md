@@ -59,12 +59,16 @@ Pozitif:
 
 - Kullanici n8n editor'una gitmeden Gmail read/send workflow'larini
   calistirabilir.
-- Chat'teki Gmail read/send eksik credential durumu gercek OAuth prompt'a
-  baglanir.
+- Chat'teki Gmail Trigger ile Gmail read/send eksik credential durumu gercek
+  OAuth prompt'a baglanir; Gmail Trigger read capability ister.
 - Chat'teki Google Sheets eksik credential durumu da gercek OAuth prompt'a
   baglanir ve agent readiness akisi credential'i workflow node'una otomatik
   attach edebilir.
 - Firestore raw Google token saklamaz.
+- OAuth tabanli n8n credential semalari genel credential formu olarak
+  gosterilmez. Managed olmayan bir OAuth tipi icin broker destegi yoksa chat
+  secret/server URL alanlari toplamak yerine destek varsa Connections'a, yoksa
+  dogrudan n8n OAuth yapilandirmasina yonlendirir.
 
 Sinirlar:
 

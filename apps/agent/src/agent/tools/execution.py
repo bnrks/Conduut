@@ -172,7 +172,26 @@ def _combined_error_message(error: dict[str, Any]) -> str | None:
             text = f"{text[:_MAX_ERROR_DETAIL]}..."
         if text not in pieces:
             pieces.append(text)
+    parameter_name = _error_parameter_name(error)
+    if parameter_name:
+        pieces.append(f"Parameter: {parameter_name}")
     return " — ".join(pieces) or None
+
+
+def _error_parameter_name(error: dict[str, Any]) -> str | None:
+    """Extract n8n's actionable missing/invalid parameter identifier.
+
+    Node execution errors commonly keep it under ``extra.parameterName``;
+    older/newer node implementations may expose it directly or in ``context``.
+    """
+
+    for container in (error, error.get("extra"), error.get("context")):
+        if not isinstance(container, dict):
+            continue
+        value = container.get("parameterName")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def _summarize_execution(

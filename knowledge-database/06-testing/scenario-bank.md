@@ -169,7 +169,14 @@ geçirmelidir → genellik guard'ının canlı örneği.
   (`#261`, `#262`) başarılı. Tek kalan bulgu fonksiyonel akışta değil, agent'ın
   kullanıcıya yanlış host'lu POST URL'si vermesi: doğru local URL
   `http://localhost:6180/webhook/contact-form` olmalıydı.
-- **SONRAKİ: [[scenario-e2-gmail-to-sheets-log]].**
+- **E2 — GEÇTİ ✅ (2026-07-15):** Baştan kurulan workflow
+  `5aKgzNuxkv1F85yn`; Gmail ve Sheets credential'ları otomatik bağlandı. İlk
+  üretimde Sheet'in `Gönderen/Konu/Tarih` başlıkları ile `from/subject/date`
+  mapping anahtarları uyuşmadı. Kullanıcı yalnızca "hata var" dediğinde agent
+  execution geçmişini kendi okuyup hatayı teşhis etti ve workflow'u yerinde
+  düzeltti. Executions üzerinden agent self-debug beklenen ürün davranışı olarak
+  kabul edildi; bu tekil doğal-dil sütun adları için ek hard-code uygulanmadı.
+- **SONRAKİ: [[scenario-e3-schedule-gmail-reminder]] testi.**
 - Yeniden test sırası: **E1 → E2 → E3 → M1 → M2 → M3 → H1 → H2 → H3**.
 
 ## Güncelleme kuralı

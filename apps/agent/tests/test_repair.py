@@ -792,6 +792,38 @@ def test_google_sheets_append_defineBelow_value_preserved_and_schema_synthesized
     assert [s["id"] for s in cols["schema"]] == ["ad"]
 
 
+def test_google_sheets_append_e2_define_alias_is_canonicalized_with_schema():
+    # Exact E2 failure shape: n8n accepted the workflow definition, then the
+    # Sheets node failed with "Could not get parameter: columns.schema".
+    nodes = [
+        _node(
+            "Sheet'e Ekle",
+            "n8n-nodes-base.googleSheets",
+            parameters={
+                "resource": "sheet",
+                "operation": "append",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "sheetName": {"__rl": True, "mode": "name", "value": "E-posta Logu"},
+                "columns": {
+                    "mappingMode": "define",
+                    "value": {
+                        "from": "={{ $json.from }}",
+                        "subject": "={{ $json.subject }}",
+                        "date": "={{ $json.date }}",
+                    },
+                },
+            },
+        ),
+    ]
+    repaired, _conns, repairs = repair_workflow(nodes, None, registry=REGISTRY)
+    cols = repaired[0]["parameters"]["columns"]
+
+    assert cols["mappingMode"] == "defineBelow"
+    assert cols["matchingColumns"] == []
+    assert [entry["id"] for entry in cols["schema"]] == ["from", "subject", "date"]
+    assert any("column mapping" in repair for repair in repairs)
+
+
 def test_google_sheets_columns_mappingvalues_flattened_with_schema():
     # Confirmed E1 rebuild bug: the model wrote defineBelow columns as
     # value.mappingValues[{column, mappingValue}] and omitted schema -> n8n throws

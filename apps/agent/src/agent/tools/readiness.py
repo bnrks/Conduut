@@ -7,7 +7,12 @@ import structlog
 from pydantic_ai import RunContext
 
 from src import n8n_client, store
-from src.agent.credential_catalog import match_credentials_by_type, parse_schema_fields
+from src.agent.credential_catalog import (
+    is_oauth_type_name,
+    match_credentials_by_type,
+    parse_schema_fields,
+    schema_is_oauth,
+)
 from src.agent.credential_types import (
     credential_type_catalog,
     is_supported_http_type,
@@ -23,6 +28,8 @@ from src.agent.schemas import (
     CredentialTypeOption,
     OAuthPromptAttachment,
     OAuthPromptData,
+    UserInputRequestAttachment,
+    UserInputRequestData,
 )
 from src.agent.tools.constants import (
     _AUTH_TO_CREDENTIAL_TYPE,
@@ -128,6 +135,8 @@ def _node_has_credential(node: dict[str, Any], credential_types: list[str]) -> b
 def _gmail_required_capability(node: dict[str, Any], credential_type: str) -> str | None:
     if credential_type != _GOOGLE_GMAIL_CREDENTIAL_TYPE:
         return None
+    if node.get("type") == "n8n-nodes-base.gmailTrigger":
+        return google.GOOGLE_GMAIL_READ_CAPABILITY
     if node.get("type") != "n8n-nodes-base.gmail":
         return None
     parameters = node.get("parameters")
@@ -363,6 +372,22 @@ def _http_credential_request(
     )
 
 
+def _unsupported_oauth_request(
+    node_name: str,
+    credential_type: str,
+) -> UserInputRequestAttachment:
+    return UserInputRequestAttachment(
+        data=UserInputRequestData(
+            question=(
+                f"{node_name} requires an OAuth connection that Conduut cannot configure "
+                "from a credential form. Use Connections when the service is supported, "
+                "or configure it directly in n8n, then ask me to check the workflow again."
+            ),
+            reason=f"OAuth credential required: {credential_type}",
+        )
+    )
+
+
 async def _credential_request_for_node(
     workflow_id: str,
     workflow_name: str | None,
@@ -385,6 +410,9 @@ async def _credential_request_for_node(
         return _http_credential_request(workflow_id, workflow_name, node, credential_type)
 
     definition = registry.get_credential_definition(credential_type)
+    if (definition is not None and definition.is_oauth) or is_oauth_type_name(credential_type):
+        return _unsupported_oauth_request(node_name, credential_type)
+
     if definition is not None and not definition.is_oauth and not definition.generic_auth:
         from src.agent.credential_catalog import credential_fields_from_definition
 
@@ -393,6 +421,8 @@ async def _credential_request_for_node(
     else:
         try:
             schema = await n8n_client.get_credential_schema(credential_type)
+            if schema_is_oauth(schema):
+                return _unsupported_oauth_request(node_name, credential_type)
             fields = _fields_from_schema(schema)
         except Exception:
             fields = [
@@ -464,6 +494,20 @@ async def analyze_workflow_readiness_payload(
             )
             attached = False
         if attached or has_credential:
+            continue
+
+        # Managed OAuth types are owned by the connection broker. If no usable
+        # connection could be attached, prompt for that connection immediately;
+        # never inspect custom credentials or expose the raw n8n OAuth schema.
+        if managed_connection:
+            missing.append(
+                await _credential_request_for_node(
+                    workflow.get("id", ""),
+                    workflow.get("name"),
+                    node,
+                    credential_type,
+                )
+            )
             continue
 
         # Custom HTTP credential: match the user's saved library by host

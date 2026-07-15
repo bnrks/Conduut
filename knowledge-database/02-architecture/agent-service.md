@@ -444,9 +444,10 @@ Workflow readiness davranisi:
   `credential_request` attachment emit eder.
 - Activate/run islemleri eksik credential varsa n8n'e side effect yapmadan
   durur ve kullanicidan credential ister.
-- Gmail read/send/modify operasyonlari icin kullanicinin `google_gmail`
+- Gmail Trigger ve Gmail read/send/modify operasyonlari icin kullanicinin `google_gmail`
   connection'i ve gereken canonical capability'si varsa agent n8n workflow
-  node'una `gmailOAuth2` credential'i otomatik attach eder. Gmail read
+  node'una `gmailOAuth2` credential'i otomatik attach eder. Gmail Trigger
+  `gmail.message.read` ister. Gmail read
   operasyonlari `gmail.message.read`, send/reply/create operasyonlari
   `gmail.message.send`, label/mark/archive/trash operasyonlari
   `gmail.message.modify` veya `gmail.message.trash` ister. Eski
@@ -479,8 +480,27 @@ Workflow readiness davranisi:
 - Gmail connection yoksa chat'e Gmail `oauth_prompt` attachment emit edilir.
   Gmail permanent delete default akista kullanilmaz; trash ve organize
   aksiyonlari permission pack/risk metadata'siyle ayrilir.
+- OAuth tabanli credential tipleri genel `credential_request` formuna
+  dusurulmez. Managed Google tipleri ilgili `oauth_prompt` akisini kullanir;
+  henuz broker destegi olmayan OAuth tipleri `serverUrl`, client secret veya
+  token semasi gostermek yerine destek varsa Connections, yoksa dogrudan n8n
+  uzerinden OAuth yapilandirmasina yonlendirir.
 - API key/token isteyen diger node'larda eski `credential_request` form akisi
   korunur.
+- Google Sheets v4 append column mapping'inde model `mappingMode=define`
+  uretirse repair bunu canonical `defineBelow` degerine cevirir; duz value
+  map'inden `columns.schema` ve `matchingColumns` sentezler. Validation append
+  icin desteklenmeyen mapping mode ile eksik value/schema seklini n8n'e
+  ulasmadan reddeder.
+- Execution ozetleri n8n error `extra.parameterName`/`context.parameterName`
+  bilgisini hata mesajina ekler; `Could not get parameter` gibi genel hatalarda
+  agent gercek parametreyi gorur.
+- Gmail/Schedule gibi external-trigger workflow'lari n8n editorunde manuel
+  kosulabilir; Conduut chat runner'in public API yolu ise halen webhook ile
+  sinirlidir. Runner bu durumu n8n imkansizligi gibi sunmaz, Conduut chat siniri
+  ve editor Execute workflow alternatifini soyler. n8n internal manual-run
+  route'u session cookie ve editor push baglantisina bagli oldugu icin backend
+  entegrasyonu degildir.
 - `POST /api/workflows/{workflow_id}/run` dashboard ve agent icin ortak
   runtime contract'tir. Body `{ input, source }` tasir; backend required input
   schema validation yapar, credential readiness'i korur ve n8n webhook'una

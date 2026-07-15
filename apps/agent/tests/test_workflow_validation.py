@@ -420,6 +420,88 @@ def test_google_sheets_update_columns_without_matching_fails_validation():
     assert any("matchingColumns" in error for error in errors)
 
 
+def test_google_sheets_append_define_alias_fails_validation_before_n8n():
+    nodes = valid_nodes()
+    nodes.append(
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "append",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "sheetName": {"__rl": True, "mode": "name", "value": "E-posta Logu"},
+                "columns": {
+                    "mappingMode": "define",
+                    "value": {
+                        "from": "={{ $json.from }}",
+                        "subject": "={{ $json.subject }}",
+                        "date": "={{ $json.date }}",
+                    },
+                },
+            }
+        )
+    )
+    errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+    assert any("unsupported" in error and "defineBelow" in error for error in errors)
+
+
+def test_google_sheets_append_missing_columns_gets_append_specific_guidance():
+    nodes = valid_nodes()
+    nodes.append(
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "append",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "sheetName": {"__rl": True, "mode": "name", "value": "E-posta Logu"},
+            }
+        )
+    )
+    errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+    assert any("autoMapInputData" in error and "matchingColumns" not in error for error in errors)
+
+
+def test_google_sheets_append_definebelow_missing_schema_fails_validation():
+    nodes = valid_nodes()
+    nodes.append(
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "append",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "sheetName": {"__rl": True, "mode": "name", "value": "E-posta Logu"},
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "matchingColumns": [],
+                    "value": {"from": "={{ $json.from }}"},
+                },
+            }
+        )
+    )
+    errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+    assert any("columns.schema" in error for error in errors)
+
+
+def test_google_sheets_append_automap_still_passes_without_schema():
+    nodes = valid_nodes()
+    nodes.append(
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "append",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "sheetName": {"__rl": True, "mode": "name", "value": "E-posta Logu"},
+                "columns": {
+                    "mappingMode": "autoMapInputData",
+                    "matchingColumns": [],
+                    "schema": [],
+                },
+            }
+        )
+    )
+    errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+    assert not any("columns" in error for error in errors)
+
+
 def test_google_sheets_read_not_flagged_for_columns():
     # Read writes nothing -> no column mapping required.
     nodes = valid_nodes()

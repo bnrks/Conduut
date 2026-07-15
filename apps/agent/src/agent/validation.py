@@ -302,6 +302,7 @@ def _validate_gmail_node(node: Mapping[str, Any], label: str) -> list[str]:
 # validates but n8n v4 ignores -> the write silently does nothing (e.g. a
 # "mark as sent" step that never marks, so the workflow re-sends every run).
 _GOOGLE_SHEETS_COLUMN_MAP_OPS = {"update", "appendorupdate"}
+_GOOGLE_SHEETS_SUPPORTED_MAPPING_MODES = {"definebelow", "automapinputdata"}
 # Row-level ops that address a specific tab; all need a v4 sheetName resourceLocator.
 _GOOGLE_SHEETS_ROW_OPS = {"read", "append", "update", "appendorupdate", "clear", "remove"}
 _GOOGLE_SHEETS_LEGACY_KEYS = ("dataMode", "values", "range")
@@ -333,11 +334,17 @@ def _validate_google_sheets_node(node: Mapping[str, Any], label: str) -> list[st
             '"value": "<tab name>"}.'
         ]
 
-    if operation not in _GOOGLE_SHEETS_COLUMN_MAP_OPS:
+    if operation not in _GOOGLE_SHEETS_COLUMN_MAP_OPS | {"append"}:
         return []
 
     columns = parameters.get("columns")
     if not isinstance(columns, Mapping):
+        if operation == "append":
+            return [
+                f"Google Sheets node '{label}' operation 'append' is missing "
+                "parameters.columns. Use mappingMode 'defineBelow' with a value map and "
+                "schema, or 'autoMapInputData' for same-named input fields."
+            ]
         # The pre-v4 shape (dataMode/values/range, no columns object at all).
         legacy = [key for key in _GOOGLE_SHEETS_LEGACY_KEYS if key in parameters]
         legacy_note = (
@@ -351,6 +358,33 @@ def _validate_google_sheets_node(node: Mapping[str, Any], label: str) -> list[st
             '"value": {"<matchColumn>": "={{ $json.<matchColumn> }}", '
             '"<column>": "<value>"}}.' + legacy_note
         ]
+
+    mapping_mode = str(
+        columns.get("mappingMode") or ("defineBelow" if operation != "append" else "")
+    ).lower()
+    if operation == "append":
+        if mapping_mode not in _GOOGLE_SHEETS_SUPPORTED_MAPPING_MODES:
+            return [
+                f"Google Sheets node '{label}' operation '{operation}' has unsupported "
+                f"parameters.columns.mappingMode '{columns.get('mappingMode')}'. Use "
+                "'defineBelow' for explicit field mappings or 'autoMapInputData' to map "
+                "same-named input fields automatically."
+            ]
+        if mapping_mode == "definebelow":
+            value = columns.get("value")
+            if not isinstance(value, Mapping) or not value:
+                return [
+                    f"Google Sheets node '{label}' append with mappingMode "
+                    "'defineBelow' requires a non-empty parameters.columns.value map."
+                ]
+            schema = columns.get("schema")
+            if not isinstance(schema, list) or not schema:
+                return [
+                    f"Google Sheets node '{label}' append with mappingMode "
+                    "'defineBelow' requires a non-empty parameters.columns.schema array. "
+                    "Without it n8n throws 'Could not get parameter: columns.schema'."
+                ]
+        return []
 
     matching = columns.get("matchingColumns")
     match_cols = (
@@ -367,7 +401,6 @@ def _validate_google_sheets_node(node: Mapping[str, Any], label: str) -> list[st
 
     # defineBelow reads the match value from columns.value["<matchCol>"]; auto-map
     # takes it from the input item, so only defineBelow needs it spelled out.
-    mapping_mode = str(columns.get("mappingMode") or "defineBelow").lower()
     if mapping_mode == "definebelow":
         value = columns.get("value")
         value_map = value if isinstance(value, Mapping) else {}

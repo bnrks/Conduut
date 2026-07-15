@@ -7,6 +7,74 @@ Bu not, repo icinde gorulen bilinen sorunlari ve dikkat noktalarini toplar.
 Kullanicinin yeni fark ettigi ve henuz triage edilmemis sorun/bug notlari icin
 ayri alan: [[issue-backlog]].
 
+## Google Sheets append `mappingMode=define` aliası `columns.schema` olmadan çalışmaya geçti (2026-07-14, kodda çözüldü; canlı test bekliyor)
+
+**Belirti:** E2 tekrarında `N3MD03PpRP66J9zF` içindeki Google Sheets v4.7 append
+node'u `columns.mappingMode="define"` ve düz `columns.value` map'iyle kaydedildi,
+fakat `columns.schema` yoktu. Execution `265` (manual) ve `266` (trigger) aynı
+node'da `Could not get parameter`; `parameterName=columns.schema` ile durdu.
+Gmail Trigger ve Set node'ları iki koşuda da başarılıydı.
+
+**Kök neden:** `repair._normalize_sheets_columns_shape` yalnız canonical
+`defineBelow` değerinde schema sentezliyor; modelin ürettiği `define` aliasını
+canonicalize etmiyor. Workflow validator da append operasyonunu columns-shape
+kontrolüne dahil etmiyor. Bu yüzden create/update/readiness başarılı görünürken
+runtime geçersiz node n8n'e ulaşıyor.
+
+**Durum:** Repair `define` → `defineBelow` canonicalization ve düz value map'inden
+schema/matchingColumns sentezi yapıyor. Validator append için desteklenmeyen mode
+ile eksik value/schema şeklini reddediyor; exact E2 payload'ı regresyon testinde.
+Execution özeti `extra.parameterName` değerini de agente taşıyor. Odaklı testler
+geçti; [[scenario-e2-gmail-to-sheets-log]] canlı tekrar koşulmalı.
+
+## External-trigger workflow n8n'de manuel çalışıyor, Conduut chat runner çalıştıramıyor (2026-07-14, sınır mesajı düzeltildi; tam destek açık)
+
+**Belirti:** Agent Gmail Trigger workflow'u için manuel çalıştırmanın mümkün
+olmadığını söyledi. Oysa aynı workflow'un n8n UI execution `265` kaydı
+`mode=manual`; Gmail Trigger ve Set başarıyla çalıştı, yalnız sonraki Sheets
+node'unda durdu.
+
+**Kök neden:** Conduut `workflow_runner` yalnız webhook workflow'larını çalıştırır
+ve Manual Trigger'ı geçici webhook'a çevirebilir. Gmail Trigger veya Schedule
+Trigger için webhook bulunmayınca `workflow_run_not_testable` / `Only
+webhook-triggered workflows can run from Conduut now` döner. Bu n8n kabiliyet
+eksikliği değil, Conduut runner kapsam sınırıdır.
+
+**Durum:** Conduut hata mesajı ve platform profili sınırı doğru adlandıracak
+şekilde güncellendi: chat henüz external trigger'ı manuel başlatamaz; kullanıcı
+editördeki Execute workflow aksiyonunu kullanabilir veya gerçek trigger'ı
+bekleyebilir. Tam backend desteği açık; n8n internal `/rest/.../run` session
+cookie + editor push bağlantısına bağlı ve public API olmadığı için entegre
+edilmedi.
+
+## Gmail Trigger managed OAuth disinda kalip genel credential formu gosteriyordu (2026-07-14, cozuldu ve canli dogrulandi)
+
+**Belirti:** E2 canli testinde workflow `vBK95qx4vkNPqsbb` dogru
+`Gmail Trigger -> Set -> Google Sheets` yapisiyla kuruldu ve Sheets credential'i
+baglandi. Gmail Trigger credential'i bos kaldi; chat ise OAuth connection yerine
+`serverUrl`, `clientId` ve `clientSecret` benzeri genel n8n credential alanlari
+gosterdi. Workflow aktif olmadi ve execution olusmadi.
+
+**Kok neden:** `readiness._gmail_required_capability` yalniz
+`n8n-nodes-base.gmail` action node'unu taniyor, `gmailTrigger` tipini managed
+`google_gmail` connection ile eslestirmiyordu. Managed eslesme olmayinca OAuth
+credential tanimi canli n8n semasi uzerinden genel `credential_request` kartina
+dusuyordu. Kullanicinin n8n'e elle ekledigi credential'in Conduut custom
+credential listesinde gorunmemesi beklenen bir ayrimdir; dogru yol OAuth broker
+connection metadata'sidir.
+
+**Duzeltme:** Gmail Trigger `gmail.message.read` capability'siyle managed Gmail
+akimina eklendi. Bagli connection varsa credential otomatik attach edilir;
+yoksa Gmail OAuth prompt'u doner. Ayrica registry tanimi, tip adi veya canli
+sema OAuth oldugunu gosteriyorsa genel secret formu uretilmez; broker destegi
+olmayan tip destek varsa Connections'a, yoksa dogrudan n8n OAuth
+yapilandirmasina yonlendiren `user_input_request` alir.
+
+**Durum:** Kod ve odakli regresyon testleri eklendi. E2 tekrarinda Gmail Trigger
+credential'i `gmail.message.read` capability'siyle otomatik baglandi; genel
+OAuth formu gosterilmedi. E2'nin kalan hatasi bu OAuth sorunundan bagimsiz
+Google Sheets append columns semasidir. Bkz. [[scenario-e2-gmail-to-sheets-log]].
+
 ## Agent local webhook icin kullaniciya yanlis host'lu POST URL'si verdi (2026-07-13, acik)
 
 **Belirti:** Yeniden baseline edilen E1 workflow'u (`jnaF9rQvckjOhGcX`) fonksiyonel
@@ -36,9 +104,12 @@ kuruyor fakat Groq extra/paketini kurmuyor; provider factory Groq kullanilmasa
 bile Groq siniflarini modul yuklenirken eager import ediyor.
 
 **Durum:** Acik. Henuz kod/dependency duzeltmesi yapilmadi. Once en kucuk dogru
-katman secilmeli (Groq destegi gercekten aktifse dependency; opsiyonelse lazy
-import/provider izolasyonu), sonra agent boot dogrulanip
-[[scenario-e1-webhook-sheets-append]] yeniden baslatilmali.
+dependency/import cozumu uygulanmali. 2026-07-14 E2 duzeltmeleri sonrasi temiz
+agent image build'i basarili oldu, fakat container start ayni eksik `groq`
+paketi nedeniyle tekrar exit etti; bu nedenle yeni E2 kodunun canli kabul kosusu
+baslatilamadi. Groq destegi aktif tutulacaksa dependency eklenmeli; opsiyonelse
+lazy import/provider izolasyonu uygulanmali. Ardindan agent boot dogrulanip
+[[scenario-e2-gmail-to-sheets-log]] yeniden kosulmali.
 
 ## Workflow ici Anthropic Chat Model eski Claude model ID'leriyle patladi (2026-07-08, cozuldu)
 
