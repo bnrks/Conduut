@@ -30,7 +30,8 @@ export interface MessageAttachment {
     | "artifact_preview"
     | "oauth_prompt"
     | "credential_request"
-    | "user_input_request";
+    | "user_input_request"
+    | "execution_reference";
   data: Record<string, unknown>;
 }
 

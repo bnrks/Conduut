@@ -45,8 +45,11 @@ interface WorkflowRunOutput {
 
 interface WorkflowRunResult {
   workflowName: string;
+  executionId?: string;
   status?: string;
   summary?: string;
+  failedNode?: string;
+  error?: string;
   outputs?: WorkflowRunOutput[];
   artifacts?: ArtifactPreviewData[];
   presentation?: WorkflowResultPresentation | null;
@@ -895,19 +898,32 @@ export default function WorkflowsPage() {
         throw new Error(await getErrorMessage(response, "Could not run workflow."));
       }
       const result = (await response.json().catch(() => null)) as {
+        success?: boolean;
+        execution_id?: string;
         status?: string;
         summary?: string;
+        failed_node?: string;
+        error?: string;
         outputs?: WorkflowRunOutput[];
         artifacts?: ArtifactPreviewData[];
         presentation?: WorkflowResultPresentation | null;
       } | null;
       await ensureMinOverlay(startedAt);
       setRunningOverlay(null);
-      toast.success(result?.summary || `Workflow ${result?.status || "triggered"}.`);
+      const executionFailed =
+        result?.success === false || ["error", "failed", "crashed"].includes(result?.status ?? "");
+      if (executionFailed) {
+        toast.error(result?.error || result?.summary || "Workflow run failed.");
+      } else {
+        toast.success(result?.summary || `Workflow ${result?.status || "triggered"}.`);
+      }
       setRunResult({
         workflowName: workflow.name,
+        executionId: result?.execution_id,
         status: result?.status,
         summary: result?.summary,
+        failedNode: result?.failed_node,
+        error: result?.error,
         outputs: result?.outputs,
         artifacts: result?.artifacts,
         presentation: result?.presentation,
@@ -1542,6 +1558,27 @@ export default function WorkflowsPage() {
               </Button>
             </div>
             <div className="flex max-h-[70vh] flex-col gap-3 overflow-y-auto pr-1">
+              {runResult.error && (
+                <div className="rounded-md border border-error/30 bg-error/5 p-3">
+                  <p className="text-[13px] font-medium text-error">Workflow run failed</p>
+                  {runResult.failedNode && (
+                    <p className="mt-1 text-[12px] text-muted-foreground">
+                      Failed step: {runResult.failedNode}
+                    </p>
+                  )}
+                  <p className="mt-1 whitespace-pre-wrap break-words text-[13px] text-foreground">
+                    {runResult.error}
+                  </p>
+                  {runResult.executionId && (
+                    <Link
+                      href="/dashboard/runs"
+                      className="mt-2 inline-flex text-[12px] font-medium text-conduut-600 hover:underline"
+                    >
+                      View run details
+                    </Link>
+                  )}
+                </div>
+              )}
               {runResult.presentation && runResult.presentation.fields.length > 0 && (
                 <WorkflowResultView presentation={runResult.presentation} />
               )}
@@ -1553,7 +1590,9 @@ export default function WorkflowsPage() {
                 !(runResult.outputs ?? []).length &&
                 !(runResult.artifacts ?? []).length && (
                   <p className="text-[13px] text-muted-foreground">
-                    Workflow çalıştı ama gösterilecek bir çıktı üretmedi.
+                    {runResult.error
+                      ? "No output was produced before the failure."
+                      : "Workflow çalıştı ama gösterilecek bir çıktı üretmedi."}
                   </p>
                 )}
             </div>

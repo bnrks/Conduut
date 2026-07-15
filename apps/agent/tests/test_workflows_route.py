@@ -163,6 +163,45 @@ async def test_run_workflow_persists_returned_artifacts(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_workflow_returns_domain_failure_details(monkeypatch):
+    monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
+
+    async def fake_get_workflow(_workflow_id: str):
+        return {"id": "wf_1", "name": "Broken workflow", "nodes": []}
+
+    async def fake_readiness(_workflow: dict, *, user_id: str):
+        assert user_id == "user_1"
+        return {"missing_credentials": []}
+
+    async def fake_run_workflow_with_input(_workflow: dict, *, user_id: str, input_payload: dict):
+        assert user_id == "user_1"
+        assert input_payload == {}
+        return WorkflowRunResultData(
+            workflowId="wf_1",
+            executionId="exec_failed",
+            status="error",
+            summary="Workflow run failed.",
+            failedNode="Send email",
+            error="Authentication failed",
+        )
+
+    monkeypatch.setattr(workflows_route.n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(workflows_route, "analyze_workflow_readiness_payload", fake_readiness)
+    monkeypatch.setattr(workflows_route, "run_workflow_with_input", fake_run_workflow_with_input)
+
+    response = await workflows_route.run_workflow(
+        "wf_1",
+        object(),
+        workflows_route.WorkflowRunRequest(input={}),
+    )
+
+    assert response["success"] is False
+    assert response["execution_id"] == "exec_failed"
+    assert response["failed_node"] == "Send email"
+    assert response["error"] == "Authentication failed"
+
+
+@pytest.mark.asyncio
 async def test_batch_run_workflow_persists_row_artifacts(monkeypatch):
     monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
 

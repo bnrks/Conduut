@@ -22,8 +22,12 @@ def _history_from_store_messages(messages: list[dict]) -> tuple[str, list[ModelM
     if not messages:
         return "", []
 
+    latest_message = {
+        **messages[-1],
+        "content": _content_with_attachment_context(messages[-1]),
+    }
     user_prompt = _content_with_user_input_answer_context(
-        messages[-1],
+        latest_message,
         _user_input_request_context(messages[-2]) if len(messages) > 1 else None,
     )
     prior_messages = messages[:-1]
@@ -38,7 +42,7 @@ def _history_from_store_messages(messages: list[dict]) -> tuple[str, list[ModelM
         content = _content_with_attachment_context(message)
         if role == "user":
             content = _content_with_user_input_answer_context(
-                message,
+                {**message, "content": content},
                 pending_user_input_request,
             )
             pending_user_input_request = None
@@ -166,6 +170,23 @@ def _content_with_attachment_context(message: dict) -> str:
                     f"workflowId={workflow_id} "
                     f"executionId={execution_id} "
                     f"status={status}"
+                )
+        elif attachment_type == "execution_reference":
+            execution_id = data.get("executionId")
+            workflow_id = data.get("workflowId")
+            status = data.get("status")
+            intent = data.get("intent")
+            if execution_id:
+                context_items.append(
+                    "execution_reference "
+                    f"executionId={execution_id} "
+                    f"workflowId={workflow_id} "
+                    f"status={status} "
+                    f"intent={intent}. "
+                    "Inspect this exact execution before changing anything. Read the same "
+                    "workflow and update that workflow only when the failure is caused by its "
+                    "definition; credential, quota, external-service, or user-data failures "
+                    "must be explained without changing the workflow"
                 )
         elif attachment_type == "artifact_preview":
             title = data.get("title")

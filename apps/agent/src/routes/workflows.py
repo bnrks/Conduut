@@ -205,6 +205,8 @@ async def run_workflow(workflow_id: str, request: Request, body: WorkflowRunRequ
             "execution_id": result.executionId,
             "status": result.status,
             "summary": result.summary,
+            "failed_node": result.failedNode,
+            "error": result.error,
             "outputs": result.outputs,
             "artifacts": [artifact.model_dump(exclude_none=True) for artifact in result.artifacts],
             "presentation": (

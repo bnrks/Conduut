@@ -1,14 +1,21 @@
+from typing import Literal
+
 import structlog
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
-from src import store
+from src import executions, n8n_client, store
 from src.agent import runner
 from src.auth import get_user_id
 
 log = structlog.get_logger()
 router = APIRouter()
+
+
+class ExecutionReference(BaseModel):
+    execution_id: str
+    intent: Literal["diagnose_and_fix"] = "diagnose_and_fix"
 
 
 class ChatRequest(BaseModel):
@@ -17,6 +24,7 @@ class ChatRequest(BaseModel):
 
     content: str
     conversation_id: str | None = None
+    execution_reference: ExecutionReference | None = None
 
 
 @router.post("/chat/send")
@@ -34,8 +42,43 @@ async def chat_send(request: Request, body: ChatRequest):
         content_length=len(body.content),
     )
 
+    attachments: list[dict] | None = None
+    if body.execution_reference:
+        try:
+            run = await executions.get_run(user_id, body.execution_reference.execution_id)
+        except executions.ExecutionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail={"message": "Run not found."}) from exc
+        except n8n_client.N8nApiError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"message": exc.message},
+            ) from exc
+        if run.status not in {"error", "failed", "crashed"}:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "Only failed runs can be sent for repair."},
+            )
+        attachments = [
+            {
+                "type": "execution_reference",
+                "data": {
+                    "executionId": run.id,
+                    "workflowId": run.workflow_id,
+                    "workflowName": run.workflow_name,
+                    "status": run.status,
+                    "intent": body.execution_reference.intent,
+                },
+            }
+        ]
+
     conv = await store.get_or_create_conversation(user_id, body.conversation_id)
-    await store.add_message(user_id, conv.id, "user", body.content)
+    await store.add_message(
+        user_id,
+        conv.id,
+        "user",
+        body.content,
+        attachments=attachments,
+    )
     log.info("chat_conversation_ready", user_id=user_id, conversation_id=conv.id)
 
     msgs = await store.get_conversation_messages(user_id, conv.id)

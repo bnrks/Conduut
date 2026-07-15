@@ -98,3 +98,67 @@ async def test_call_webhook_uses_long_timeout_for_llm_workflows(monkeypatch):
     await n8n_client.call_webhook("some/path", {"x": 1})
     assert captured["timeout"] is not None
     assert float(captured["timeout"]) >= 120
+
+
+async def test_list_executions_page_forwards_filters_and_cursor(monkeypatch):
+    captured = {}
+
+    class _ExecutionResponse(_FakeResp):
+        def json(self):
+            return {
+                "data": [
+                    {
+                        "id": "exec_1",
+                        "workflowId": "wf_1",
+                        "status": "error",
+                        "mode": "webhook",
+                        "startedAt": "2026-07-15T10:00:00Z",
+                        "stoppedAt": "2026-07-15T10:00:01Z",
+                    }
+                ],
+                "nextCursor": "opaque-next",
+            }
+
+    async def fake_request(method, path, **kwargs):
+        captured.update(method=method, path=path, params=kwargs.get("params"))
+        return _ExecutionResponse()
+
+    monkeypatch.setattr(n8n_client, "_request", fake_request)
+
+    page = await n8n_client.list_executions_page(
+        "wf_1",
+        status="error",
+        cursor="opaque-current",
+        limit=42,
+    )
+
+    assert captured == {
+        "method": "GET",
+        "path": "/executions",
+        "params": {
+            "limit": 42,
+            "workflowId": "wf_1",
+            "status": "error",
+            "cursor": "opaque-current",
+        },
+    }
+    assert page.next_cursor == "opaque-next"
+    assert page.executions[0].finished_at == "2026-07-15T10:00:01Z"
+    assert page.executions[0].mode == "webhook"
+
+
+async def test_legacy_list_executions_returns_page_items(monkeypatch):
+    expected = n8n_client.N8nExecution(
+        id="exec_1",
+        workflow_id="wf_1",
+        status="success",
+        started_at="",
+    )
+
+    async def fake_page(**kwargs):
+        assert kwargs == {"workflow_id": "wf_1", "limit": 3}
+        return n8n_client.N8nExecutionPage(executions=[expected], next_cursor="ignored")
+
+    monkeypatch.setattr(n8n_client, "list_executions_page", fake_page)
+
+    assert await n8n_client.list_executions("wf_1", limit=3) == [expected]

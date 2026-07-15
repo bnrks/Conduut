@@ -20,53 +20,6 @@ const MOCK_USAGE = {
 
 const CURRENT_PLAN = "starter" as const;
 
-const RECENT_EXECUTIONS = [
-  {
-    id: "ex-1",
-    workflowName: "Gmail to Slack Notifications",
-    status: "success" as const,
-    duration: "1.2s",
-    runAt: "2026-03-28T09:14:00Z",
-  },
-  {
-    id: "ex-2",
-    workflowName: "Google Sheets CRM Sync",
-    status: "success" as const,
-    duration: "0.8s",
-    runAt: "2026-03-28T08:55:00Z",
-  },
-  {
-    id: "ex-3",
-    workflowName: "Daily Standup Reminder",
-    status: "error" as const,
-    duration: "—",
-    runAt: "2026-03-28T08:00:00Z",
-  },
-  {
-    id: "ex-4",
-    workflowName: "Gmail to Slack Notifications",
-    status: "success" as const,
-    duration: "1.1s",
-    runAt: "2026-03-27T17:32:00Z",
-  },
-  {
-    id: "ex-5",
-    workflowName: "Google Sheets CRM Sync",
-    status: "success" as const,
-    duration: "0.9s",
-    runAt: "2026-03-27T16:00:00Z",
-  },
-];
-
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 export default function UsagePage() {
   const plan = PLAN_DETAILS[CURRENT_PLAN];
 
@@ -221,36 +174,30 @@ export default function UsagePage() {
           </CardContent>
         </Card>
 
-        {/* Execution history */}
+        {/* Execution history lives on the real Runs page. */}
         <Card className="lg:col-span-2">
           <CardHeader>
-            <h2 className="text-[15px] font-medium text-foreground">
-              Recent Executions
-            </h2>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-[15px] font-medium text-foreground">Workflow runs</h2>
+                <p className="mt-1 text-[13px] text-muted-foreground">
+                  Inspect successful and failed workflow runs in one place.
+                </p>
+              </div>
+              <Link href="/dashboard/runs">
+                <Button size="sm" variant="outline" className="gap-1.5">
+                  View runs
+                  <ArrowUpRight className="h-4 w-4" />
+                </Button>
+              </Link>
+            </div>
           </CardHeader>
           <CardContent className="pt-3">
-            <div className="flex flex-col divide-y divide-border">
-              {RECENT_EXECUTIONS.map((ex) => (
-                <div
-                  key={ex.id}
-                  className="flex items-center gap-3 py-3 first:pt-0 last:pb-0"
-                >
-                  <span
-                    className={`h-2 w-2 rounded-full shrink-0 ${
-                      ex.status === "success" ? "bg-success" : "bg-error"
-                    }`}
-                  />
-                  <span className="flex-1 text-[13px] text-foreground truncate">
-                    {ex.workflowName}
-                  </span>
-                  <span className="text-[12px] text-muted-foreground tabular-nums shrink-0">
-                    {ex.duration}
-                  </span>
-                  <span className="text-[12px] text-muted-foreground tabular-nums shrink-0 hidden sm:block">
-                    {formatDateTime(ex.runAt)}
-                  </span>
-                </div>
-              ))}
+            <div className="flex min-h-32 items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 px-6 text-center">
+              <p className="max-w-md text-[13px] text-muted-foreground">
+                Usage totals remain here; run-level status, timing, and failure details are
+                shown on the Runs page.
+              </p>
             </div>
           </CardContent>
         </Card>

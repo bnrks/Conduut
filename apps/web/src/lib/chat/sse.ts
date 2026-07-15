@@ -1,8 +1,15 @@
 "use client";
 
+export interface ExecutionReference {
+  execution_id: string;
+  intent: "diagnose_and_fix";
+  workflow_name?: string;
+}
+
 export interface ChatSendRequest {
   content: string;
   conversation_id?: string;
+  execution_reference?: ExecutionReference;
 }
 
 export interface ChatStreamEvent {

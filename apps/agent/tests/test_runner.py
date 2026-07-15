@@ -351,6 +351,59 @@ def test_history_from_store_messages_adds_user_input_context_for_continuation():
     assert "recipients" in history[1].parts[0].content
 
 
+def test_history_from_store_messages_adds_latest_execution_reference_to_prompt():
+    prompt, history = runner._history_from_store_messages(
+        [
+            {
+                "role": "user",
+                "content": "Bu basarisiz calistirmayi incele ve duzelt.",
+                "attachments": [
+                    {
+                        "type": "execution_reference",
+                        "data": {
+                            "executionId": "exec_42",
+                            "workflowId": "wf_7",
+                            "status": "error",
+                            "intent": "diagnose_and_fix",
+                        },
+                    }
+                ],
+            }
+        ]
+    )
+
+    assert history == []
+    assert prompt.startswith("Bu basarisiz calistirmayi incele")
+    assert "execution_reference executionId=exec_42 workflowId=wf_7" in prompt
+    assert "Inspect this exact execution before changing anything" in prompt
+
+
+def test_history_from_store_messages_preserves_prior_user_attachment_context():
+    _prompt, history = runner._history_from_store_messages(
+        [
+            {
+                "role": "user",
+                "content": "Run'i duzelt",
+                "attachments": [
+                    {
+                        "type": "execution_reference",
+                        "data": {
+                            "executionId": "exec_42",
+                            "workflowId": "wf_7",
+                            "status": "error",
+                            "intent": "diagnose_and_fix",
+                        },
+                    }
+                ],
+            },
+            {"role": "assistant", "content": "Inceliyorum."},
+            {"role": "user", "content": "devam et"},
+        ]
+    )
+
+    assert "execution_reference executionId=exec_42" in history[0].parts[0].content
+
+
 def test_platform_resources_from_messages_uses_latest_sheets_artifact():
     resources = runner._platform_resources_from_messages(
         [

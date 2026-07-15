@@ -34,6 +34,7 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
 - [[artifacts]] - Sheets sonuc onizleme kartlari ve gelecekteki artifact modeli.
 - [[feature-backlog]] - ileride eklenecek ozellikler ve kabul kriterleri.
 - [[dashboard]] - dashboard sayfalari ve real/mock ayrimi.
+- [[execution-history]] - gercek n8n run gecmisi, hata detayi ve Fix with Conduut.
 - [[agent-instructions]] - Claude Code ve Codex yonerge haritasi (kanonik: `AGENTS.md`).
 - [[known-issues]] - bilinen teknik borclar ve dikkat edilmesi gerekenler.
 - [[issue-backlog]] - kullanicinin fark ettigi cozulmesi gereken sorunlar ve
@@ -110,6 +111,8 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
   `presentation`'a cozulur (isimli-alan eslemesi, tek-item, non-error; tam govdeden,
   preview-kirpmasi degil). Frontend format-duyarli `WorkflowResultView`; ham JSON
   `<details>` fallback. Yeni `tools/output_schema.py` + `workflow-result-view.tsx`.
+- [[adr-0018-execution-history-mvp]] - Runs V1 n8n source-of-truth, sanitize
+  contract, structured repair handoff ve per-user n8n production gate karari.
 
 ## Kaynak Dokumanlar
 

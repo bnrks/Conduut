@@ -10,6 +10,7 @@ Dashboard, workflow yonetimi ve hesap ayarlari icin MVP arayuzudur.
 
 - Chat.
 - Workflows.
+- Runs.
 - Artifacts.
 - Connections.
 - Usage.
@@ -119,6 +120,16 @@ Run endpoint'i n8n'e JSON body ile POST atar. n8n Webhook node'unda
 run oncesi POST webhook'a patch'ler; boylece dashboard Run formundan alinan
 runtime input production webhook tarafindan kabul edilir.
 
+Run once sonucu HTTP olarak basarili donse bile execution `error`/`failed` ise
+dashboard success toast gostermez; failed step ve hata sonuc panelinde yer alir.
+
+## Runs
+
+`/dashboard/runs`, shared n8n execution API'sine bagli gercek gecmis ekranidir.
+Status/workflow filtresi, cursor `Load more`, timing/status listesi ve sanitize
+detay paneli vardir. Hata detayindaki `Fix with Conduut`, exact execution id'yi
+structured chat handoff'uyla agente tasir. Ayrinti: [[execution-history]].
+
 MVP siniri: shared n8n nedeniyle workflow'lar user ownership ile filtrelenmez.
 
 ## Artifacts
@@ -202,7 +213,8 @@ entegrasyondur.
 
 ## Usage
 
-`/dashboard/usage` mock usage ve recent execution verisi kullanir. Plan limitleri
+`/dashboard/usage` mock usage sayaclari kullanir; recent execution mock'u
+kaldirildi ve gercek gecmis `/dashboard/runs` altina tasindi. Plan limitleri
 `src/lib/constants.ts` icindeki `PLAN_DETAILS` objesinden gelir. Gercek usage
 tracking ve billing henuz yoktur.
 

@@ -5,6 +5,7 @@ import {
   Plug,
   KeyRound,
   BarChart3,
+  Activity,
   Settings,
   type LucideIcon,
 } from "lucide-react";
@@ -18,6 +19,7 @@ export interface NavItem {
 export const DASHBOARD_NAV: NavItem[] = [
   { label: "Chat", href: "/chat", icon: MessageSquare },
   { label: "Workflows", href: "/dashboard/workflows", icon: Workflow },
+  { label: "Runs", href: "/dashboard/runs", icon: Activity },
   { label: "Artifacts", href: "/dashboard/artifacts", icon: Files },
   { label: "Connections", href: "/dashboard/connections", icon: Plug },
   { label: "Credentials", href: "/dashboard/credentials", icon: KeyRound },

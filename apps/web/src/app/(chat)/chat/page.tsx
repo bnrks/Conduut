@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { MessageList } from "@/components/chat/message-list";
@@ -11,7 +11,8 @@ import {
   type ClarificationPanelData,
 } from "@/components/chat/clarification-panel";
 import { useAuth } from "@/hooks/use-auth";
-import { streamChat } from "@/lib/chat/sse";
+import { streamChat, type ExecutionReference } from "@/lib/chat/sse";
+import { consumePendingExecutionRepair } from "@/lib/chat/pending-execution-repair";
 import { setConversationCache } from "@/lib/chat/conversation-cache";
 import { toolActivityLabel } from "@/lib/chat/tool-activity";
 import {
@@ -58,7 +59,10 @@ export default function NewChatPage() {
   const [agentActivity, setAgentActivity] = useState<string | undefined>();
   const [agentActivities, setAgentActivities] = useState<string[]>([]);
 
-  const handleSend = async (content: string) => {
+  const handleSend = useCallback(async (
+    content: string,
+    executionReference?: ExecutionReference
+  ) => {
     if (!user || isAgentTyping) return;
 
     const token = await user.getIdToken();
@@ -69,6 +73,19 @@ export default function NewChatPage() {
       role: "user",
       content,
       createdAt: now,
+      attachments: executionReference
+        ? [
+            {
+              type: "execution_reference",
+              data: {
+                executionId: executionReference.execution_id,
+                workflowName: executionReference.workflow_name,
+                status: "error",
+                intent: executionReference.intent,
+              },
+            },
+          ]
+        : undefined,
     };
 
     const assistantMessageId = createId("assistant");
@@ -127,7 +144,15 @@ export default function NewChatPage() {
     try {
       await streamChat({
         token,
-        body: { content },
+        body: {
+          content,
+          execution_reference: executionReference
+            ? {
+                execution_id: executionReference.execution_id,
+                intent: executionReference.intent,
+              }
+            : undefined,
+        },
         onEvent: (event) => {
           const result = reduceAssistantStreamEvent(assistantStream, event);
           if (!result.accepted) return;
@@ -191,7 +216,14 @@ export default function NewChatPage() {
       setAgentActivity(undefined);
       setAgentActivities([]);
     }
-  };
+  }, [isAgentTyping, router, user]);
+
+  useEffect(() => {
+    if (!user || isAgentTyping || messages.length > 0) return;
+    const reference = consumePendingExecutionRepair();
+    if (!reference) return;
+    void handleSend("Bu başarısız çalıştırmayı incele ve düzelt.", reference);
+  }, [handleSend, isAgentTyping, messages.length, user]);
 
   const handlePromptClick = (prompt: string) => {
     setInputValue(prompt);

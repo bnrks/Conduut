@@ -86,6 +86,10 @@ olmak iyi, fakat mevcut MVP'nin gercek sinirlarini bozmamak daha onemlidir.
   API -> agent/internal verification -> normal assistant text response veya
   dashboard toast. Google Sheets ciktisi varsa backend ayni response/attachment
   icinde `artifact_preview` snapshot'i uretir.
+- Execution history: n8n execution API -> `src/executions.py(user_id)` ->
+  FastAPI `/api/executions` -> Next BFF -> Runs dashboard. Ayni service agent
+  `list_executions`/`inspect_execution` tool'larina ve structured chat repair
+  handoff'una hizmet eder; raw execution data web'e cikmaz.
 - Node knowledge: [[agent-service]] -> [[n8n-registry]].
 
 ## Mimari Dikkat Noktalari

@@ -27,6 +27,9 @@ once bu not ve kaynak kod esas alinmalidir.
   [[adr-0011-conduut-managed-tiered-models]] ile kaldirildi.)
 - Workflow dashboard shared n8n instance uzerinden workflow listeliyor,
   activate/deactivate/delete ve runtime input ile run islemleri yapiyor.
+- Runs dashboard shared n8n execution API'sinden gercek run gecmisini,
+  status/timing ve redakte hata detayini listeliyor; basarisiz run agent chat'ine
+  structured `execution_reference` ile gonderilebiliyor ([[execution-history]]).
 - Agent, workflow olustururken `search_n8n_nodes`, `get_node_schema` ve
   `find_workflow_template` tool'larini kullanabiliyor.
 - Workflow generation tek kompakt-JSON yuzeyi uzerinden: model
@@ -60,7 +63,8 @@ once bu not ve kaynak kod esas alinmalidir.
 
 ## Stub veya Mock Olanlar
 
-- Usage sayfasi mock usage ve execution history kullaniyor.
+- Usage sayfasi mock plan/usage sayaclari kullaniyor; sahte execution history
+  kaldirildi ve gercek gecmis [[execution-history]] altina tasindi.
 - Settings icindeki profile, password ve preferences kaydetme aksiyonlari tam
   backend entegrasyonuna sahip degil.
 - Sidebar kullanici bilgisi bazi yerlerde mock.

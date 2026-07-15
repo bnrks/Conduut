@@ -129,7 +129,16 @@ class N8nExecution:
     status: str  # "running" | "success" | "error" | "waiting"
     started_at: str
     finished_at: str | None = None
+    mode: str | None = None
     data: dict | None = None
+
+
+@dataclass
+class N8nExecutionPage:
+    """One cursor-paginated page from n8n's executions API."""
+
+    executions: list[N8nExecution]
+    next_cursor: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -389,33 +398,53 @@ async def execute_workflow(workflow_id: str) -> dict:
 async def get_execution(execution_id: str) -> N8nExecution:
     r = await _request("GET", f"/executions/{execution_id}")
     _raise_for_status(r)
-    e = r.json()
+    return _execution_from_payload(r.json())
+
+
+def _execution_from_payload(payload: dict[str, Any]) -> N8nExecution:
     return N8nExecution(
-        id=e["id"],
-        workflow_id=e.get("workflowId", ""),
-        status=e.get("status", "unknown"),
-        started_at=e.get("startedAt", ""),
-        finished_at=e.get("finishedAt"),
+        id=str(payload.get("id", "")),
+        workflow_id=str(payload.get("workflowId", "")),
+        status=str(payload.get("status", "unknown")),
+        started_at=str(payload.get("startedAt", "")),
+        # Current n8n responses use stoppedAt. Keep finishedAt as a fallback
+        # for older payloads and fixtures already used by Conduut.
+        finished_at=payload.get("stoppedAt") or payload.get("finishedAt"),
+        mode=str(payload["mode"]) if payload.get("mode") else None,
+    )
+
+
+async def list_executions_page(
+    workflow_id: str | None = None,
+    *,
+    status: str | None = None,
+    cursor: str | None = None,
+    limit: int = 10,
+) -> N8nExecutionPage:
+    """Return one execution page while preserving n8n's opaque cursor."""
+
+    params: dict = {"limit": limit}
+    if workflow_id:
+        params["workflowId"] = workflow_id
+    if status:
+        params["status"] = status
+    if cursor:
+        params["cursor"] = cursor
+    r = await _request("GET", "/executions", params=params)
+    _raise_for_status(r)
+    payload = r.json()
+    items = payload.get("data", [])
+    return N8nExecutionPage(
+        executions=[_execution_from_payload(item) for item in items if isinstance(item, dict)],
+        next_cursor=(str(payload["nextCursor"]) if payload.get("nextCursor") else None),
     )
 
 
 async def list_executions(workflow_id: str | None = None, limit: int = 10) -> list[N8nExecution]:
-    params: dict = {"limit": limit}
-    if workflow_id:
-        params["workflowId"] = workflow_id
-    r = await _request("GET", "/executions", params=params)
-    _raise_for_status(r)
-    items = r.json().get("data", [])
-    return [
-        N8nExecution(
-            id=e["id"],
-            workflow_id=e.get("workflowId", ""),
-            status=e.get("status", "unknown"),
-            started_at=e.get("startedAt", ""),
-            finished_at=e.get("finishedAt"),
-        )
-        for e in items
-    ]
+    """Backward-compatible unpaged execution list for existing agent paths."""
+
+    page = await list_executions_page(workflow_id=workflow_id, limit=limit)
+    return page.executions
 
 
 # ---------------------------------------------------------------------------

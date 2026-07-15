@@ -38,6 +38,7 @@ Router'lar `/api` prefix'i altinda include edilir (bkz. `main.py`):
 - `artifacts`
 - `credentials`
 - `connections`
+- `executions`
 - `workflows`
 
 > Eski `settings` ve `favorites` router'lari **kaldirildi** (BYO-provider yolu
@@ -194,6 +195,9 @@ Conversation history modele aktarilirken assistant attachment'lari da korunur.
 baglamini, `user_input_request` ise agent'in once sordugu eksik bilgi
 sorusunu ic context olarak modele ekler. Boylece kullanici sadece eksik cevabi
 yazdiginda agent onceki isi devam ettirebilir.
+User-message `execution_reference` attachment'i da son prompt ve reload sonrasi
+history icinde korunur. Backend reference'i execution id'den canonicalize eder;
+agent exact execution'i inspect etmeden workflow degisikligine baslamaz.
 
 ## Model Registry, Router ve Provider Factory (ADR-0011)
 
@@ -269,6 +273,8 @@ moduller:
 - `build_pipeline.py`: create/update oncesi workflow normalize → repair →
   runtime-input → validate akisi (eski adi `validation.py`; Faz 3'te rename).
 - `execution.py`: execution output ozetleme.
+- `src/executions.py`: web route'lari ve agent tool'lari icin user-aware,
+  sanitize execution list/detail service siniri ([[execution-history]]).
 - `history.py`: konusma gecmisini Pydantic AI mesaj gecmisine ceviren saf
   fonksiyonlar (Faz 3'te runner.py'den cikarildi).
 - `src/platforms/*`: platform capability registry, permission pack mapping,
@@ -504,7 +510,12 @@ Workflow readiness davranisi:
 - `POST /api/workflows/{workflow_id}/run` dashboard ve agent icin ortak
   runtime contract'tir. Body `{ input, source }` tasir; backend required input
   schema validation yapar, credential readiness'i korur ve n8n webhook'una
-  validated payload gonderir. `execute_workflow` ayni helper'i kullanir.
+  validated payload gonderir. `execute_workflow` ayni helper'i kullanir. Domain
+  sonucu basarisizsa response `success=false`, `failed_node` ve `error` tasir;
+  web HTTP 200'u tek basina basari saymaz.
+- `GET /api/executions` ve `GET /api/executions/{execution_id}` gercek n8n run
+  gecmisini cursor/filter ve sanitize detail contract'iyla sunar. Raw execution
+  data ve outputs web contract'ina girmez ([[execution-history]]).
 - `POST /api/workflows/{workflow_id}/batch-run` dashboard batch/loop
   calistirma contract'idir. Body `{ rows, source, options }` tasir; her row
   `{ rowNumber, input }` seklindedir. Endpoint credential readiness'i batch

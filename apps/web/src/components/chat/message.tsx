@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, XCircle } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { Logo } from "@/components/ui/logo";
 import { ArtifactPreview } from "@/components/artifacts/artifact-preview";
@@ -29,6 +29,31 @@ export interface MessageProps {
 function formatTime(dateStr: string) {
   const date = new Date(dateStr);
   return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+}
+
+interface ExecutionReferenceData {
+  executionId?: string;
+  workflowId?: string;
+  workflowName?: string;
+  status?: string;
+}
+
+function ExecutionReferenceCard({ data }: { data: ExecutionReferenceData }) {
+  const workflowName = data.workflowName || data.workflowId || "Workflow run";
+
+  return (
+    <div className="mb-2 flex w-[min(300px,70vw)] max-w-full items-center gap-2.5 rounded-lg border border-border bg-card px-3 py-2 text-left shadow-sm">
+      <XCircle className="h-4 w-4 shrink-0 text-red-500" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[12px] font-medium text-foreground">{workflowName}</p>
+        {data.executionId && (
+          <p className="truncate font-mono text-[10px] text-muted-foreground">
+            Run #{data.executionId}
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 /* ── Copy button for code blocks ── */
@@ -223,15 +248,27 @@ function MessageBase({ message, hideInputRequests = false, isStreaming = false }
   const isUser = message.role === "user";
   const inputRequestAttachments =
     message.attachments?.filter((attachment) => attachment.type === "user_input_request") ?? [];
+  const executionReferenceAttachments =
+    message.attachments?.filter((attachment) => attachment.type === "execution_reference") ?? [];
   const visibleAttachments =
-    message.attachments?.filter((attachment) => attachment.type !== "user_input_request") ?? [];
+    message.attachments?.filter(
+      (attachment) =>
+        attachment.type !== "user_input_request" && attachment.type !== "execution_reference"
+    ) ?? [];
   const inputRequests = hideInputRequests ? [] : inputRequestAttachments;
   const hasText = message.content.trim().length > 0 && inputRequestAttachments.length === 0;
   const hasThinking = !isUser && !!message.thinking;
   const steps = !isUser ? message.steps : undefined;
   const useSteps = !!steps && steps.length > 1 && inputRequestAttachments.length === 0;
 
-  if (!hasText && !hasThinking && !useSteps && inputRequests.length === 0 && visibleAttachments.length === 0) {
+  if (
+    !hasText &&
+    !hasThinking &&
+    !useSteps &&
+    inputRequests.length === 0 &&
+    executionReferenceAttachments.length === 0 &&
+    visibleAttachments.length === 0
+  ) {
     return null;
   }
 
@@ -255,6 +292,13 @@ function MessageBase({ message, hideInputRequests = false, isStreaming = false }
 
       {/* Bubble + attachments */}
       <div className={cn("flex flex-col max-w-[75%]", isUser ? "items-end" : "items-start")}>
+        {executionReferenceAttachments.map((attachment, i) => (
+          <ExecutionReferenceCard
+            key={`execution-${i}`}
+            data={attachment.data as ExecutionReferenceData}
+          />
+        ))}
+
         {hasThinking && (
           <ThinkingPanel content={message.thinking ?? ""} answerStarted={hasText} />
         )}

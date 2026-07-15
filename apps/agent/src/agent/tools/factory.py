@@ -6,7 +6,7 @@ from typing import Any
 import structlog
 from pydantic_ai import Agent, ModelRetry, RunContext
 
-from src import n8n_client, store
+from src import executions, n8n_client, store
 from src.agent.platform_profile import render_static_profile
 from src.agent.platform_state import platform_state_instructions
 from src.agent.schemas import (
@@ -37,7 +37,6 @@ from src.agent.tools.credentials import (
     list_credentials_payload,
     prepare_api_credential_payload,
 )
-from src.agent.tools.execution import _summarize_execution
 from src.agent.tools.output_schema import save_workflow_output_metadata
 from src.agent.tools.prompt import SYSTEM_PROMPT
 from src.agent.tools.readiness import (
@@ -733,9 +732,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             readiness = await analyze_workflow_readiness_payload(
                 workflow,
                 user_id=ctx.deps.user_id,
-                before_mutation=lambda: ctx.deps.mark_replay_unsafe(
-                    "analyze_workflow_readiness"
-                ),
+                before_mutation=lambda: ctx.deps.mark_replay_unsafe("analyze_workflow_readiness"),
             )
             for attachment in readiness["missing_credentials"]:
                 await ctx.deps.emit_attachment(attachment)
@@ -776,8 +773,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         await ctx.deps.emit_tool_call("inspect_execution")
         started_at = perf_counter()
         try:
-            detail = await n8n_client.get_execution_detail(execution_id)
-            result = _summarize_execution(detail)
+            result = await executions.inspect_run(ctx.deps.user_id, execution_id)
             payload = result.model_dump(exclude_none=True)
             _log_tool_finished("inspect_execution", started_at, payload)
             return payload
@@ -796,21 +792,17 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         await ctx.deps.emit_tool_call("list_executions")
         started_at = perf_counter()
         try:
-            executions = await n8n_client.list_executions(workflow_id=workflow_id, limit=10)
+            page = await executions.list_runs(
+                ctx.deps.user_id,
+                workflow_id=workflow_id,
+                limit=10,
+            )
         except Exception as exc:
             log.error("tool_error", tool="list_executions", error=str(exc))
             result = [{"error": _safe_error(exc)}]
             _log_tool_finished("list_executions", started_at, result)
             return result
-        result = [
-            {
-                "id": e.id,
-                "workflow_id": e.workflow_id,
-                "status": e.status,
-                "started_at": e.started_at,
-            }
-            for e in executions
-        ]
+        result = [execution.model_dump(exclude_none=True) for execution in page.executions]
         _log_tool_finished("list_executions", started_at, result)
         return result
 
