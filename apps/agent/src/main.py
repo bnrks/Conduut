@@ -14,6 +14,7 @@ from src.routes import chat, conversations
 from src.routes import connections as connections_router
 from src.routes import credentials as credentials_router
 from src.routes import executions as executions_router
+from src.routes import usage as usage_router
 from src.routes import workflows as workflows_router
 
 configure_logging()
@@ -82,6 +83,7 @@ app.include_router(artifacts_router.router, prefix="/api")
 app.include_router(credentials_router.router, prefix="/api")
 app.include_router(connections_router.router, prefix="/api")
 app.include_router(executions_router.router, prefix="/api")
+app.include_router(usage_router.router, prefix="/api")
 app.include_router(workflows_router.router, prefix="/api")
 
 

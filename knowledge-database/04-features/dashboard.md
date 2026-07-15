@@ -208,15 +208,31 @@ API ile yonetir:
 MVP'de Google OAuth callback n8n credential yaratmaya devam eder. Ek olarak
 `CONDUUT_CONNECTION_ENCRYPTION_KEY` varsa refresh token encrypted Firestore'da
 saklanir ve direct Gmail/Sheets action'lari acilir. Vault/Secret Manager henuz
-yoktur; Usage, profile/security/preferences gibi alanlar hala mock veya kismi
-entegrasyondur.
+yoktur; profile/security/preferences gibi alanlar hala mock veya kismi
+entegrasyondur. Usage token gozlemi gercek veriye baglidir; plan/billing yoktur.
 
 ## Usage
 
-`/dashboard/usage` mock usage sayaclari kullanir; recent execution mock'u
-kaldirildi ve gercek gecmis `/dashboard/runs` altina tasindi. Plan limitleri
-`src/lib/constants.ts` icindeki `PLAN_DETAILS` objesinden gelir. Gercek usage
-tracking ve billing henuz yoktur.
+`/dashboard/usage`, tamamlanan Conduut agent run'larinin gercek token kullanimini
+gosterir. Agent runner `result.usage()` icindeki input/output/cache token,
+model-request ve tool-call sayilarini kullaniciya ait `usage_events`
+collection'ina deterministic run kimligiyle append-only/idempotent kaydeder.
+`GET /api/usage?days=1|7|30|90` ham event'lerden toplam, UTC gunluk seri ve
+provider/model/tier kirilimi uretir; Next BFF ayni endpoint'i Firebase bearer
+token ile proxy eder. Dashboard toplam/input/output token, tamamlanan run,
+cache/request/tool ayrintisi ve trend sunar. Provider/model/tier kirilimi
+backend gozlemi icin korunur ancak son kullanici arayuzunde gosterilmez.
+`days` once HTTP query string'inden `int` olarak parse edilir, ardindan izinli
+`1/7/30/90` degerleriyle sinirlanir; integer `Literal` dogrudan query tipi
+olarak kullanilmaz.
+
+Ilk kapsam billing metrigi degil, gozlemdir: yalniz basariyla tamamlanip
+`_persist_and_done`'a ulasan final agent usage'i kaydedilir. Router tokenlari,
+basarisiz recovery attempt'lari, terminal hata ve cancellation tuketimi dahil
+degildir. Cache read/write ayri detaydir ve `total_tokens=input+output`
+hesabina ikinci kez eklenmez. Tracking deployment oncesi loglari geriye donuk
+aktarmaz. Plan, kredi, kota ve billing enforcement henuz yoktur. Workflow run
+gecmisi `/dashboard/runs` altinda kalir ([[execution-history]]).
 
 ## Settings
 

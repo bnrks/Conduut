@@ -66,6 +66,12 @@ from .credentials import (
     save_custom_credential,
     save_draft_credential,
 )
+from .usage import (
+    AgentUsageEvent,
+    _usage_event_document_id,
+    list_agent_usage_events,
+    save_agent_usage_event,
+)
 from .workflow_metadata import (
     WorkflowMetadata,
     delete_workflow_metadata,
@@ -95,6 +101,7 @@ __all__ = [
     "Message",
     "OAuthState",
     "WorkflowMetadata",
+    "AgentUsageEvent",
     # api_auth_cache
     "delete_api_auth_cache",
     "get_api_auth_cache",
@@ -134,4 +141,8 @@ __all__ = [
     "get_workflow_metadata",
     "save_workflow_metadata",
     "save_workflow_test_status",
+    # usage
+    "_usage_event_document_id",
+    "list_agent_usage_events",
+    "save_agent_usage_event",
 ]

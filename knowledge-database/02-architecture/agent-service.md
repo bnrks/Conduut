@@ -669,6 +669,10 @@ cevirir. Aksi halde n8n workflow'u API'den kabul etse bile editor
 - `users/{uid}/artifacts/{artifactId}`
 - `users/{uid}/credentials/{credentialId}` (custom HTTP + agent-managed +
   predefined credential metadata; secret yok)
+- `users/{uid}/usage_events/{eventId}` (tamamlanan agent run token/request/tool
+  sayilari; prompt veya response metni yok; outer run-log `run_id` tabanli
+  deterministic id ile idempotent, `event_type=agent_run_completed`,
+  `schema_version=1`)
 - `api_auth_cache/{host}` (global, kullanici-disi; agent-managed auth research
   cache, secret yok)
 
@@ -687,6 +691,14 @@ mesajlari `assistant` roluyla saklanabilir; API chat UI icin bunu `agent`
 rolune normalize eder ve `artifact_preview` attachment'larini aynen korur.
 
 Firestore sync SDK cagrilari `asyncio.to_thread` ile sarilir.
+
+Usage gozlem akisi `runner._persist_and_done` icinde Pydantic AI
+`result.usage()` degerini best-effort kaydeder; usage persist hatasi basarili
+chat SSE `done` event'ini engellemez. `src/usage.py` bu immutable event'leri son
+24 saat/7/30/90 gun icin okur ve toplam, UTC gunluk seri ve model kirilimi
+uretir; `routes/usage.py` authenticated ince HTTP yuzeyidir. Bu ilk kapsam
+provider faturasi veya billing source-of-truth degildir: router, basarisiz
+attempt, terminal hata ve cancellation usage'i kapsanmaz.
 
 ## Test ve Tooling
 

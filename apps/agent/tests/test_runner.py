@@ -739,6 +739,105 @@ async def test_runner_persists_artifact_preview_attachments(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_persist_and_done_records_completed_agent_usage(monkeypatch, make_agent_deps):
+    recorded = []
+
+    async def fake_save_usage(user_id: str, **kwargs):
+        recorded.append((user_id, kwargs))
+
+    async def fake_add_message(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(runner.store, "save_agent_usage_event", fake_save_usage)
+    monkeypatch.setattr(runner.store, "add_message", fake_add_message)
+
+    usage = SimpleNamespace(
+        input_tokens=1200,
+        output_tokens=300,
+        cache_read_tokens=800,
+        cache_write_tokens=25,
+        requests=2,
+        tool_calls=5,
+    )
+    choice = SimpleNamespace(provider="deepseek", model="deepseek-v4-pro")
+    deps = make_agent_deps(user_id="user_1", conversation_id="conv_1")
+
+    events = [
+        _parse_sse(raw)
+        async for raw in runner._persist_and_done(
+            deps,
+            "Done.",
+            choice,
+            Tier.MEDIUM,
+            "user_1",
+            "conv_1",
+            usage=usage,
+            attempt_id="attempt_1",
+            run_id="run_1",
+        )
+    ]
+
+    assert events[-1][0] == "done"
+    assert recorded == [
+        (
+            "user_1",
+            {
+                "run_id": "run_1",
+                "conversation_id": "conv_1",
+                "provider": "deepseek",
+                "model": "deepseek-v4-pro",
+                "tier": "medium",
+                "input_tokens": 1200,
+                "output_tokens": 300,
+                "cache_read_tokens": 800,
+                "cache_write_tokens": 25,
+                "model_requests": 2,
+                "tool_calls": 5,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_usage_persist_failure_does_not_break_done_event(monkeypatch, make_agent_deps):
+    async def fail_usage(*_args, **_kwargs):
+        raise RuntimeError("firestore unavailable")
+
+    async def fake_add_message(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(runner.store, "save_agent_usage_event", fail_usage)
+    monkeypatch.setattr(runner.store, "add_message", fake_add_message)
+
+    usage = SimpleNamespace(
+        input_tokens=1,
+        output_tokens=2,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+        requests=1,
+        tool_calls=0,
+    )
+    choice = SimpleNamespace(provider="openai", model="gpt-5-mini")
+    deps = make_agent_deps(user_id="user_1", conversation_id="conv_1")
+
+    events = [
+        _parse_sse(raw)
+        async for raw in runner._persist_and_done(
+            deps,
+            "Done.",
+            choice,
+            Tier.SIMPLE,
+            "user_1",
+            "conv_1",
+            usage=usage,
+            attempt_id="attempt_1",
+        )
+    ]
+
+    assert events[-1][0] == "done"
+
+
+@pytest.mark.asyncio
 async def test_runner_reports_model_config_error(monkeypatch):
     from src.agent.provider_factory import UnsupportedProviderError
 

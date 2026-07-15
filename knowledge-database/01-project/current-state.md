@@ -60,11 +60,16 @@ once bu not ve kaynak kod esas alinmalidir.
 - Gmail send workflow'lari `to`, `subject`, `message` runtime input schema'si
   ile tekrar kullanilabilir sekilde calistirilabiliyor; dashboard ve agent ayni
   run endpoint'ini kullaniyor.
+- Tamamlanan agent run'larinin input/output/cache token, model request ve tool
+  call sayilari `users/{uid}/usage_events` altinda immutable/idempotent event
+  olarak kaydediliyor. `/dashboard/usage`, gercek `/api/usage` ozetiyle son 24
+  saat, 7, 30 veya 90 gunu ve provider/model/tier kirilimini gosteriyor.
 
 ## Stub veya Mock Olanlar
 
-- Usage sayfasi mock plan/usage sayaclari kullaniyor; sahte execution history
-  kaldirildi ve gercek gecmis [[execution-history]] altina tasindi.
+- Plan, kredi, kota ve billing enforcement henuz yoktur. Usage token takibi
+  gercektir; router cagrilari, basarisiz retry attempt'lari ve iptal edilen
+  run'lar bu ilk gozlem kapsaminda degildir.
 - Settings icindeki profile, password ve preferences kaydetme aksiyonlari tam
   backend entegrasyonuna sahip degil.
 - Sidebar kullanici bilgisi bazi yerlerde mock.

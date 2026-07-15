@@ -210,6 +210,7 @@ async def run(
     )
     if run_session is not None:
         bind_log_context(run_id=run_session.run_id)
+    usage_run_id = run_session.run_id if run_session is not None else uuid4().hex
     completed = False
     terminal_status = "error"
     try:
@@ -219,6 +220,7 @@ async def run(
             messages,
             user_prompt=user_prompt,
             message_history=message_history,
+            run_id=usage_run_id,
         ):
             yield event
         completed = True
@@ -250,6 +252,7 @@ async def _run_agent_stream(
     *,
     user_prompt: str,
     message_history: list[ModelMessage],
+    run_id: str,
 ) -> AsyncIterator[str]:
     """Internal stream implementation owned by the outer run-log lifecycle."""
 
@@ -314,6 +317,7 @@ async def _run_agent_stream(
             user_id=user_id,
             conv_id=conv_id,
             initial_attempt_id=initial_attempt_id,
+            run_id=run_id,
         )
     else:
         stream = _run_live(
@@ -327,6 +331,7 @@ async def _run_agent_stream(
             user_id=user_id,
             conv_id=conv_id,
             attempt_id=initial_attempt_id,
+            run_id=run_id,
         )
     async for sse in stream:
         yield sse
@@ -344,6 +349,7 @@ async def _run_live(
     user_id: str,
     conv_id: str,
     attempt_id: str,
+    run_id: str | None = None,
 ) -> AsyncIterator[str]:
     """Stream a single agent run live to the client (non-DeepSeek path)."""
 
@@ -470,6 +476,7 @@ async def _run_live(
         usage=usage,
         steps=assembler.steps(),
         attempt_id=attempt_id,
+        run_id=run_id,
     ):
         yield sse
 
@@ -485,6 +492,7 @@ async def _persist_and_done(
     usage=None,
     steps: list[dict] | None = None,
     attempt_id: str | None = None,
+    run_id: str | None = None,
 ) -> AsyncIterator[str]:
     """Log usage, persist the assistant message + artifacts, emit the done event."""
 
@@ -516,6 +524,30 @@ async def _persist_and_done(
         attachment_types=attachment_types,
         **usage_fields,
     )
+
+    if usage_fields:
+        try:
+            await store.save_agent_usage_event(
+                user_id,
+                run_id=run_id or attempt_id or uuid4().hex,
+                conversation_id=conv_id,
+                provider=choice.provider,
+                model=choice.model,
+                tier=tier.value,
+                input_tokens=usage_fields["tok_in"],
+                output_tokens=usage_fields["tok_out"],
+                cache_read_tokens=usage_fields["tok_cache_read"],
+                cache_write_tokens=usage_fields["tok_cache_write"],
+                model_requests=usage_fields["model_requests"],
+                tool_calls=usage_fields["usage_tool_calls"],
+            )
+        except Exception as exc:
+            # Usage observability must never break a successful chat response.
+            log.warning(
+                "agent_usage_persist_error",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
 
     persist_steps = steps if steps and len(steps) > 1 else None
     if persist_steps:
@@ -757,6 +789,7 @@ async def _run_guarded_with_retry(
     user_id: str,
     conv_id: str,
     initial_attempt_id: str,
+    run_id: str | None = None,
 ) -> AsyncIterator[str]:
     """DeepSeek path: live stream each attempt and explicitly reset on retry."""
 
@@ -792,6 +825,7 @@ async def _run_guarded_with_retry(
                 usage=usage,
                 steps=steps,
                 attempt_id=attempt_id,
+                run_id=run_id,
             ):
                 yield sse
             return
@@ -837,6 +871,7 @@ async def _run_guarded_with_retry(
                 user_id,
                 conv_id,
                 attempt_id=attempt_id,
+                run_id=run_id,
             ):
                 yield sse
             return
