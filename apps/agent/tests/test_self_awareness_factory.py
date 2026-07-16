@@ -1,6 +1,7 @@
 """Tests that factory.py wires the static self-knowledge profile and the dynamic
 per-conversation platform state into the agent's instructions."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,6 +9,7 @@ from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from src.agent.platform_state import ConnectionSummary, UserPlatformState
+from src.agent.tools import factory
 from src.agent.tools.factory import base_instructions
 
 
@@ -16,6 +18,36 @@ def test_base_instructions_merges_system_prompt_and_static_profile():
     assert "You are Conduut" in text  # SYSTEM_PROMPT anchor
     assert "=== Platform self-knowledge ===" in text  # static profile anchor
     assert "batch" in text and "dashboard" in text  # capability anchors
+    assert "Configured workflow timezone: Europe/Istanbul" in text
+    assert "Never speculate" in text
+
+
+def test_base_instructions_uses_runtime_workflow_timezone(monkeypatch):
+    monkeypatch.setattr(factory.settings, "workflow_timezone", "Asia/Tokyo")
+
+    text = base_instructions()
+
+    assert "Configured workflow timezone: Asia/Tokyo" in text
+    assert "Configured workflow timezone: Europe/Istanbul" not in text
+
+
+def test_workflow_result_exposes_effective_timezone():
+    workflow = SimpleNamespace(id="wf1", name="Reminder", active=True)
+
+    result = factory._workflow_result_with_readiness(
+        workflow,
+        {"missing_count": 0},
+        timezone="Europe/Istanbul",
+    )
+
+    assert result["timezone"] == "Europe/Istanbul"
+
+
+def test_existing_workflow_timezone_is_authoritative(monkeypatch):
+    monkeypatch.setattr(factory.settings, "workflow_timezone", "Europe/Istanbul")
+
+    assert factory._effective_workflow_timezone({"settings": {"timezone": "UTC"}}) == "UTC"
+    assert factory._effective_workflow_timezone({"settings": None}) == "Europe/Istanbul"
 
 
 def test_agent_deps_accepts_platform_state(make_agent_deps):
@@ -77,3 +109,4 @@ async def test_dynamic_instructions_reach_model_via_real_agent(make_agent_deps):
     assert "Platform self-knowledge" in instructions, (
         "static self-knowledge profile missing from model input"
     )
+    assert "Configured workflow timezone: Europe/Istanbul" in instructions

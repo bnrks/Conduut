@@ -14,6 +14,14 @@ class _FakeResp:
         return None
 
 
+class _JsonResp(_FakeResp):
+    def __init__(self, payload):
+        self.payload = payload
+
+    def json(self):
+        return self.payload
+
+
 def _patch(monkeypatch, node):
     captured: dict = {}
 
@@ -73,6 +81,162 @@ async def test_attach_without_generic_auth_keeps_parameters(monkeypatch):
     assert "authentication" not in put_node["parameters"]
     assert "genericAuthType" not in put_node["parameters"]
     assert put_node["credentials"]["gmailOAuth2"] == {"id": "c2", "name": "Google"}
+
+
+async def test_workflow_settings_injects_default_timezone(monkeypatch):
+    monkeypatch.setattr(n8n_client.settings, "workflow_timezone", "Europe/Istanbul", raising=False)
+
+    assert n8n_client._workflow_settings({"saveExecutionProgress": True}) == {
+        "saveExecutionProgress": True,
+        "executionOrder": "v1",
+        "timezone": "Europe/Istanbul",
+    }
+
+
+async def test_workflow_settings_preserves_explicit_timezone(monkeypatch):
+    monkeypatch.setattr(n8n_client.settings, "workflow_timezone", "Europe/Istanbul", raising=False)
+
+    assert n8n_client._workflow_settings({"timezone": "UTC"})["timezone"] == "UTC"
+
+
+async def test_attach_same_credential_is_noop(monkeypatch):
+    workflow = {
+        "id": "wf1",
+        "name": "WF",
+        "active": True,
+        "nodes": [
+            {
+                "name": "Gmail",
+                "parameters": {},
+                "credentials": {"gmailOAuth2": {"id": "c2", "name": "Old name"}},
+            }
+        ],
+        "connections": {},
+        "settings": {"executionOrder": "v1"},
+    }
+
+    async def fake_get_workflow(_workflow_id):
+        return workflow
+
+    async def fail_request(*_args, **_kwargs):
+        raise AssertionError("same credential must not PUT or cycle activation")
+
+    monkeypatch.setattr(n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(n8n_client, "_request", fail_request)
+
+    result = await n8n_client.attach_credential_to_workflow(
+        "wf1", "Gmail", "gmailOAuth2", "c2", "New name"
+    )
+
+    assert result is workflow
+
+
+async def test_attach_different_credential_reregisters_active_workflow(monkeypatch):
+    workflow = {
+        "id": "wf1",
+        "name": "WF",
+        "active": True,
+        "nodes": [
+            {
+                "name": "Gmail",
+                "parameters": {},
+                "credentials": {"gmailOAuth2": {"id": "stale", "name": "Stale"}},
+            }
+        ],
+        "connections": {},
+        "settings": {"executionOrder": "v1", "timezone": "Europe/Istanbul"},
+    }
+    calls: list[tuple[str, str]] = []
+
+    async def fake_get_workflow(_workflow_id):
+        return workflow
+
+    async def fake_request(method, path, **_kwargs):
+        calls.append((method, path))
+        if method == "PUT":
+            return _JsonResp({**workflow, "nodes": workflow["nodes"]})
+        return _JsonResp({})
+
+    monkeypatch.setattr(n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(n8n_client, "_request", fake_request)
+
+    await n8n_client.attach_credential_to_workflow("wf1", "Gmail", "gmailOAuth2", "fresh", "Fresh")
+
+    assert calls == [
+        ("PUT", "/workflows/wf1"),
+        ("POST", "/workflows/wf1/deactivate"),
+        ("POST", "/workflows/wf1/activate"),
+    ]
+    assert workflow["nodes"][0]["credentials"]["gmailOAuth2"]["id"] == "fresh"
+
+
+async def test_update_active_workflow_puts_then_reregisters(monkeypatch):
+    calls: list[tuple[str, str]] = []
+
+    async def fake_get_workflow(_workflow_id):
+        return {"id": "wf1", "active": True}
+
+    async def fake_request(method, path, **_kwargs):
+        calls.append((method, path))
+        if method == "PUT":
+            return _JsonResp({"id": "wf1", "name": "Updated", "active": True})
+        return _JsonResp({})
+
+    monkeypatch.setattr(n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(n8n_client, "_request", fake_request)
+
+    result = await n8n_client.update_workflow("wf1", "Updated", [], {})
+
+    assert result.active is True
+    assert calls == [
+        ("PUT", "/workflows/wf1"),
+        ("POST", "/workflows/wf1/deactivate"),
+        ("POST", "/workflows/wf1/activate"),
+    ]
+
+
+async def test_update_inactive_workflow_does_not_cycle_activation(monkeypatch):
+    calls: list[tuple[str, str]] = []
+
+    async def fake_get_workflow(_workflow_id):
+        return {"id": "wf1", "active": False}
+
+    async def fake_request(method, path, **_kwargs):
+        calls.append((method, path))
+        return _JsonResp({"id": "wf1", "name": "Updated", "active": False})
+
+    monkeypatch.setattr(n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(n8n_client, "_request", fake_request)
+
+    result = await n8n_client.update_workflow("wf1", "Updated", [], {})
+
+    assert result.active is False
+    assert calls == [("PUT", "/workflows/wf1")]
+
+
+async def test_update_does_not_reactivate_after_concurrent_deactivation(monkeypatch):
+    calls: list[tuple[str, str]] = []
+    snapshots = iter(
+        [
+            {"id": "wf1", "active": True},
+            {"id": "wf1", "active": False},
+        ]
+    )
+
+    async def fake_get_workflow(_workflow_id):
+        return next(snapshots)
+
+    async def fake_request(method, path, **_kwargs):
+        calls.append((method, path))
+        return _JsonResp({"id": "wf1", "name": "Updated", "active": True})
+
+    monkeypatch.setattr(n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(n8n_client, "_request", fake_request)
+
+    result = await n8n_client.update_workflow("wf1", "Updated", [], {})
+
+    assert result.active is False
+    assert calls == [("PUT", "/workflows/wf1")]
 
 
 async def test_call_webhook_uses_long_timeout_for_llm_workflows(monkeypatch):

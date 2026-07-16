@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     # n8n
     n8n_url: str = "http://localhost:6180"
     n8n_api_key: str = ""
+    # User-facing schedule times are stored in this workflow timezone. Keeping
+    # it explicit prevents n8n's America/New_York default from silently shifting
+    # schedules when the model writes the user's local clock time.
+    workflow_timezone: str = "Europe/Istanbul"
 
     # OAuth broker
     public_web_url: str = "http://localhost:3000"

@@ -43,3 +43,7 @@ def test_key_for_provider_raises_when_unset(monkeypatch):
 def test_key_for_provider_rejects_unknown_provider():
     with pytest.raises(ValueError):
         key_for_provider("cohere")
+
+
+def test_workflow_timezone_defaults_to_istanbul():
+    assert settings.workflow_timezone == "Europe/Istanbul"

@@ -199,6 +199,24 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
   eski `$json.to`/`$json.subject`/`$json.message` formu korunur.
 - Credential isteyen node'larda eksik credential varsa chat'e
   `credential_request` attachment gelir.
+- Managed Gmail/Sheets credential node'a ayni credential ID'siyle zaten bagliysa
+  readiness mutasyonsuz no-op yapar; `before_mutation` ve n8n workflow `PUT`
+  cagrilmaz. Credential gercekten degisirse workflow yazilir. Aktif workflow'a
+  yapilan gercek `PUT` sonrasi n8n cron/trigger kaydini korumak icin client,
+  guncel active durumunu tekrar okur; kullanici bu arada kapatmadiysa
+  `deactivate -> activate` dongusuyle yeniden registration yapar.
+- Schedule Trigger saatleri kullanicinin yerel duvar saati olarak yazilir;
+  agent UTC donusumu yapmaz. `CONDUUT_WORKFLOW_TIMEZONE` ve workflow
+  `settings.timezone` varsayilani `Europe/Istanbul`; local n8n instance da
+  `GENERIC_TIMEZONE`/`TZ` ile ayni degeri kullanir. Schedule field/interval,
+  saat/dakika ve custom cron'un alti alanli expression shape'i n8n'e yazilmadan
+  once validator'da kontrol edilir. Scheduled calisma kaniti `triggerCount` veya
+  `recurrenceRules` degil, gercek execution kaydidir.
+- Agent system instruction'i etkin `CONDUUT_WORKFLOW_TIMEZONE` degerini runtime'da
+  acikca tasir. Mevcut workflow icin `get_workflow.settings.timezone` otoritedir;
+  create/update tool sonucu da etkin `timezone` degerini modele dondurur. Bu nedenle
+  agent host OS veya UTC execution timestamp'lerinden hareketle "sistem UTC ise"
+  varsayimi yapmaz.
 - Gmail message/thread/label `get` ve `getAll` operasyonlari icin
   `gmail.message.read`, send/reply/create operasyonlari icin
   `gmail.message.send`, organize/mark/trash operasyonlari icin

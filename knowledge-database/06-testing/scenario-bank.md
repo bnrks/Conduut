@@ -176,7 +176,13 @@ geçirmelidir → genellik guard'ının canlı örneği.
   execution geçmişini kendi okuyup hatayı teşhis etti ve workflow'u yerinde
   düzeltti. Executions üzerinden agent self-debug beklenen ürün davranışı olarak
   kabul edildi; bu tekil doğal-dil sütun adları için ek hard-code uygulanmadı.
-- **SONRAKİ: [[scenario-e3-schedule-gmail-reminder]] testi.**
+- **E3 — GEÇTİ ✅ (2026-07-16):** Task yeniden verildi; yeni workflow
+  `1je2tNOr2F50rNbw` aktif ve `settings.timezone=Europe/Istanbul`. Günlük 13:45
+  Schedule Trigger, execution `#300` ile 13:45:32 Türkiye saatinde çalıştı.
+  Schedule ve Gmail send node'ları hatasız tamamlandı; Gmail çıktısı gerçek
+  message/thread ID ve `SENT` etiketi döndürdü. Önceki iki reminder workflow'u
+  hâlâ aktif olduğundan ayrıca mail üretebilir; kullanıcı onayı olmadan kapatılmadı.
+- **SONRAKİ: [[scenario-m1-sheets-filter-email]].**
 - Yeniden test sırası: **E1 → E2 → E3 → M1 → M2 → M3 → H1 → H2 → H3**.
 
 ## Güncelleme kuralı

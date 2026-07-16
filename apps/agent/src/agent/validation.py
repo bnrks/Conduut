@@ -514,6 +514,125 @@ def _normalize_google_sheets_node(data: dict[str, Any]) -> None:
         parameters["resource"] = "sheet"
 
 
+def _integer_in_range(value: Any, minimum: int, maximum: int) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and minimum <= value <= maximum
+
+
+def _validate_schedule_trigger_node(node: Mapping[str, Any], label: str) -> list[str]:
+    """Validate the Schedule Trigger shape before n8n activation.
+
+    n8n accepts workflow PUTs containing malformed schedule rules and only
+    reports ``Invalid interval`` during activation. Catching the exact rule
+    here sends the model through ModelRetry before any external mutation.
+    """
+
+    if node.get("type") != "n8n-nodes-base.scheduleTrigger":
+        return []
+
+    errors: list[str] = []
+    parameters = node.get("parameters")
+    rule = parameters.get("rule") if isinstance(parameters, Mapping) else None
+    intervals = rule.get("interval") if isinstance(rule, Mapping) else None
+    if not isinstance(intervals, list) or not intervals:
+        return [
+            f"Schedule Trigger node '{label}' must define "
+            "parameters.rule.interval with at least one trigger rule"
+        ]
+
+    allowed_fields = {"seconds", "minutes", "hours", "days", "weeks", "months", "cronExpression"}
+    interval_ranges: dict[str, tuple[str, int, int | None]] = {
+        "seconds": ("secondsInterval", 1, 59),
+        "minutes": ("minutesInterval", 1, 59),
+        "hours": ("hoursInterval", 1, 23),
+        "days": ("daysInterval", 1, 31),
+        # n8n's schema sets no upper bound for week/month intervals.
+        "weeks": ("weeksInterval", 1, None),
+        "months": ("monthsInterval", 1, None),
+    }
+
+    for index, interval in enumerate(intervals, start=1):
+        item_label = f"{label} rule {index}"
+        if not isinstance(interval, Mapping):
+            errors.append(f"Schedule Trigger '{item_label}' must be an object")
+            continue
+
+        field = interval.get("field")
+        if field not in allowed_fields:
+            errors.append(
+                f"Schedule Trigger '{item_label}' field must be one of "
+                "seconds, minutes, hours, days, weeks, months, cronExpression; "
+                f"got {field!r}"
+            )
+            continue
+
+        if field == "cronExpression":
+            expression = interval.get("expression")
+            if not isinstance(expression, str) or not expression.strip():
+                errors.append(
+                    f"Schedule Trigger '{item_label}' cronExpression requires "
+                    "a non-empty expression"
+                )
+            else:
+                cron_fields = expression.split()
+                valid_tokens = all(
+                    re.fullmatch(r"[A-Za-z0-9*/?,#LW-]+", token) for token in cron_fields
+                )
+                if len(cron_fields) != 6 or not valid_tokens:
+                    errors.append(
+                        f"Schedule Trigger '{item_label}' cronExpression must contain "
+                        "six valid cron fields (second minute hour day month weekday)"
+                    )
+            continue
+
+        interval_name, minimum, maximum = interval_ranges[str(field)]
+        interval_value = interval.get(interval_name, 1)
+        interval_is_valid = (
+            isinstance(interval_value, int)
+            and not isinstance(interval_value, bool)
+            and interval_value >= minimum
+            and (maximum is None or interval_value <= maximum)
+        )
+        if not interval_is_valid:
+            range_text = f"from {minimum} to {maximum}" if maximum is not None else f">= {minimum}"
+            errors.append(
+                f"Schedule Trigger '{item_label}' {interval_name} must be an integer {range_text}"
+            )
+
+        if field in {"days", "weeks", "months"}:
+            hour = interval.get("triggerAtHour", 0)
+            if not _integer_in_range(hour, 0, 23):
+                errors.append(
+                    f"Schedule Trigger '{item_label}' triggerAtHour must be an integer from 0 to 23"
+                )
+        if field in {"hours", "days", "weeks", "months"}:
+            minute = interval.get("triggerAtMinute", 0)
+            if not _integer_in_range(minute, 0, 59):
+                errors.append(
+                    f"Schedule Trigger '{item_label}' triggerAtMinute must be an integer "
+                    "from 0 to 59"
+                )
+        if field == "weeks":
+            weekdays = interval.get("triggerAtDay", [0])
+            if (
+                not isinstance(weekdays, list)
+                or not weekdays
+                or any(not _integer_in_range(day, 0, 6) for day in weekdays)
+            ):
+                errors.append(
+                    f"Schedule Trigger '{item_label}' triggerAtDay must contain weekday "
+                    "integers from 0 to 6"
+                )
+        if field == "months":
+            day_of_month = interval.get("triggerAtDayOfMonth", 1)
+            if not _integer_in_range(day_of_month, 1, 31):
+                errors.append(
+                    f"Schedule Trigger '{item_label}' triggerAtDayOfMonth must be an integer "
+                    "from 1 to 31"
+                )
+
+    return errors
+
+
 def validate_workflow_payload(
     nodes: Sequence[WorkflowNode | Mapping[str, Any]],
     connections: Mapping[str, Any] | None,
@@ -592,6 +711,7 @@ def validate_workflow_payload(
             errors.append(f"Node '{label}' parameters must be an object")
 
         errors.extend(_validate_set_node(node, label))
+        errors.extend(_validate_schedule_trigger_node(node, label))
         errors.extend(_validate_gmail_node(node, label))
         errors.extend(_validate_google_sheets_node(node, label))
         errors.extend(_validate_input_expressions(node, label))

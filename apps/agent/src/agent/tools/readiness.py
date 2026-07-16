@@ -219,6 +219,13 @@ async def _attach_managed_connection_if_available(
     if not node_name:
         return False
 
+    existing_credential = node.get("credentials", {}).get(credential_type, {})
+    if (
+        isinstance(existing_credential, dict)
+        and str(existing_credential.get("id") or "") == connection.n8n_credential_id
+    ):
+        return True
+
     if before_mutation:
         before_mutation()
     await n8n_client.attach_credential_to_workflow(
@@ -688,8 +695,8 @@ async def _emit_missing_credentials(
     """
 
     before_mutation = (
-        lambda: ctx.deps.mark_replay_unsafe(replay_unsafe_tool)
-    ) if replay_unsafe_tool else None
+        (lambda: ctx.deps.mark_replay_unsafe(replay_unsafe_tool)) if replay_unsafe_tool else None
+    )
     readiness = await analyze_workflow_readiness_payload(
         workflow,
         user_id=ctx.deps.user_id,

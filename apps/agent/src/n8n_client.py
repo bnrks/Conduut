@@ -176,10 +176,36 @@ async def get_workflow(workflow_id: str) -> dict:
     return r.json()
 
 
-def _workflow_settings(settings: dict[str, Any] | None = None) -> dict[str, Any]:
-    merged = dict(settings or {})
+def _workflow_settings(workflow_settings: dict[str, Any] | None = None) -> dict[str, Any]:
+    merged = dict(workflow_settings or {})
     merged.setdefault("executionOrder", "v1")
+    merged.setdefault("timezone", settings.workflow_timezone)
     return merged
+
+
+async def _put_workflow_preserving_activation(
+    workflow_id: str,
+    payload: dict[str, Any],
+    *,
+    was_active: bool,
+) -> dict[str, Any]:
+    """Update a workflow and restore n8n's trigger registration when active."""
+
+    r = await _request("PUT", f"/workflows/{workflow_id}", json=payload)
+    _raise_for_status(r)
+    updated = r.json()
+    if was_active:
+        # Re-read after the PUT: a user may have explicitly deactivated the
+        # workflow after our initial snapshot. Do not overwrite that newer
+        # intent merely to repair trigger registration.
+        latest = await get_workflow(workflow_id)
+        if not latest.get("active", False):
+            updated["active"] = False
+            return updated
+        await deactivate_workflow(workflow_id)
+        await activate_workflow(workflow_id)
+        updated["active"] = True
+    return updated
 
 
 async def create_workflow(
@@ -214,19 +240,23 @@ async def update_workflow(
     connections: dict,
     settings: dict[str, Any] | None = None,
 ) -> N8nWorkflow:  # noqa: E501
+    current = await get_workflow(workflow_id)
+    was_active = bool(current.get("active", False))
     payload = {
         "name": name,
         "nodes": nodes,
         "connections": connections,
         "settings": _workflow_settings(settings),
     }
-    r = await _request("PUT", f"/workflows/{workflow_id}", json=payload)
-    _raise_for_status(r)
-    w = r.json()
+    w = await _put_workflow_preserving_activation(
+        workflow_id,
+        payload,
+        was_active=was_active,
+    )
     return N8nWorkflow(
         id=w["id"],
         name=w["name"],
-        active=w.get("active", False),
+        active=bool(w.get("active", False)),
         created_at=w.get("createdAt", ""),
         updated_at=w.get("updatedAt", ""),
     )
@@ -324,6 +354,19 @@ async def attach_credential_to_workflow(
     matched = False
     for node in nodes:
         if node.get("name") == node_name:
+            existing_credential = node.get("credentials", {}).get(credential_type, {})
+            same_credential = (
+                isinstance(existing_credential, dict)
+                and str(existing_credential.get("id") or "") == credential_id
+            )
+            parameters = node.get("parameters", {})
+            generic_auth_configured = not generic_auth_type or (
+                isinstance(parameters, dict)
+                and parameters.get("authentication") == "genericCredentialType"
+                and parameters.get("genericAuthType") == generic_auth_type
+            )
+            if same_credential and generic_auth_configured:
+                return workflow
             if generic_auth_type:
                 params = node.setdefault("parameters", {})
                 params["authentication"] = "genericCredentialType"
@@ -339,11 +382,13 @@ async def attach_credential_to_workflow(
         "name": workflow.get("name", "Workflow"),
         "nodes": nodes,
         "connections": workflow.get("connections", {}),
-        "settings": workflow.get("settings") or {"executionOrder": "v1"},
+        "settings": _workflow_settings(workflow.get("settings")),
     }
-    r = await _request("PUT", f"/workflows/{workflow_id}", json=payload)
-    _raise_for_status(r)
-    return r.json()
+    return await _put_workflow_preserving_activation(
+        workflow_id,
+        payload,
+        was_active=bool(workflow.get("active", False)),
+    )
 
 
 # ---------------------------------------------------------------------------

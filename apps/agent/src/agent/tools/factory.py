@@ -50,6 +50,7 @@ from src.agent.tools.runtime_inputs import (
     _workflow_input_schema_from_metadata,
 )
 from src.agent.tools.workflow_runner import execution_retry_guard, run_workflow_with_input
+from src.config import settings
 from src.platforms.actions import run_platform_action_payload
 from src.registry import registry
 
@@ -85,10 +86,20 @@ def _log_tool_finished(tool: str, started_at: float, result: Any) -> None:
     )
 
 
-def _workflow_result_with_readiness(workflow: Any, readiness: dict[str, Any]) -> dict[str, Any]:
+def _workflow_result_with_readiness(
+    workflow: Any,
+    readiness: dict[str, Any],
+    *,
+    timezone: str,
+) -> dict[str, Any]:
     """Build a create/update result, surfacing missing creds or reuse suggestions."""
 
-    base: dict[str, Any] = {"id": workflow.id, "name": workflow.name, "active": workflow.active}
+    base: dict[str, Any] = {
+        "id": workflow.id,
+        "name": workflow.name,
+        "active": workflow.active,
+        "timezone": timezone,
+    }
     missing_count = readiness.get("missing_count", 0)
     suggestions = readiness.get("reuse_candidates", [])
     research = readiness.get("research_candidates", [])
@@ -105,6 +116,17 @@ def _workflow_result_with_readiness(workflow: Any, readiness: dict[str, Any]) ->
     else:
         base["instruction"] = _missing_credentials_instruction()
     return base
+
+
+def _effective_workflow_timezone(workflow: dict[str, Any]) -> str:
+    """The timezone n8n will use for this workflow's Schedule Triggers."""
+
+    workflow_settings = workflow.get("settings")
+    if isinstance(workflow_settings, dict):
+        explicit_timezone = workflow_settings.get("timezone")
+        if isinstance(explicit_timezone, str) and explicit_timezone.strip():
+            return explicit_timezone.strip()
+    return settings.workflow_timezone
 
 
 def _should_run_sandbox_test(result: dict[str, Any], *, awaiting: bool) -> bool:
@@ -202,10 +224,19 @@ def _normalized_user_input_request(
 
 
 def base_instructions() -> str:
-    """SYSTEM_PROMPT plus the static platform self-knowledge — a constant,
-    cache-friendly instructions prefix. The dynamic per-user state is added
-    separately by the agent's @instructions hook."""
-    return SYSTEM_PROMPT + "\n\n" + render_static_profile()
+    """System prompt, platform profile, and authoritative runtime configuration."""
+
+    schedule_runtime = (
+        "=== Runtime scheduling facts ===\n"
+        f"- Configured workflow timezone: {settings.workflow_timezone}.\n"
+        "- New workflows are written with this exact settings.timezone value.\n"
+        "- For an existing workflow, get_workflow.settings.timezone is authoritative; "
+        "if it is absent, the configured workflow timezone above applies.\n"
+        "- Host OS timezone and UTC-formatted execution timestamps do not change the "
+        "Schedule Trigger wall-clock timezone. Never speculate with phrases such as "
+        "'if the system uses UTC' and never convert the user's requested time to UTC."
+    )
+    return SYSTEM_PROMPT + "\n\n" + render_static_profile() + "\n\n" + schedule_runtime
 
 
 def create_agent(model: Any) -> Agent[AgentDeps, str]:
@@ -486,7 +517,12 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         )
         full_workflow = await n8n_client.get_workflow(workflow.id)
         readiness = await _emit_missing_credentials(ctx, full_workflow)
-        result = _workflow_result_with_readiness(workflow, readiness)
+        workflow_timezone = _effective_workflow_timezone(full_workflow)
+        result = _workflow_result_with_readiness(
+            workflow,
+            readiness,
+            timezone=workflow_timezone,
+        )
         if _should_run_sandbox_test(result, awaiting=ctx.deps.awaiting_user_input):
             # Lazy import: tools/__init__ imports factory, and sandbox_gate
             # imports back into the tools package — importing it here (not at
@@ -568,7 +604,12 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         )
         full_workflow = await n8n_client.get_workflow(workflow.id)
         readiness = await _emit_missing_credentials(ctx, full_workflow)
-        result = _workflow_result_with_readiness(workflow, readiness)
+        workflow_timezone = _effective_workflow_timezone(full_workflow)
+        result = _workflow_result_with_readiness(
+            workflow,
+            readiness,
+            timezone=workflow_timezone,
+        )
         if _should_run_sandbox_test(result, awaiting=ctx.deps.awaiting_user_input):
             # Lazy import: tools/__init__ imports factory, and sandbox_gate
             # imports back into the tools package — importing it here (not at

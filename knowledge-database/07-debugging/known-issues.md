@@ -7,6 +7,48 @@ Bu not, repo icinde gorulen bilinen sorunlari ve dikkat noktalarini toplar.
 Kullanicinin yeni fark ettigi ve henuz triage edilmemis sorun/bug notlari icin
 ayri alan: [[issue-backlog]].
 
+## Aktif Schedule workflow PUT sonrasi cron kaydini kaybediyordu (2026-07-15, cozuldu; canli trigger dogrulandi)
+
+**Belirti:** [[scenario-e3-schedule-gmail-reminder]] workflow'u
+`VN8xNT2hS17Mff63` aktif ve `Schedule -> Gmail` yapisi dogru gorunmesine ragmen
+belirlenen saatte calismadi; execution listesi tamamen bostu. Agent once
+`triggerCount=1` degerini bir execution sanip, sonra normal olabilen
+`staticData.recurrenceRules=[]` alanini hata diye yorumladi.
+
+**Kok neden:** n8n `1.121.3`, aktif workflow'a public API `PUT` geldiginde cron
+kaydini deregister ediyor fakat workflow `active=true` gorunebiliyor.
+`readiness._attach_managed_connection_if_available` node'da ayni managed Gmail
+credential ID'si zaten bagli olsa bile `attach_credential_to_workflow` cagirip
+ikinci bir `PUT` uretiyordu. Bu cagri, agent'in yaptigi `deactivate -> activate`
+onarimindan sonra bile cron'u tekrar kaldirdi. Ayri olarak workflow/instance
+timezone'u acik degildi; n8n varsayilani `America/New_York` iken agent
+kullanicinin Turkiye saatini UTC'ye elle cevirerek ikinci bir saat kaymasi
+uretti. Schedule interval shape'i de Conduut validator'inda denetlenmedigi icin
+iki `Invalid interval` hatasi ancak aktivasyonda goruldu.
+
+**Duzeltme:** Managed credential attach ayni credential ID'sinde mutasyonsuz
+no-op. `n8n_client` gercek workflow `PUT` islemlerinde onceki durum aktifse
+basarili yazimdan sonra active durumunu tekrar okuyup, kullanici bu arada
+kapatmadiysa `deactivate -> activate` ile trigger kaydini yeniliyor; credential
+attach katmaninda da ayni-ID no-op savunmasi var.
+`CONDUUT_WORKFLOW_TIMEZONE` varsayilani ve n8n `GENERIC_TIMEZONE`/`TZ`
+`Europe/Istanbul`; workflow settings explicit timezone tasiyor. Schedule Trigger
+field/interval/saat/dakika ve alti alanli cron expression shape'i yazimdan once
+validate ediliyor. Agent
+prompt'u saati UTC'ye cevirmemeyi ve yalniz execution kaydini calisma kaniti
+saymayi belirtiyor.
+
+**Kanit:** Aktifken ayni yeni kod yoluyla guncellenen
+`[conduut-test] Schedule lifecycle proof`, `Europe/Istanbul` 23:05'te execution
+`#295` (`mode=trigger`, `status=success`) uretti ve beklenen `schedule lifecycle
+proof` ciktisini verdi; test workflow'u sonra silindi. Ayni Gmail credential
+attach cagrisi `updatedAt` degerini degistirmedi, yani readiness artik gereksiz
+`PUT` uretmiyor. Final [[scenario-e3-schedule-gmail-reminder]] rerun'inda yeni
+workflow `1je2tNOr2F50rNbw`, `Europe/Istanbul` 13:45:32'de execution `#300`
+(`mode=trigger`, `status=success`) uretti. Schedule ve Gmail send node'lari
+hatasiz tamamlandi; Gmail ciktisi gercek message/thread ID ve `SENT` etiketi
+dondurdu. Boylece E3 2026-07-16'da kesin olarak gecti.
+
 ## Google Sheets append `mappingMode=define` aliası `columns.schema` olmadan çalışmaya geçti (2026-07-14, kodda çözüldü; canlı test bekliyor)
 
 **Belirti:** E2 tekrarında `N3MD03PpRP66J9zF` içindeki Google Sheets v4.7 append

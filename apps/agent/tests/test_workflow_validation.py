@@ -26,6 +26,11 @@ SCHEMAS = {
         "typeVersion": 1,
         "isTrigger": True,
     },
+    "n8n-nodes-base.scheduleTrigger": {
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.3,
+        "isTrigger": True,
+    },
     "n8n-nodes-base.set": {
         "type": "n8n-nodes-base.set",
         "typeVersion": 3.4,
@@ -78,10 +83,105 @@ def valid_nodes():
     ]
 
 
+def schedule_node(interval: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": "schedule",
+        "name": "Schedule",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.3,
+        "position": [250, 300],
+        "parameters": {"rule": {"interval": [interval]}},
+    }
+
+
 def test_valid_minimal_workflow_passes():
     errors = validate_workflow_payload(
         valid_nodes(),
         {"Manual Trigger": {"main": [[{"node": "Set", "type": "main", "index": 0}]]}},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert errors == []
+
+
+def test_valid_daily_schedule_passes():
+    errors = validate_workflow_payload(
+        [schedule_node({"field": "days", "triggerAtHour": 22, "triggerAtMinute": 20})],
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert errors == []
+
+
+def test_schedule_alias_fails_before_n8n_activation():
+    errors = validate_workflow_payload(
+        [schedule_node({"field": "daily", "triggerAtHour": 22})],
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("field must be one of" in error and "daily" in error for error in errors)
+
+
+def test_schedule_hour_and_minute_ranges_are_validated():
+    errors = validate_workflow_payload(
+        [schedule_node({"field": "days", "triggerAtHour": 24, "triggerAtMinute": 60})],
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("triggerAtHour" in error for error in errors)
+    assert any("triggerAtMinute" in error for error in errors)
+
+
+def test_schedule_month_interval_has_no_invented_upper_bound():
+    errors = validate_workflow_payload(
+        [schedule_node({"field": "months", "monthsInterval": 18})],
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert errors == []
+
+
+def test_schedule_interval_requires_rule():
+    node = schedule_node({"field": "days"})
+    node["parameters"] = {}
+
+    errors = validate_workflow_payload(
+        [node],
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("parameters.rule.interval" in error for error in errors)
+
+
+def test_schedule_cron_expression_cannot_be_empty():
+    errors = validate_workflow_payload(
+        [schedule_node({"field": "cronExpression", "expression": ""})],
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("non-empty expression" in error for error in errors)
+
+
+def test_schedule_cron_expression_requires_six_valid_fields():
+    errors = validate_workflow_payload(
+        [schedule_node({"field": "cronExpression", "expression": "not a cron"})],
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("six valid cron fields" in error for error in errors)
+
+
+def test_schedule_valid_six_field_cron_expression_passes():
+    errors = validate_workflow_payload(
+        [schedule_node({"field": "cronExpression", "expression": "0 20 22 * * *"})],
+        {},
         node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
     )
 

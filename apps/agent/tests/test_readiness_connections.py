@@ -5,6 +5,7 @@ from n8n_registry.models import CredentialTypeInfo
 
 from src import store
 from src.agent.tools import analyze_workflow_readiness_payload
+from src.agent.tools import readiness as readiness_module
 
 
 @pytest.mark.asyncio
@@ -307,6 +308,114 @@ async def test_gmail_send_readiness_replaces_stale_existing_credential(monkeypat
     assert readiness["missing_credentials"] == []
     assert attached["credential_id"] == "fresh_cred"
     assert workflow["nodes"][0]["credentials"]["gmailOAuth2"]["id"] == "fresh_cred"
+
+
+@pytest.mark.asyncio
+async def test_managed_connection_same_credential_is_noop(monkeypatch):
+    monkeypatch.setattr(
+        "src.agent.tools.registry.get_node_schema",
+        lambda node_type: (
+            {"credentials": ["gmailOAuth2"]} if node_type == "n8n-nodes-base.gmail" else None
+        ),
+    )
+
+    async def fake_get_connection(_user_id: str, _connection_id: str):
+        return store.AppConnection(
+            id="google_gmail",
+            provider="google",
+            service="gmail",
+            account_email="user@example.com",
+            google_sub="google_sub",
+            credential_type="gmailOAuth2",
+            n8n_credential_id="cred_1",
+            n8n_credential_name="Google Gmail - user@example.com - Conduut",
+            status="connected",
+            scopes=["https://www.googleapis.com/auth/gmail.send"],
+            created_at="now",
+            updated_at="now",
+        )
+
+    async def fail_attach(*_args, **_kwargs):
+        raise AssertionError("the same managed credential must not be attached again")
+
+    mutations: list[str] = []
+    monkeypatch.setattr("src.agent.tools.store.get_connection", fake_get_connection)
+    monkeypatch.setattr(
+        "src.agent.tools.n8n_client.attach_credential_to_workflow",
+        fail_attach,
+    )
+    workflow = {
+        "id": "wf_1",
+        "name": "Send mail",
+        "nodes": [
+            {
+                "name": "Gmail",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"resource": "message", "operation": "send"},
+                "credentials": {"gmailOAuth2": {"id": "cred_1", "name": "An older display name"}},
+            }
+        ],
+    }
+
+    readiness = await analyze_workflow_readiness_payload(
+        workflow,
+        user_id="user_1",
+        before_mutation=lambda: mutations.append("mutation"),
+    )
+
+    assert readiness["ready"] is True
+    assert readiness["missing_credentials"] == []
+    assert mutations == []
+
+
+@pytest.mark.asyncio
+async def test_managed_connection_different_credential_marks_mutation_before_attach(monkeypatch):
+    node = {
+        "name": "Gmail",
+        "type": "n8n-nodes-base.gmail",
+        "parameters": {"resource": "message", "operation": "send"},
+        "credentials": {"gmailOAuth2": {"id": "stale_cred", "name": "Stale"}},
+    }
+
+    async def fake_get_connection(_user_id: str, _connection_id: str):
+        return store.AppConnection(
+            id="google_gmail",
+            provider="google",
+            service="gmail",
+            account_email="user@example.com",
+            google_sub="google_sub",
+            credential_type="gmailOAuth2",
+            n8n_credential_id="fresh_cred",
+            n8n_credential_name="Fresh",
+            status="connected",
+            scopes=["https://www.googleapis.com/auth/gmail.send"],
+            created_at="now",
+            updated_at="now",
+        )
+
+    calls: list[str] = []
+
+    async def fake_attach(*_args, **_kwargs):
+        calls.append("attach")
+        return {}
+
+    monkeypatch.setattr("src.agent.tools.store.get_connection", fake_get_connection)
+    monkeypatch.setattr(
+        "src.agent.tools.n8n_client.attach_credential_to_workflow",
+        fake_attach,
+    )
+
+    attached = await readiness_module._attach_managed_connection_if_available(
+        "user_1",
+        "wf_1",
+        node,
+        "gmailOAuth2",
+        lambda: calls.append("before_mutation"),
+    )
+
+    assert attached is True
+    assert calls == ["before_mutation", "attach"]
+    assert node["credentials"]["gmailOAuth2"]["id"] == "fresh_cred"
 
 
 @pytest.mark.asyncio
