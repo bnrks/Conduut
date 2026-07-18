@@ -19,6 +19,7 @@ import {
 import { toast } from "sonner";
 import { ArtifactPreview } from "@/components/artifacts/artifact-preview";
 import { WorkflowResultView } from "@/components/dashboard/workflow-result-view";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
@@ -36,6 +37,64 @@ type StatusFilter = "all" | WorkflowStatus;
 type RunMode = "single" | "batch";
 type BatchSource = "file" | "manual";
 type BatchMappingSource = "column" | "fixed" | "none";
+type WorkflowFunctionalStatus =
+  | "verified"
+  | "no_action"
+  | "partial"
+  | "needs_attention"
+  | "failed"
+  | "unknown"
+  | "unverified";
+
+interface WorkflowAssessmentWarning {
+  code?: string;
+  severity?: string;
+  node_name?: string;
+  message?: string;
+}
+
+interface WorkflowAssessmentEvidence {
+  kind?: string;
+  node_name?: string;
+  item_count?: number;
+  receipt_count?: number;
+  nodeName?: string;
+  itemCount?: number;
+  receiptCount?: number;
+}
+
+interface WorkflowRunAssessment {
+  transport_ok?: boolean;
+  execution_ok?: boolean;
+  coverage?: "full" | "partial" | "none";
+  eligible_count?: number;
+  action_count?: number;
+  writeback_count?: number;
+  postconditions_verified?: number | boolean;
+  duplicate_risk?: boolean;
+  warnings?: (WorkflowAssessmentWarning | string)[];
+  evidence?: WorkflowAssessmentEvidence[];
+  // Legacy camelCase assessment fields kept for in-flight/older SSE payloads.
+  transportStatusCode?: number;
+  configuredMutationNodes?: string[];
+  executedMutationNodes?: string[];
+  successfulMutationNodes?: string[];
+  zeroOutputMutationNodes?: string[];
+  runDataHints?: {
+    nodeName?: string;
+    outputItemCount?: number;
+    runStatus?: string;
+    hasError?: boolean;
+  }[];
+  reasons?: string[];
+  transportOk?: boolean;
+  executionOk?: boolean;
+  eligibleCount?: number;
+  actionCount?: number;
+  writebackCount?: number;
+  postconditionsVerified?: number | boolean;
+  duplicateRisk?: boolean;
+}
 
 interface WorkflowRunOutput {
   nodeName: string;
@@ -47,6 +106,9 @@ interface WorkflowRunResult {
   workflowName: string;
   executionId?: string;
   status?: string;
+  functionalStatus?: WorkflowFunctionalStatus;
+  assessment?: WorkflowRunAssessment;
+  claimableOutcome?: unknown;
   summary?: string;
   failedNode?: string;
   error?: string;
@@ -71,6 +133,11 @@ interface BatchRunRowResult {
   rowNumber: number;
   status: string;
   execution_id?: string;
+  functional_status?: WorkflowFunctionalStatus;
+  functionalStatus?: WorkflowFunctionalStatus;
+  assessment?: WorkflowRunAssessment;
+  claimable_outcome?: unknown;
+  claimableOutcome?: unknown;
   summary?: string;
   error?: string;
   outputs?: WorkflowRunOutput[];
@@ -81,10 +148,22 @@ interface BatchRunRowResult {
 interface WorkflowBatchRunResult {
   workflowName: string;
   status: string;
+  functional_status?: WorkflowFunctionalStatus;
+  functionalStatus?: WorkflowFunctionalStatus;
+  assessment?: WorkflowRunAssessment;
+  claimable_outcome?: unknown;
+  claimableOutcome?: unknown;
   totalRows: number;
   succeeded: number;
   failed: number;
   skipped: number;
+  verified?: number;
+  no_action?: number;
+  noAction?: number;
+  partial?: number;
+  needs_attention?: number;
+  needsAttention?: number;
+  unknown?: number;
   results: BatchRunRowResult[];
 }
 
@@ -193,11 +272,13 @@ async function streamWorkflowBatchRun({
   token,
   workflowId,
   rows,
+  previewToken,
   onEvent,
 }: {
   token: string;
   workflowId: string;
   rows: BatchRunRowPayload[];
+  previewToken?: string;
   onEvent: (event: BatchStreamEvent) => void;
 }): Promise<void> {
   const response = await fetch(
@@ -211,6 +292,7 @@ async function streamWorkflowBatchRun({
       body: JSON.stringify({
         source: "dashboard",
         rows,
+        previewToken,
         options: { continueOnError: true },
       }),
     }
@@ -334,9 +416,9 @@ function BatchRunProgressDialog({
 
         <div className="mb-5 grid grid-cols-3 gap-2">
           <div className="rounded-md border border-border px-3 py-2">
-            <p className="text-[11px] uppercase text-muted-foreground">Succeeded</p>
+            <p className="text-[11px] uppercase text-muted-foreground">Executed</p>
             <p className="mt-1 flex items-center gap-1.5 text-[15px] font-medium text-foreground">
-              <CheckCircle2 className="h-4 w-4 text-green-600" />
+              <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
               {progress.succeeded}
             </p>
           </div>
@@ -402,6 +484,238 @@ function RunOutputsDetails({ outputs }: { outputs: WorkflowRunOutput[] }) {
       </div>
     </details>
   );
+}
+
+function functionalStatusMeta(status: WorkflowFunctionalStatus) {
+  switch (status) {
+    case "verified":
+      return { label: "Verified", variant: "success" as const };
+    case "no_action":
+      return { label: "No action needed", variant: "success" as const };
+    case "partial":
+      return { label: "Partially verified", variant: "warning" as const };
+    case "needs_attention":
+      return { label: "Needs attention", variant: "warning" as const };
+    case "failed":
+      return { label: "Failed", variant: "error" as const };
+    case "unknown":
+      return { label: "Verification unknown", variant: "warning" as const };
+    case "unverified":
+      return { label: "Unverified", variant: "warning" as const };
+  }
+}
+
+function FunctionalStatusBadge({ status }: { status?: WorkflowFunctionalStatus }) {
+  if (!status) return null;
+  const meta = functionalStatusMeta(status);
+  return <Badge variant={meta.variant}>{meta.label}</Badge>;
+}
+
+function BatchFunctionalCounts({ result }: { result: WorkflowBatchRunResult }) {
+  const counts: [string, number | undefined, "success" | "warning"][] = [
+    ["Verified", result.verified, "success"],
+    ["No action", result.no_action ?? result.noAction, "success"],
+    ["Partial", result.partial, "warning"],
+    ["Needs attention", result.needs_attention ?? result.needsAttention, "warning"],
+    ["Unknown", result.unknown, "warning"],
+  ];
+  const visible = counts.filter((entry): entry is [string, number, "success" | "warning"] =>
+    Boolean(entry[1])
+  );
+  if (!visible.length) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {visible.map(([label, count, variant]) => (
+        <Badge key={label} variant={variant}>
+          {count} {label.toLowerCase()}
+        </Badge>
+      ))}
+    </div>
+  );
+}
+
+function assessmentValue(value: number | boolean): string {
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value);
+}
+
+function claimableOutcomeText(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  return null;
+}
+
+function AssessmentDetails({
+  assessment,
+  claimableOutcome,
+}: {
+  assessment?: WorkflowRunAssessment;
+  claimableOutcome?: unknown;
+}) {
+  const outcome = claimableOutcomeText(claimableOutcome);
+  if (!assessment && !outcome) return null;
+
+  const metrics = assessment
+    ? [
+        [
+          "Eligible",
+          assessment.eligible_count ??
+            assessment.eligibleCount ??
+            assessment.configuredMutationNodes?.length,
+        ],
+        [
+          "Actions",
+          assessment.action_count ??
+            assessment.actionCount ??
+            assessment.executedMutationNodes?.length,
+        ],
+        [
+          "Write-backs",
+          assessment.writeback_count ??
+            assessment.writebackCount ??
+            assessment.successfulMutationNodes?.length,
+        ],
+        [
+          "Postconditions",
+          assessment.postconditions_verified ?? assessment.postconditionsVerified,
+        ],
+      ].filter((entry): entry is [string, number | boolean] => entry[1] !== undefined)
+    : [];
+  const evidence: WorkflowAssessmentEvidence[] =
+    assessment?.evidence ??
+    (assessment?.runDataHints ?? []).map(
+      (hint): WorkflowAssessmentEvidence => ({
+        kind: hint.runStatus || (hint.hasError ? "error" : "run data"),
+        node_name: hint.nodeName,
+        item_count: hint.outputItemCount,
+      })
+    );
+  const warnings = assessment?.warnings ?? [];
+  const reasons = assessment?.reasons ?? [];
+
+  return (
+    <div className="rounded-md border border-border bg-muted/20 p-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted-foreground">
+        <span className="font-medium text-foreground">Assessment</span>
+        {assessment?.coverage && <span>Coverage: {assessment.coverage}</span>}
+        {assessment?.transport_ok !== undefined || assessment?.transportOk !== undefined ? (
+          <span>
+            Transport: {(assessment.transport_ok ?? assessment.transportOk) ? "ok" : "failed"}
+          </span>
+        ) : assessment?.transportStatusCode !== undefined ? (
+          <span>Transport: HTTP {assessment.transportStatusCode}</span>
+        ) : null}
+        {(assessment?.execution_ok !== undefined || assessment?.executionOk !== undefined) && (
+          <span>
+            Execution: {(assessment.execution_ok ?? assessment.executionOk) ? "ok" : "failed"}
+          </span>
+        )}
+        {(assessment?.duplicate_risk || assessment?.duplicateRisk) && (
+          <span className="font-medium text-warning">Duplicate risk</span>
+        )}
+      </div>
+      {outcome && (
+        <p className="mt-2 text-[13px] text-foreground">
+          Claimable outcome: {outcome.replaceAll("_", " ")}
+        </p>
+      )}
+      {metrics.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {metrics.map(([label, value]) => (
+            <span
+              key={label}
+              className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground"
+            >
+              {label}: {assessmentValue(value)}
+            </span>
+          ))}
+        </div>
+      )}
+      {evidence.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {evidence.map((item, index) => (
+            <p key={`${item.kind ?? "evidence"}-${index}`} className="text-[12px] text-muted-foreground">
+              <span className="font-medium text-foreground">{item.kind || "Evidence"}</span>
+              {item.node_name || item.nodeName ? ` · ${item.node_name ?? item.nodeName}` : ""}
+              {item.item_count !== undefined || item.itemCount !== undefined
+                ? ` · ${item.item_count ?? item.itemCount} items`
+                : ""}
+              {item.receipt_count !== undefined || item.receiptCount !== undefined
+                ? ` · ${item.receipt_count ?? item.receiptCount} receipts`
+                : ""}
+            </p>
+          ))}
+        </div>
+      )}
+      {warnings.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {warnings.map((warning, index) => {
+            const warningData = typeof warning === "string" ? null : warning;
+            const message = typeof warning === "string" ? warning : warning.message || warning.code;
+            return (
+              <p
+                key={`${warningData?.code ?? message ?? "warning"}-${index}`}
+                className={`text-[12px] ${
+                  warningData?.severity === "error" ? "text-error" : "text-warning"
+                }`}
+              >
+                {warningData?.node_name ? `${warningData.node_name}: ` : ""}
+                {message || "Assessment warning"}
+              </p>
+            );
+          })}
+        </div>
+      )}
+      {reasons.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {reasons.map((reason, index) => (
+            <p key={`${reason}-${index}`} className="text-[12px] text-muted-foreground">
+              {reason}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function aggregateFunctionalStatus(
+  result: Omit<WorkflowBatchRunResult, "workflowName">
+): WorkflowFunctionalStatus | undefined {
+  if (result.functional_status || result.functionalStatus) {
+    return result.functional_status ?? result.functionalStatus;
+  }
+  const statuses = result.results
+    .map((row) => row.functional_status ?? row.functionalStatus)
+    .filter((status): status is WorkflowFunctionalStatus => Boolean(status));
+  if (!statuses.length) return undefined;
+  if (statuses.includes("failed")) return "failed";
+  if (statuses.includes("needs_attention")) return "needs_attention";
+  if (statuses.includes("partial")) return "partial";
+  if (statuses.includes("unknown")) return "unknown";
+  if (statuses.includes("unverified")) return "unverified";
+  if (statuses.every((status) => status === "no_action")) return "no_action";
+  return "verified";
+}
+
+function notifyFunctionalResult(
+  functionalStatus: WorkflowFunctionalStatus | undefined,
+  message: string,
+  fallbackFailed: boolean
+) {
+  if (!functionalStatus) {
+    if (fallbackFailed) toast.error(message);
+    else toast.success(message);
+    return;
+  }
+  if (fallbackFailed || functionalStatus === "failed") {
+    toast.error(message);
+    return;
+  }
+  if (functionalStatus === "verified" || functionalStatus === "no_action") {
+    toast.success(message);
+    return;
+  }
+  toast.warning(message);
 }
 
 export default function WorkflowsPage() {
@@ -714,10 +1028,75 @@ export default function WorkflowsPage() {
     });
     try {
       const token = await user.getIdToken();
+      const previewResponse = await fetch(
+        `/api/workflows/${encodeURIComponent(workflow.id)}?action=batch-preview`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            source: "dashboard",
+            rows,
+            options: { continueOnError: true },
+          }),
+        }
+      );
+      if (!previewResponse.ok) {
+        throw new Error(
+          await getErrorMessage(previewResponse, "Could not prepare a safe batch preview.")
+        );
+      }
+      const preview = (await previewResponse.json().catch(() => null)) as {
+        status?: string;
+        preview_token?: string;
+        eligible_count?: number | null;
+        action_count?: number | null;
+        writeback_count?: number | null;
+        actions?: Array<{ target?: string }>;
+        findings?: string[];
+      } | null;
+      let previewToken: string | undefined;
+      if (preview?.status !== "not_required") {
+        setBatchRunProgress(null);
+        const sampleTargets = (preview?.actions ?? [])
+          .map((action) => action.target)
+          .filter((target): target is string => Boolean(target))
+          .slice(0, 3)
+          .join(", ");
+        const confirmed = await confirm({
+          title: "Run this batch?",
+          description: [
+            `${preview?.eligible_count ?? 0} eligible item(s), ` +
+              `${preview?.action_count ?? 0} action(s), ` +
+              `${preview?.writeback_count ?? 0} write-back(s).`,
+            sampleTargets ? `Sample targets: ${sampleTargets}.` : "",
+            preview?.findings?.length ? preview.findings.join(" ") : "",
+          ]
+            .filter(Boolean)
+            .join(" "),
+          confirmLabel: "Run batch",
+          cancelLabel: "Cancel",
+        });
+        if (!confirmed) return;
+        previewToken = preview?.preview_token;
+        setBatchRunProgress({
+          workflowId: workflow.id,
+          workflowName: workflow.name,
+          totalRows: rows.length,
+          completedRows: 0,
+          currentIndex: 0,
+          succeeded: 0,
+          failed: 0,
+          skipped: 0,
+        });
+      }
       await streamWorkflowBatchRun({
         token,
         workflowId: workflow.id,
         rows,
+        previewToken,
         onEvent: (event) => {
           if (event.event === "started") {
             const totalRows = optionalNumber(event.data.totalRows) ?? rows.length;
@@ -766,11 +1145,14 @@ export default function WorkflowsPage() {
 
           if (event.event === "completed") {
             const result = event.data as unknown as Omit<WorkflowBatchRunResult, "workflowName">;
+            const functionalStatus = aggregateFunctionalStatus(result);
             setBatchRunProgress(null);
             setExpandedBatchRows(new Set());
             setBatchResult({ ...result, workflowName: workflow.name });
-            toast.success(
-              `Batch completed: ${result.succeeded} succeeded, ${result.failed + result.skipped} need attention.`
+            notifyFunctionalResult(
+              functionalStatus,
+              `Batch completed: ${result.succeeded} executed, ${result.failed + result.skipped} need attention.`,
+              result.status === "failed"
             );
             setRunWorkflow(null);
             resetBatchState();
@@ -883,8 +1265,8 @@ export default function WorkflowsPage() {
     const startedAt = performance.now();
     try {
       const token = await user.getIdToken();
-      const response = await fetch(
-        `/api/workflows/${encodeURIComponent(workflow.id)}?action=run`,
+      const previewResponse = await fetch(
+        `/api/workflows/${encodeURIComponent(workflow.id)}?action=preview-run`,
         {
           method: "POST",
           headers: {
@@ -894,6 +1276,58 @@ export default function WorkflowsPage() {
           body: JSON.stringify({ input, source: "dashboard" }),
         }
       );
+      if (!previewResponse.ok) {
+        throw new Error(
+          await getErrorMessage(previewResponse, "Could not prepare a safe workflow preview.")
+        );
+      }
+      const preview = (await previewResponse.json().catch(() => null)) as {
+        status?: string;
+        preview_token?: string;
+        eligible_count?: number | null;
+        action_count?: number | null;
+        writeback_count?: number | null;
+        actions?: Array<{ target?: string; subject?: string; kind?: string }>;
+        findings?: string[];
+      } | null;
+      let previewToken: string | undefined;
+      if (preview?.status !== "not_required") {
+        setRunningOverlay(null);
+        const sampleTargets = (preview?.actions ?? [])
+          .map((action) => action.target)
+          .filter((target): target is string => Boolean(target))
+          .slice(0, 3)
+          .join(", ");
+        const description = [
+          `${preview?.eligible_count ?? 0} eligible item(s), ` +
+            `${preview?.action_count ?? 0} action(s), ` +
+            `${preview?.writeback_count ?? 0} write-back(s).`,
+          sampleTargets ? `Targets: ${sampleTargets}.` : "",
+          preview?.findings?.length ? preview.findings.join(" ") : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        const confirmed = await confirm({
+          title: "Run this workflow?",
+          description,
+          confirmLabel: "Run",
+          cancelLabel: "Cancel",
+        });
+        if (!confirmed) return;
+        previewToken = preview?.preview_token;
+        setRunningOverlay({ workflowName: workflow.name });
+      }
+      const response = await fetch(
+        `/api/workflows/${encodeURIComponent(workflow.id)}?action=run`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ input, source: "dashboard", previewToken }),
+        }
+      );
       if (!response.ok) {
         throw new Error(await getErrorMessage(response, "Could not run workflow."));
       }
@@ -901,6 +1335,11 @@ export default function WorkflowsPage() {
         success?: boolean;
         execution_id?: string;
         status?: string;
+        functional_status?: WorkflowFunctionalStatus;
+        functionalStatus?: WorkflowFunctionalStatus;
+        assessment?: WorkflowRunAssessment;
+        claimable_outcome?: unknown;
+        claimableOutcome?: unknown;
         summary?: string;
         failed_node?: string;
         error?: string;
@@ -912,15 +1351,19 @@ export default function WorkflowsPage() {
       setRunningOverlay(null);
       const executionFailed =
         result?.success === false || ["error", "failed", "crashed"].includes(result?.status ?? "");
-      if (executionFailed) {
-        toast.error(result?.error || result?.summary || "Workflow run failed.");
-      } else {
-        toast.success(result?.summary || `Workflow ${result?.status || "triggered"}.`);
-      }
+      const functionalStatus = result?.functional_status ?? result?.functionalStatus;
+      notifyFunctionalResult(
+        functionalStatus,
+        result?.error || result?.summary || `Workflow ${result?.status || "triggered"}.`,
+        executionFailed
+      );
       setRunResult({
         workflowName: workflow.name,
         executionId: result?.execution_id,
         status: result?.status,
+        functionalStatus,
+        assessment: result?.assessment,
+        claimableOutcome: result?.claimable_outcome ?? result?.claimableOutcome,
         summary: result?.summary,
         failedNode: result?.failed_node,
         error: result?.error,
@@ -1090,7 +1533,13 @@ export default function WorkflowsPage() {
   };
 
   const batchRowHasDetail = (row: BatchRunRowResult): boolean =>
-    Boolean(row.presentation?.fields?.length || row.outputs?.length);
+    Boolean(
+      row.presentation?.fields?.length ||
+        row.outputs?.length ||
+        row.assessment ||
+        claimableOutcomeText(row.claimable_outcome ?? row.claimableOutcome) ||
+        row.execution_id
+    );
 
   const batchRowSummary = (row: BatchRunRowResult): string => {
     if (row.error) return row.error;
@@ -1104,7 +1553,12 @@ export default function WorkflowsPage() {
             : String(field.value);
       return `${field.label}: ${value}`;
     }
-    return row.summary || row.execution_id || "-";
+    if (row.summary) return row.summary;
+    const assessmentWarning = row.assessment?.warnings
+      ?.map((warning) => (typeof warning === "string" ? warning : warning.message))
+      .find(Boolean);
+    if (assessmentWarning) return assessmentWarning;
+    return row.execution_id || "-";
   };
 
   const filtered = workflows.filter((wf) => {
@@ -1552,6 +2006,19 @@ export default function WorkflowsPage() {
                 <p className="mt-1 text-[13px] text-muted-foreground">
                   {runResult.summary || `Workflow ${runResult.status || "triggered"}.`}
                 </p>
+                {(runResult.functionalStatus || runResult.executionId) && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <FunctionalStatusBadge status={runResult.functionalStatus} />
+                    {runResult.executionId && (
+                      <Link
+                        href="/dashboard/runs"
+                        className="text-[12px] font-medium text-conduut-600 hover:underline"
+                      >
+                        View run details
+                      </Link>
+                    )}
+                  </div>
+                )}
               </div>
               <Button size="sm" variant="outline" onClick={() => setRunResult(null)}>
                 Close
@@ -1569,16 +2036,12 @@ export default function WorkflowsPage() {
                   <p className="mt-1 whitespace-pre-wrap break-words text-[13px] text-foreground">
                     {runResult.error}
                   </p>
-                  {runResult.executionId && (
-                    <Link
-                      href="/dashboard/runs"
-                      className="mt-2 inline-flex text-[12px] font-medium text-conduut-600 hover:underline"
-                    >
-                      View run details
-                    </Link>
-                  )}
                 </div>
               )}
+              <AssessmentDetails
+                assessment={runResult.assessment}
+                claimableOutcome={runResult.claimableOutcome}
+              />
               {runResult.presentation && runResult.presentation.fields.length > 0 && (
                 <WorkflowResultView presentation={runResult.presentation} />
               )}
@@ -1627,6 +2090,10 @@ export default function WorkflowsPage() {
                   {batchResult.succeeded} succeeded, {batchResult.failed} failed,{" "}
                   {batchResult.skipped} skipped
                 </p>
+                <div className="mt-2">
+                  <FunctionalStatusBadge status={aggregateFunctionalStatus(batchResult)} />
+                </div>
+                <BatchFunctionalCounts result={batchResult} />
               </div>
               <Button
                 size="sm"
@@ -1640,6 +2107,10 @@ export default function WorkflowsPage() {
               </Button>
             </div>
             <div className="max-h-[70vh] overflow-y-auto">
+              <AssessmentDetails
+                assessment={batchResult.assessment}
+                claimableOutcome={batchResult.claimable_outcome ?? batchResult.claimableOutcome}
+              />
               <table className="w-full min-w-[640px] text-left text-[13px]">
                 <thead className="bg-muted/60 text-muted-foreground">
                   <tr>
@@ -1671,7 +2142,15 @@ export default function WorkflowsPage() {
                             )}
                           </td>
                           <td className="px-3 py-2 text-muted-foreground">{row.rowNumber}</td>
-                          <td className="px-3 py-2 capitalize">{row.status}</td>
+                          <td className="px-3 py-2">
+                            {row.functional_status || row.functionalStatus ? (
+                              <FunctionalStatusBadge
+                                status={row.functional_status ?? row.functionalStatus}
+                              />
+                            ) : (
+                              <span className="capitalize">{row.status}</span>
+                            )}
+                          </td>
                           <td className="px-3 py-2 text-muted-foreground">
                             <span className="block max-w-[420px] truncate">
                               {batchRowSummary(row)}
@@ -1683,10 +2162,22 @@ export default function WorkflowsPage() {
                             <td />
                             <td colSpan={3} className="px-3 py-3">
                               <div className="flex flex-col gap-3">
+                                <AssessmentDetails
+                                  assessment={row.assessment}
+                                  claimableOutcome={row.claimable_outcome ?? row.claimableOutcome}
+                                />
                                 {row.presentation && row.presentation.fields.length > 0 && (
                                   <WorkflowResultView presentation={row.presentation} />
                                 )}
                                 <RunOutputsDetails outputs={row.outputs ?? []} />
+                                {row.execution_id && (
+                                  <Link
+                                    href="/dashboard/runs"
+                                    className="text-[12px] font-medium text-conduut-600 hover:underline"
+                                  >
+                                    View run details
+                                  </Link>
+                                )}
                               </div>
                             </td>
                           </tr>

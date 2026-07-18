@@ -987,7 +987,14 @@ async def test_gmail_modify_operation_does_not_auto_attach_read_send_connection(
             "required": ["clientId"],
         }
 
+    async def fake_list_custom_credentials(_user_id: str):
+        return []
+
     monkeypatch.setattr("src.agent.tools.store.get_connection", fail_get_connection)
+    monkeypatch.setattr(
+        "src.agent.tools.store.list_custom_credentials",
+        fake_list_custom_credentials,
+    )
     monkeypatch.setattr(
         "src.agent.tools.n8n_client.attach_credential_to_workflow",
         fail_attach,
@@ -1011,5 +1018,5 @@ async def test_gmail_modify_operation_does_not_auto_attach_read_send_connection(
 
     assert readiness["ready"] is False
     attachment = readiness["missing_credentials"][0]
-    assert attachment.type == "credential_request"
-    assert attachment.data.credentialType == "gmailOAuth2"
+    assert attachment.type == "user_input_request"
+    assert "gmailOAuth2" in (attachment.data.reason or "")

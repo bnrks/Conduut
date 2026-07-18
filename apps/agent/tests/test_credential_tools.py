@@ -42,9 +42,15 @@ async def test_list_credentials_payload_flags_host_match(monkeypatch, _deps):
 
     monkeypatch.setattr(cred_tools.store, "list_custom_credentials", fake_list)
     res = await cred_tools.list_credentials_payload(_deps, url="https://api.stripe.com/v1")
+    assert res["status"] == "ok"
+    assert res["source"] == "custom_api_credential_library"
+    assert res["scope"] == "custom_api_credentials_only"
+    assert "does not show managed Connected services" in res["instruction"]
     by_id = {c["id"]: c for c in res["credentials"]}
     assert by_id["c1"]["matches_host"] is True
     assert by_id["c2"]["matches_host"] is False
+    assert by_id["c1"]["status"] == "ready"
+    assert by_id["c1"]["source"] == "custom_api_credential"
     assert "n8n_credential_id" not in by_id["c1"]
 
 
@@ -130,6 +136,8 @@ async def test_list_credentials_payload_flags_type_match(monkeypatch, _deps):
     monkeypatch.setattr(cred_tools.store, "list_custom_credentials", fake_list)
     result = await cred_tools.list_credentials_payload(_deps, credential_type="openAiApi")
     assert result["credentials"][0]["matches_type"] is True
+    assert result["credentials"][0]["status"] == "ready"
+    assert result["credentials"][0]["source"] == "service_api_credential"
 
 
 async def test_add_service_credential_known_type_returns_card(monkeypatch, _deps):

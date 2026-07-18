@@ -18,6 +18,13 @@ class ExecutionReference(BaseModel):
     intent: Literal["diagnose_and_fix"] = "diagnose_and_fix"
 
 
+class UserInputResponse(BaseModel):
+    request_id: str
+    request_kind: Literal["workflow_run_approval"]
+    workflow_id: str
+    decision: Literal["approve", "cancel"]
+
+
 class ChatRequest(BaseModel):
     # Tolerate stale frontend fields (provider/model/reasoning_effort) without a 422.
     model_config = ConfigDict(extra="ignore")
@@ -25,6 +32,7 @@ class ChatRequest(BaseModel):
     content: str
     conversation_id: str | None = None
     execution_reference: ExecutionReference | None = None
+    user_input_response: UserInputResponse | None = None
 
 
 @router.post("/chat/send")
@@ -42,7 +50,7 @@ async def chat_send(request: Request, body: ChatRequest):
         content_length=len(body.content),
     )
 
-    attachments: list[dict] | None = None
+    attachments: list[dict] = []
     if body.execution_reference:
         try:
             run = await executions.get_run(user_id, body.execution_reference.execution_id)
@@ -58,7 +66,7 @@ async def chat_send(request: Request, body: ChatRequest):
                 status_code=409,
                 detail={"message": "Only failed runs can be sent for repair."},
             )
-        attachments = [
+        attachments.append(
             {
                 "type": "execution_reference",
                 "data": {
@@ -69,7 +77,21 @@ async def chat_send(request: Request, body: ChatRequest):
                     "intent": body.execution_reference.intent,
                 },
             }
-        ]
+        )
+
+    if body.user_input_response:
+        response = body.user_input_response
+        attachments.append(
+            {
+                "type": "user_input_response",
+                "data": {
+                    "requestId": response.request_id,
+                    "requestKind": response.request_kind,
+                    "workflowId": response.workflow_id,
+                    "decision": response.decision,
+                },
+            }
+        )
 
     conv = await store.get_or_create_conversation(user_id, body.conversation_id)
     await store.add_message(
@@ -77,7 +99,7 @@ async def chat_send(request: Request, body: ChatRequest):
         conv.id,
         "user",
         body.content,
-        attachments=attachments,
+        attachments=attachments or None,
     )
     log.info("chat_conversation_ready", user_id=user_id, conversation_id=conv.id)
 

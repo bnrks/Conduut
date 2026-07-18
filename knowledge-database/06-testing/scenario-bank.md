@@ -139,6 +139,10 @@ anında URL'den çekilir.>
 
 ## İlk tur (9 senaryo)
 
+Workflow Assurance V1 sonrasındaki kullanıcı-davranışı test protokolü, M1
+varyasyonları, failure injection ve kanıt kayıt şeması için bkz.
+[[workflow-assurance-scenario-test-plan]].
+
 Manuel için tractable, katmanları kademeli zorlayan başlangıç seti. Kaynaklar
 gerçek n8n.io template'leridir.
 

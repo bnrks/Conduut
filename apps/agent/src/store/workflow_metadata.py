@@ -79,6 +79,8 @@ async def save_workflow_test_status(
     *,
     status: str,
     findings: list[str] | None = None,
+    fingerprint: str | None = None,
+    coverage: str | None = None,
 ) -> None:
     """Persist the sandbox test outcome inside the workflow metadata resources.
 
@@ -92,6 +94,19 @@ async def save_workflow_test_status(
     resources = dict(existing.resources) if existing else {}
     resources["test_status"] = status
     resources["test_findings"] = list(findings or [])
+    assurance = dict(resources.get("assurance") or {})
+    assurance.update(
+        {
+            "version": 1,
+            "sandbox_status": status,
+            "findings": list(findings or []),
+        }
+    )
+    if fingerprint is not None:
+        assurance["workflow_fingerprint"] = fingerprint
+    if coverage is not None:
+        assurance["coverage"] = coverage
+    resources["assurance"] = assurance
     await _pkg_store.save_workflow_metadata(
         user_id, workflow_id, input_schema=input_schema, resources=resources
     )

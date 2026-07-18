@@ -1,0 +1,36 @@
+{
+  "320": {
+    "rawStatus": "success",
+    "transportStatus": 500,
+    "expectedFunctionalStatus": "partial",
+    "nodes": {
+      "Read Sheet": {"itemCount": 5, "hintCount": 0},
+      "Is Pending?": {"itemCount": 5, "hintCount": 0},
+      "Send Email": {"itemCount": 5, "hintCount": 0},
+      "Update Status": {"itemCount": 0, "hintCount": 5}
+    }
+  },
+  "323": {
+    "rawStatus": "success",
+    "transportStatus": 200,
+    "expectedFunctionalStatus": "partial",
+    "nodes": {
+      "Read Sheet": {"itemCount": 5, "hintCount": 0},
+      "Filter Code": {"itemCount": 1, "hintCount": 1},
+      "Send Email": {"itemCount": 1, "hintCount": 0},
+      "Update Status": {"itemCount": 0, "hintCount": 1}
+    }
+  },
+  "327": {
+    "rawStatus": "success",
+    "transportStatus": 200,
+    "expectedFunctionalStatus": "needs_attention",
+    "nodes": {
+      "Read Sheet": {"itemCount": 5, "hintCount": 0},
+      "FilterCode": {"itemCount": 1, "hintCount": 1},
+      "Update Status": {"itemCount": 1, "hintCount": 0},
+      "Send Email": {"itemCount": 1, "hintCount": 0}
+    },
+    "staticRisk": "writeback_before_action"
+  }
+}

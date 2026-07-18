@@ -112,7 +112,9 @@ async def test_gather_excludes_workflows_without_user_metadata(monkeypatch):
 
 
 def test_render_empty_state():
-    assert "Connected services: none yet." in render_user_state(UserPlatformState())
+    assert "Connected services (managed by Conduut): none yet." in render_user_state(
+        UserPlatformState()
+    )
 
 
 def test_render_populated_state_flags_and_no_secrets():
@@ -123,22 +125,30 @@ def test_render_populated_state_flags_and_no_secrets():
         ],
         credentials=[
             CredentialSummary(
-                label="My OpenAI", credential_type="openAiApi", host="", status="ready"
+                label="My OpenAI",
+                credential_type="openAiApi",
+                host="",
+                status="ready",
+                source="service API credential",
             ),
             CredentialSummary(
                 label="Stripe",
                 credential_type="httpHeaderAuth",
                 host="api.stripe.com",
                 status="draft",
+                source="custom API credential",
             ),
         ],
         workflows=[WorkflowSummary(name="Proposals", active=False, has_runtime_inputs=True)],
     )
     out = render_user_state(state)
+    assert "Connected services (managed by Conduut):" in out
+    assert "Saved custom API credentials:" in out
     assert "gmail (u@x.com)" in out
     assert "needs reconnect" in out  # expired connection flagged
     assert "(incomplete)" in out  # draft credential flagged
     assert "takes input" in out  # runtime-input workflow flagged
+    assert "service API credential" in out
     assert "'Proposals' (inactive, takes input)" in out
 
 

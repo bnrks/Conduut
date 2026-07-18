@@ -7,6 +7,8 @@ import structlog
 from pydantic_ai import Agent, ModelRetry, RunContext
 
 from src import executions, n8n_client, store
+from src.agent.assurance import workflow_fingerprint
+from src.agent.claim_policy import claim_exceeds_evidence, safe_evidence_summary
 from src.agent.platform_profile import render_static_profile
 from src.agent.platform_state import platform_state_instructions
 from src.agent.schemas import (
@@ -56,6 +58,15 @@ from src.registry import registry
 
 log = structlog.get_logger()
 
+_AWAITING_APPROVAL_SUMMARY = (
+    "Önizleme hazır. Henüz gerçek bir gönderim veya güncelleme yapılmadı. "
+    "Devam etmek ya da vazgeçmek için aşağıdaki onay seçeneklerini kullan."
+)
+_AWAITING_INPUT_SUMMARY = (
+    "Bu işlem devam etmek için kullanıcı girdisi bekliyor. "
+    "Henüz doğrulanmış bir çalıştırma veya dış sistem değişikliği yok."
+)
+
 
 def _tool_status(result: Any) -> str:
     if isinstance(result, dict):
@@ -84,6 +95,85 @@ def _log_tool_finished(tool: str, started_at: float, result: Any) -> None:
         status=_tool_status(result),
         result_keys=result_keys,
     )
+
+
+def _take_workflow_preview_decision(
+    deps: AgentDeps,
+    workflow_id: str,
+    explicit_token: str | None,
+) -> tuple[str | None, bool]:
+    """Resolve one structured approval without putting its token in prompt text."""
+
+    if workflow_id in deps.workflow_preview_cancellations:
+        deps.workflow_preview_cancellations.discard(workflow_id)
+        deps.workflow_preview_approvals.pop(workflow_id, None)
+        return None, True
+    approved_token = deps.workflow_preview_approvals.pop(workflow_id, None)
+    return approved_token or explicit_token, False
+
+
+async def _request_workflow_run_approval(
+    ctx: RunContext[AgentDeps],
+    *,
+    workflow_id: str,
+    preview: dict[str, Any],
+) -> dict[str, Any]:
+    """Emit a persisted approval request whose opaque id survives chat turns."""
+
+    preview_token = str(preview.get("preview_token") or "")
+    masked_targets = [
+        str(action.get("target"))
+        for action in preview.get("actions") or []
+        if isinstance(action, dict) and action.get("target")
+    ]
+    target_summary = f" Masked targets: {', '.join(masked_targets[:5])}." if masked_targets else ""
+    question = (
+        "The side-effect preview found "
+        f"{preview.get('eligible_count') or 0} eligible item(s), "
+        f"{preview.get('action_count') or 0} action(s), and "
+        f"{preview.get('writeback_count') or 0} write-back(s)."
+        f"{target_summary} Do you want to run it now?"
+    )
+    await ctx.deps.emit_tool_call("request_user_input")
+    started_at = perf_counter()
+    await ctx.deps.emit_attachment(
+        UserInputRequestAttachment(
+            data=UserInputRequestData(
+                question=question,
+                missingFields=["run_confirmation"],
+                choices=[
+                    UserInputChoice(label="Approve run", value="approve"),
+                    UserInputChoice(label="Cancel", value="cancel"),
+                ],
+                allowSkip=False,
+                reason="Real actions require confirmation of the safe preview.",
+                requestId=preview_token,
+                requestKind="workflow_run_approval",
+                workflowId=workflow_id,
+            )
+        )
+    )
+    ctx.deps.awaiting_user_input = True
+    ctx.deps.awaiting_user_input_summary = _AWAITING_APPROVAL_SUMMARY
+    request_result = {
+        "status": "waiting_for_user",
+        "question": question,
+        "missing_fields": ["run_confirmation"],
+        "choices": ["Approve run", "Cancel"],
+        "instruction": "Stop now and wait for the structured approval response.",
+    }
+    _log_tool_finished("request_user_input", started_at, request_result)
+    return {
+        "status": "waiting_for_user",
+        "workflow_id": workflow_id,
+        "preview_token": preview_token,
+        "preview": preview,
+        "instruction": (
+            "Stop and wait for the user's answer. The approval token is persisted in the "
+            "structured request and will be supplied automatically on the next turn. Do not "
+            "ask for confirmation again unless the approval is explicitly rejected as stale."
+        ),
+    }
 
 
 def _workflow_result_with_readiness(
@@ -138,7 +228,9 @@ def _should_run_sandbox_test(result: dict[str, Any], *, awaiting: bool) -> bool:
     return "ready" not in result
 
 
-def _needs_pretest(metadata: store.WorkflowMetadata | None) -> bool:
+def _needs_pretest(
+    metadata: store.WorkflowMetadata | None, workflow: dict[str, Any] | None = None
+) -> bool:
     """Whether a workflow should be sandbox-tested before its first real run.
 
     Workflows that were credential-blocked at build time never got tested, so the
@@ -147,7 +239,29 @@ def _needs_pretest(metadata: store.WorkflowMetadata | None) -> bool:
     """
 
     status = metadata.resources.get("test_status") if metadata else None
-    return status != "passed"
+    if status not in {"passed", "no_action", "partial_coverage"}:
+        return True
+    if workflow is None:
+        return False
+    assurance = metadata.resources.get("assurance") if metadata else None
+    stored = assurance.get("workflow_fingerprint") if isinstance(assurance, dict) else None
+    return stored != workflow_fingerprint(workflow)
+
+
+async def _run_pretest_gate(
+    ctx: RunContext[AgentDeps],
+    workflow: dict[str, Any],
+    *,
+    input_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run delayed sandbox verification with real input when a run supplies it."""
+
+    from src.agent.tools.sandbox_gate import _test_and_gate
+
+    name = str(workflow.get("name") or "Workflow")
+    if input_payload is None:
+        return await _test_and_gate(ctx, workflow, name, {})
+    return await _test_and_gate(ctx, workflow, name, {}, input_payload=input_payload)
 
 
 def _readiness_block_result(workflow_id: str, readiness: dict[str, Any]) -> dict[str, Any] | None:
@@ -239,6 +353,31 @@ def base_instructions() -> str:
     return SYSTEM_PROMPT + "\n\n" + render_static_profile() + "\n\n" + schedule_runtime
 
 
+def _validate_evidence_gated_output(deps: AgentDeps, output: str) -> str:
+    """Bound success language without re-entering the agent loop while waiting."""
+
+    if not claim_exceeds_evidence(output, deps.claim_evidence):
+        return output
+    log.warning(
+        "agent_claim_exceeds_evidence",
+        evidence_outcomes=[item.get("outcome") for item in deps.claim_evidence],
+        attempt=deps.claim_validation_failures + 1,
+        awaiting_user_input=deps.awaiting_user_input,
+    )
+    if deps.awaiting_user_input:
+        # The persisted attachment is the single source of truth. Retrying the
+        # model can issue unrelated tools and make one approval look like two.
+        return deps.awaiting_user_input_summary or _AWAITING_INPUT_SUMMARY
+    if deps.claim_validation_failures == 0:
+        deps.claim_validation_failures += 1
+        raise ModelRetry(
+            "Your response claims a workflow ran, sent, or updated external data beyond the "
+            "available tool evidence. Inspect/execute the exact workflow and report only the "
+            "claimable_outcome returned by the tool."
+        )
+    return safe_evidence_summary(deps.claim_evidence)
+
+
 def create_agent(model: Any) -> Agent[AgentDeps, str]:
     """Create a Conduut Pydantic AI agent with all n8n tools registered."""
 
@@ -257,6 +396,10 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
     def _platform_state_instructions(ctx: RunContext[AgentDeps]) -> str:
         """Inject the per-conversation user state (best-effort, may be empty)."""
         return platform_state_instructions(ctx.deps.platform_state)
+
+    @agent.output_validator
+    def _evidence_gated_claims(ctx: RunContext[AgentDeps], output: str) -> str:
+        return _validate_evidence_gated_output(ctx.deps, output)
 
     @agent.tool
     async def search_n8n_nodes(
@@ -530,6 +673,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             from src.agent.tools.sandbox_gate import _test_and_gate
 
             result = await _test_and_gate(ctx, full_workflow, name, result)
+        ctx.deps.record_claim_evidence("workflow_created", workflow_id=workflow.id)
         _log_tool_finished("create_workflow", started_at, result)
         return result
 
@@ -617,6 +761,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             from src.agent.tools.sandbox_gate import _test_and_gate
 
             result = await _test_and_gate(ctx, full_workflow, name, result)
+        ctx.deps.record_claim_evidence("workflow_created", workflow_id=workflow.id)
         _log_tool_finished("update_workflow", started_at, result)
         return result
 
@@ -638,6 +783,14 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             if block:
                 _log_tool_finished("activate_workflow", started_at, block)
                 return block
+            metadata = await store.get_workflow_metadata(ctx.deps.user_id, workflow_id)
+            if _needs_pretest(metadata, workflow):
+                gate = await _run_pretest_gate(ctx, workflow)
+                if gate.get("test_status") == "needs_attention":
+                    gate["success"] = False
+                    gate["workflow_id"] = workflow_id
+                    _log_tool_finished("activate_workflow", started_at, gate)
+                    return gate
             ctx.deps.mark_replay_unsafe("activate_workflow")
             await n8n_client.activate_workflow(workflow_id)
             result = {"success": True, "workflow_id": workflow_id}
@@ -674,8 +827,15 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         ctx: RunContext[AgentDeps],
         workflow_id: str,
         input: dict[str, Any] | None = None,
+        preview_token: str | None = None,
     ) -> dict[str, Any]:
-        """Run a testable workflow with optional runtime input and summarize the result."""
+        """Preview and run a workflow with optional runtime input.
+
+        Side-effect workflows first create a one-use approval request. After
+        the user confirms in their next message, call this tool for the same
+        workflow; the exact token is restored from the structured response.
+        Never invent or reuse a token.
+        """
 
         if ctx.deps.awaiting_user_input:
             return _waiting_for_user_input_result()
@@ -684,6 +844,19 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         try:
             workflow = await _get_workflow_for_reference(workflow_id)
             workflow_id = str(workflow.get("id") or workflow_id)
+            preview_token, preview_cancelled = _take_workflow_preview_decision(
+                ctx.deps, workflow_id, preview_token
+            )
+            if preview_cancelled:
+                result = {
+                    "success": False,
+                    "status": "cancelled",
+                    "workflow_id": workflow_id,
+                    "functional_status": "unknown",
+                    "instruction": "The user cancelled the approved run. Do not execute it.",
+                }
+                _log_tool_finished("execute_workflow", started_at, result)
+                return result
             readiness = await _emit_missing_credentials(
                 ctx, workflow, replay_unsafe_tool="execute_workflow"
             )
@@ -717,16 +890,72 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             # time never got sandbox-tested. Run the test now (once) before the
             # real run; a structural failure drives a fix (ModelRetry) or blocks
             # the real execution rather than producing a bad side effect.
-            if _needs_pretest(metadata):
-                from src.agent.tools.sandbox_gate import _test_and_gate
-
-                name = str(workflow.get("name") or "Workflow")
-                gate = await _test_and_gate(ctx, workflow, name, {})
+            if _needs_pretest(metadata, workflow):
+                gate = await _run_pretest_gate(ctx, workflow, input_payload=input)
                 if gate.get("test_status") == "needs_attention":
                     gate["success"] = False
                     gate["workflow_id"] = workflow_id
                     _log_tool_finished("execute_workflow", started_at, gate)
                     return gate
+
+            from src.agent.workflow_preview import (
+                consume_workflow_preview,
+                preview_workflow_run,
+                workflow_requires_preview,
+            )
+
+            if workflow_requires_preview(workflow):
+                if not preview_token:
+                    preview = await preview_workflow_run(
+                        workflow,
+                        user_id=ctx.deps.user_id,
+                        input_payload=input,
+                    )
+                    if not preview.get("ready") or not preview.get("preview_token"):
+                        result = {
+                            "success": False,
+                            "workflow_id": workflow_id,
+                            "functional_status": "needs_attention",
+                            "preview": preview,
+                            "error": "The safe production preview did not pass.",
+                        }
+                        _log_tool_finished("execute_workflow", started_at, result)
+                        return result
+                    result = await _request_workflow_run_approval(
+                        ctx,
+                        workflow_id=workflow_id,
+                        preview=preview,
+                    )
+                    _log_tool_finished("execute_workflow", started_at, result)
+                    return result
+                approved = await consume_workflow_preview(
+                    workflow,
+                    user_id=ctx.deps.user_id,
+                    input_payload=input,
+                    preview_token=preview_token,
+                )
+                if not approved:
+                    # A consumed, expired or stale approval is terminal for this
+                    # turn. Do not silently create another preview and trap the
+                    # user in a repeated confirmation loop.
+                    ctx.deps.awaiting_user_input = True
+                    result = {
+                        "success": False,
+                        "workflow_id": workflow_id,
+                        "functional_status": "needs_attention",
+                        "approval_status": "invalid",
+                        "error": (
+                            "The preview token is missing, expired, consumed, or stale. "
+                            "The workflow was not run. Start a new preview in a new turn."
+                        ),
+                        "instruction": (
+                            "Stop this turn. Explain that the approval expired or no longer "
+                            "matches; do not call execute_workflow again until the user asks "
+                            "for a fresh preview."
+                        ),
+                    }
+                    _log_tool_finished("execute_workflow", started_at, result)
+                    return result
 
             ctx.deps.mark_replay_unsafe("execute_workflow")
             result = await run_workflow_with_input(
@@ -744,6 +973,11 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             for artifact in result.artifacts:
                 await ctx.deps.emit_attachment(ArtifactPreviewAttachment(data=artifact))
             payload = result.model_dump(exclude_none=True)
+            ctx.deps.record_claim_evidence(
+                result.claimableOutcome,
+                workflow_id=result.workflowId,
+                execution_id=result.executionId,
+            )
             _log_tool_finished("execute_workflow", started_at, payload)
             return payload
         except ModelRetry:
@@ -816,6 +1050,11 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         try:
             result = await executions.inspect_run(ctx.deps.user_id, execution_id)
             payload = result.model_dump(exclude_none=True)
+            ctx.deps.record_claim_evidence(
+                result.claimableOutcome,
+                workflow_id=result.workflowId,
+                execution_id=result.executionId or execution_id,
+            )
             _log_tool_finished("inspect_execution", started_at, payload)
             return payload
         except Exception as exc:

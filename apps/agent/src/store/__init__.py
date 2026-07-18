@@ -80,6 +80,12 @@ from .workflow_metadata import (
     save_workflow_metadata,
     save_workflow_test_status,
 )
+from .workflow_previews import (
+    WorkflowRunPreview,
+    consume_workflow_run_preview,
+    save_workflow_run_preview,
+    workflow_input_hash,
+)
 
 __all__ = [
     # firebase re-export
@@ -101,6 +107,7 @@ __all__ = [
     "Message",
     "OAuthState",
     "WorkflowMetadata",
+    "WorkflowRunPreview",
     "AgentUsageEvent",
     # api_auth_cache
     "delete_api_auth_cache",
@@ -141,6 +148,10 @@ __all__ = [
     "get_workflow_metadata",
     "save_workflow_metadata",
     "save_workflow_test_status",
+    # workflow previews
+    "consume_workflow_run_preview",
+    "save_workflow_run_preview",
+    "workflow_input_hash",
     # usage
     "_usage_event_document_id",
     "list_agent_usage_events",

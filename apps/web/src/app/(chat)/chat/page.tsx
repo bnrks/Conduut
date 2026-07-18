@@ -11,7 +11,11 @@ import {
   type ClarificationPanelData,
 } from "@/components/chat/clarification-panel";
 import { useAuth } from "@/hooks/use-auth";
-import { streamChat, type ExecutionReference } from "@/lib/chat/sse";
+import {
+  streamChat,
+  type ExecutionReference,
+  type UserInputResponse,
+} from "@/lib/chat/sse";
 import { consumePendingExecutionRepair } from "@/lib/chat/pending-execution-repair";
 import { setConversationCache } from "@/lib/chat/conversation-cache";
 import { toolActivityLabel } from "@/lib/chat/tool-activity";
@@ -61,7 +65,8 @@ export default function NewChatPage() {
 
   const handleSend = useCallback(async (
     content: string,
-    executionReference?: ExecutionReference
+    executionReference?: ExecutionReference,
+    userInputResponse?: UserInputResponse
   ) => {
     if (!user || isAgentTyping) return;
 
@@ -152,6 +157,7 @@ export default function NewChatPage() {
                 intent: executionReference.intent,
               }
             : undefined,
+          user_input_response: userInputResponse,
         },
         onEvent: (event) => {
           const result = reduceAssistantStreamEvent(assistantStream, event);
@@ -252,7 +258,9 @@ export default function NewChatPage() {
               <ClarificationPanel
                 key={clarification.messageId}
                 data={clarification.data}
-                onSubmit={(value) => { void handleSend(value); }}
+                onSubmit={(payload) => {
+                  void handleSend(payload.content, undefined, payload.structuredResponse);
+                }}
               />
             </div>
           </div>
@@ -261,7 +269,7 @@ export default function NewChatPage() {
             value={inputValue}
             onChange={setInputValue}
             onSend={(content) => { void handleSend(content); }}
-            disabled={!user}
+            disabled={!user || isAgentTyping}
           />
         )}
       </div>

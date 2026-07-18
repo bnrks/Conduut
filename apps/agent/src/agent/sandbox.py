@@ -1,8 +1,8 @@
 """Sandbox workflow test engine.
 
 Build sonrası, dışarıya gerçek etki göndermeyen bir test turu çalıştırır:
-workflow'u klonlar, yan-etkili (aksiyon) node'larını ``disabled=true`` yaparak
-nötralize eder, klonu webhook ile çalıştırır, 3 katmanlı değerlendirir
+workflow'u klonlar, yan-etkili node'ları güvenli probe'larla değiştirir,
+klonu webhook ile çalıştırır, deterministik kurallar + LLM yargısıyla değerlendirir
 (hata / boş çıktı / LLM yargısı) ve klonu siler. Saf yardımcılar n8n'siz
 unit-test edilebilir; gerçek LLM çağrısı ``_run_judge_llm`` arkasındadır.
 """
@@ -17,7 +17,8 @@ import structlog
 from pydantic import BaseModel
 
 from src import n8n_client
-from src.agent.sandbox_nodes import neutralize_action_nodes
+from src.agent.assurance import workflow_fingerprint
+from src.agent.sandbox_nodes import ActionProbe, replace_action_nodes_with_probes
 from src.agent.schemas import WorkflowInputField
 from src.agent.tools.common import _preview_value
 from src.agent.tools.constants import _MANUAL_TRIGGER_TYPE, _WEBHOOK_TRIGGER_TYPE
@@ -46,7 +47,7 @@ def _build_test_clone(
     """Deep-copy the workflow and make a webhook-drivable test clone.
 
     Returns ``(nodes, connections, webhook_path)`` or ``None`` when the workflow
-    has no webhook/manual trigger Conduut can drive (e.g. schedule-only).
+    has no webhook/manual/schedule trigger Conduut can drive.
     A fresh uuid path is always assigned so the clone never clashes with the
     live workflow's webhook.
     """
@@ -77,15 +78,20 @@ def _build_test_clone(
         params["path"] = path
         return nodes, connections, path
 
-    manual = next(
-        (n for n in nodes if isinstance(n, dict) and n.get("type") == _MANUAL_TRIGGER_TYPE),
+    convertible = next(
+        (
+            n
+            for n in nodes
+            if isinstance(n, dict)
+            and n.get("type") in {_MANUAL_TRIGGER_TYPE, "n8n-nodes-base.scheduleTrigger"}
+        ),
         None,
     )
-    if manual is not None:
-        manual["type"] = _WEBHOOK_TRIGGER_TYPE
-        manual["typeVersion"] = _webhook_type_version()
-        manual["webhookId"] = uuid4().hex
-        manual["parameters"] = {
+    if convertible is not None:
+        convertible["type"] = _WEBHOOK_TRIGGER_TYPE
+        convertible["typeVersion"] = _webhook_type_version()
+        convertible["webhookId"] = uuid4().hex
+        convertible["parameters"] = {
             "httpMethod": "POST",
             "path": path,
             "responseMode": response_mode,
@@ -155,6 +161,217 @@ def _items_are_empty(items: list[Any]) -> bool:
     return True
 
 
+def _probe_records(detail: dict[str, Any], probes: list[ActionProbe]) -> list[dict[str, Any]]:
+    run_data = (((detail.get("data") or {}).get("resultData") or {}).get("runData")) or {}
+    records: list[dict[str, Any]] = []
+    for probe in probes:
+        for item in _node_output_items(run_data, probe.name):
+            if not isinstance(item, dict):
+                continue
+            payload = item.get("__conduut_probe")
+            if isinstance(payload, dict):
+                records.append({"node": probe.name, "covered": probe.covered, **payload})
+            elif isinstance(payload, str) and payload:
+                record: dict[str, Any] = {
+                    "node": probe.name,
+                    "covered": probe.covered,
+                    "kind": payload,
+                }
+                if payload == "gmail_send":
+                    for field in ("target", "subject", "message"):
+                        record[field] = item.get(f"__conduut_probe_{field}")
+                elif payload == "sheets_update":
+                    columns: list[str] = []
+                    values: dict[str, Any] = {}
+                    index = 0
+                    while True:
+                        key_name = f"__conduut_probe_matching_key_{index}"
+                        value_name = f"__conduut_probe_matching_value_{index}"
+                        if key_name not in item:
+                            break
+                        column = str(item.get(key_name) or "")
+                        if column:
+                            columns.append(column)
+                            values[column] = item.get(value_name)
+                        index += 1
+                    record["matching_columns"] = columns
+                    record["matching_values"] = values
+                records.append(record)
+    return records
+
+
+def _probe_findings(records: list[dict[str, Any]], probes: list[ActionProbe]) -> list[str]:
+    findings: list[str] = []
+    for record in records:
+        kind = record.get("kind")
+        node = record.get("node")
+        if kind == "gmail_send":
+            for field in ("target", "subject", "message"):
+                if not _non_blank(record.get(field)):
+                    findings.append(f"The action '{node}' resolved an empty {field} value.")
+        elif kind == "sheets_update":
+            columns = record.get("matching_columns")
+            values = record.get("matching_values")
+            if not isinstance(columns, list) or not columns:
+                findings.append(f"The write-back '{node}' has no matching identity column.")
+                continue
+            if not isinstance(values, dict) or any(
+                not _non_blank(values.get(str(column))) for column in columns
+            ):
+                findings.append(f"The write-back '{node}' resolved an empty identity value.")
+
+    for probe in probes:
+        if probe.kind != "sheets_update" or not probe.covered:
+            continue
+        seen: set[tuple[str, ...]] = set()
+        for record in (item for item in records if item.get("node") == probe.name):
+            columns = record.get("matching_columns")
+            values = record.get("matching_values")
+            if not isinstance(columns, list) or not isinstance(values, dict):
+                continue
+            identity = tuple(str(values.get(str(column)) or "") for column in columns)
+            if identity in seen:
+                findings.append(
+                    f"The write-back '{probe.name}' received duplicate identity values. "
+                    "Choose a unique ID column before running real actions."
+                )
+                break
+            seen.add(identity)
+
+    action_count = sum(1 for item in records if item.get("kind") == "gmail_send")
+    writeback_count = sum(1 for item in records if item.get("kind") == "sheets_update")
+    has_action = any(probe.kind == "gmail_send" for probe in probes)
+    has_writeback = any(probe.kind == "sheets_update" for probe in probes)
+    if has_action and has_writeback and action_count != writeback_count:
+        findings.append(
+            "The action and write-back item counts do not match "
+            f"({action_count} action, {writeback_count} write-back)."
+        )
+    return findings
+
+
+def _identity_preflight_findings(
+    detail: dict[str, Any],
+    clone_workflow: dict[str, Any],
+    records: list[dict[str, Any]],
+    probes: list[ActionProbe],
+) -> list[str]:
+    """Prove update identity uniqueness against the full upstream read dataset."""
+
+    run_data = (((detail.get("data") or {}).get("resultData") or {}).get("runData")) or {}
+    connections = clone_workflow.get("connections") or {}
+    nodes_by_name = {
+        str(node.get("name")): node
+        for node in clone_workflow.get("nodes") or []
+        if isinstance(node, dict) and node.get("name")
+    }
+    findings: list[str] = []
+    for probe in probes:
+        if probe.kind != "sheets_update" or not probe.covered:
+            continue
+        matching_columns: list[str] = []
+        for record in records:
+            if record.get("node") == probe.name and isinstance(
+                record.get("matching_columns"), list
+            ):
+                matching_columns = [
+                    str(column) for column in record["matching_columns"] if str(column).strip()
+                ]
+                break
+        if not matching_columns:
+            continue
+
+        pending = _upstream_source_names(connections, probe.name)
+        seen_nodes: set[str] = set()
+        read_nodes: list[str] = []
+        while pending:
+            name = pending.pop()
+            if name in seen_nodes:
+                continue
+            seen_nodes.add(name)
+            node = nodes_by_name.get(name, {})
+            parameters = node.get("parameters") if isinstance(node.get("parameters"), dict) else {}
+            if node.get("type") == "n8n-nodes-base.googleSheets" and str(
+                parameters.get("operation") or ""
+            ).lower() in {"read", "get", "getall"}:
+                read_nodes.append(name)
+            pending.extend(_upstream_source_names(connections, name))
+
+        if not read_nodes:
+            findings.append(
+                f"The write-back '{probe.name}' has no safe upstream dataset from which "
+                "identity uniqueness can be verified. Ask the user to select or add a unique "
+                "ID field before running real actions."
+            )
+            continue
+
+        source_items: list[dict[str, Any]] = []
+        for read_node in read_nodes:
+            source_items.extend(
+                item for item in _node_output_items(run_data, read_node) if isinstance(item, dict)
+            )
+        if not source_items:
+            continue
+
+        identities: set[tuple[str, ...]] = set()
+        invalid = False
+        for item in source_items:
+            identity = tuple(str(item.get(column) or "").strip() for column in matching_columns)
+            if any(not part for part in identity):
+                findings.append(
+                    f"The upstream dataset for write-back '{probe.name}' contains an empty "
+                    "identity value. Choose a complete unique ID field before running actions."
+                )
+                invalid = True
+                break
+            if identity in identities:
+                findings.append(
+                    f"The upstream dataset for write-back '{probe.name}' contains duplicate "
+                    "identity values. Email, name, and other business fields are not assumed "
+                    "unique; choose or add a dedicated ID field."
+                )
+                invalid = True
+                break
+            identities.add(identity)
+        if invalid:
+            continue
+    return findings
+
+
+def _mask_target(value: Any) -> str:
+    text = str(value or "").strip()
+    if "@" not in text:
+        return "***" if text else ""
+    local, domain = text.rsplit("@", 1)
+    visible = local[:1] if local else ""
+    return f"{visible}***@{domain}"
+
+
+def _preview_actions(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    preview: list[dict[str, Any]] = []
+    for record in records[:5]:
+        kind = str(record.get("kind") or "")
+        if kind == "gmail_send":
+            preview.append(
+                {
+                    "kind": kind,
+                    "node": str(record.get("node") or ""),
+                    "target": _mask_target(record.get("target")),
+                    "subject": str(record.get("subject") or "")[:160],
+                    "message": str(record.get("message") or "")[:500],
+                }
+            )
+        elif kind == "sheets_update":
+            preview.append(
+                {
+                    "kind": kind,
+                    "node": str(record.get("node") or ""),
+                    "matching_columns": list(record.get("matching_columns") or []),
+                }
+            )
+    return preview
+
+
 def _check_empty_outputs(
     detail: dict[str, Any], clone_workflow: dict[str, Any], neutralized: list[str]
 ) -> list[str]:
@@ -172,7 +389,10 @@ def _check_empty_outputs(
         sources = _upstream_source_names(connections, name)
         if not sources:
             continue
-        if all(_items_are_empty(_node_output_items(run_data, src)) for src in sources):
+        source_items = [_node_output_items(run_data, src) for src in sources]
+        # A filter legitimately producing zero items is a clean no-op. Flag only
+        # when items reached the action boundary but every field is blank.
+        if any(source_items) and all(_items_are_empty(items) for items in source_items):
             findings.append(
                 f"The step '{name}' would receive empty data, so its result would be blank."
             )
@@ -258,48 +478,160 @@ async def _run_judge(intent: str, action_summaries: list[dict[str, Any]]) -> Jud
 class SandboxTestResult:
     passed: bool
     skipped: bool = False
+    status: str = "needs_attention"
+    coverage: str = "none"
     findings: list[str] = field(default_factory=list)
     failed_node: str | None = None
     empty_fields: list[str] = field(default_factory=list)
     judge_issue: str | None = None
     execution_id: str | None = None
+    eligible_count: int | None = None
+    action_count: int | None = None
+    writeback_count: int | None = None
+    preview_actions: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _sandbox_rule_code(finding: str) -> str:
+    lowered = finding.lower()
+    if "duplicate" in lowered and "identity" in lowered:
+        return "identity_duplicate"
+    if "empty identity" in lowered or "identity value" in lowered:
+        return "identity_empty"
+    if "no matching identity" in lowered or "no safe upstream dataset" in lowered:
+        return "identity_missing"
+    if "counts do not match" in lowered:
+        return "count_mismatch"
+    if "empty" in lowered or "blank" in lowered:
+        return "required_field_empty"
+    if "contract" in lowered or "coverage" in lowered:
+        return "contract_coverage_missing"
+    if "execution" in lowered:
+        return "execution_failed"
+    return "semantic_quality_finding"
+
+
+def _log_sandbox_result(workflow: dict[str, Any], result: SandboxTestResult) -> None:
+    log.info(
+        "sandbox_test_finished",
+        workflow_id=str(workflow.get("id") or ""),
+        fingerprint=workflow_fingerprint(workflow),
+        passed=result.passed,
+        status=result.status,
+        coverage=result.coverage,
+        skipped=result.skipped,
+        failed_node=result.failed_node,
+        eligible_count=result.eligible_count,
+        action_count=result.action_count,
+        writeback_count=result.writeback_count,
+        rule_codes=sorted({_sandbox_rule_code(finding) for finding in result.findings}),
+    )
 
 
 async def _evaluate_sandbox_run(
-    detail: dict[str, Any], clone_workflow: dict[str, Any], neutralized: list[str], intent: str
+    detail: dict[str, Any], clone_workflow: dict[str, Any], probes: list[ActionProbe], intent: str
 ) -> SandboxTestResult:
     summary = _summarize_execution(detail, workflow=clone_workflow)
     if summary.status in {"error", "failed"} or summary.error:
         return SandboxTestResult(
             passed=False,
+            status="needs_attention",
+            coverage="full" if all(probe.covered for probe in probes) else "partial",
             findings=[summary.error or "Workflow execution failed."],
             failed_node=summary.failedNode,
             execution_id=summary.executionId,
         )
 
-    empty = _check_empty_outputs(detail, clone_workflow, neutralized)
+    action_names = [probe.name for probe in probes]
+    empty = _check_empty_outputs(detail, clone_workflow, action_names)
     if empty:
         return SandboxTestResult(
-            passed=False, findings=empty, empty_fields=empty, execution_id=summary.executionId
+            passed=False,
+            status="needs_attention",
+            coverage="full" if all(probe.covered for probe in probes) else "partial",
+            findings=empty,
+            empty_fields=empty,
+            execution_id=summary.executionId,
         )
 
     # Return-only / read-only workflows (fetch-and-return, lookups) have no
     # side-effect action node to neutralize, so the action judge has nothing to
     # assess and would falsely fail them ("no action steps"). The run succeeded
     # and no upstream was flagged empty above, so the data path works: pass.
-    if not neutralized:
-        return SandboxTestResult(passed=True, execution_id=summary.executionId)
+    if not probes:
+        return SandboxTestResult(
+            passed=True, status="passed", coverage="full", execution_id=summary.executionId
+        )
 
-    verdict = await _run_judge(intent, _action_summaries(detail, clone_workflow, neutralized))
+    records = _probe_records(detail, probes)
+    deterministic_findings = [
+        *_probe_findings(records, probes),
+        *_identity_preflight_findings(detail, clone_workflow, records, probes),
+    ]
+    action_count = sum(1 for item in records if item.get("kind") == "gmail_send")
+    writeback_count = sum(1 for item in records if item.get("kind") == "sheets_update")
+    eligible_count = max(action_count, writeback_count)
+    coverage = "full" if all(probe.covered for probe in probes) else "partial"
+    if deterministic_findings:
+        return SandboxTestResult(
+            passed=False,
+            status="needs_attention",
+            coverage=coverage,
+            findings=deterministic_findings,
+            execution_id=summary.executionId,
+            eligible_count=eligible_count,
+            action_count=action_count,
+            writeback_count=writeback_count,
+            preview_actions=_preview_actions(records),
+        )
+    if eligible_count == 0 and all(probe.covered for probe in probes):
+        return SandboxTestResult(
+            passed=True,
+            status="no_action",
+            coverage="full",
+            execution_id=summary.executionId,
+            eligible_count=0,
+            action_count=0,
+            writeback_count=0,
+            preview_actions=[],
+        )
+    if coverage == "partial":
+        return SandboxTestResult(
+            passed=True,
+            status="partial_coverage",
+            coverage="partial",
+            findings=["Some action nodes do not yet have deterministic sandbox contracts."],
+            execution_id=summary.executionId,
+            eligible_count=eligible_count,
+            action_count=action_count,
+            writeback_count=writeback_count,
+            preview_actions=_preview_actions(records),
+        )
+
+    verdict = await _run_judge(intent, records[:6])
     if not verdict.ok:
         return SandboxTestResult(
             passed=False,
+            status="needs_attention",
+            coverage=coverage,
             findings=[verdict.issue or "The result may not match the request."],
             judge_issue=verdict.issue or None,
             execution_id=summary.executionId,
+            eligible_count=eligible_count,
+            action_count=action_count,
+            writeback_count=writeback_count,
+            preview_actions=_preview_actions(records),
         )
 
-    return SandboxTestResult(passed=True, execution_id=summary.executionId)
+    return SandboxTestResult(
+        passed=True,
+        status="passed",
+        coverage=coverage,
+        execution_id=summary.executionId,
+        eligible_count=eligible_count,
+        action_count=action_count,
+        writeback_count=writeback_count,
+        preview_actions=_preview_actions(records),
+    )
 
 
 async def run_sandbox_test(
@@ -308,19 +640,26 @@ async def run_sandbox_test(
     user_id: str,
     input_schema: list[WorkflowInputField],
     intent: str,
+    input_payload: dict[str, Any] | None = None,
 ) -> SandboxTestResult:
     name = str(workflow.get("name") or "Workflow")
     clone = _build_test_clone(workflow)
     if clone is None:
-        return SandboxTestResult(
+        result = SandboxTestResult(
             passed=False,
             skipped=True,
             findings=["No webhook/manual trigger to drive a safe test (e.g. schedule-only)."],
         )
+        _log_sandbox_result(workflow, result)
+        return result
 
     clone_nodes, clone_connections, path = clone
-    neutralized = neutralize_action_nodes(clone_nodes)
-    sample = _sample_input_for_schema(input_schema) or {"source": "conduut_test"}
+    probes = replace_action_nodes_with_probes(clone_nodes)
+    sample = (
+        dict(input_payload)
+        if input_payload is not None
+        else (_sample_input_for_schema(input_schema) or {"source": "conduut_test"})
+    )
 
     created = await n8n_client.create_workflow(
         name=f"[conduut-test] {name}"[:120],
@@ -347,16 +686,12 @@ async def run_sandbox_test(
             log.warning("sandbox_clone_delete_failed", clone_id=created.id, error=str(exc))
 
     if detail is None:
-        return SandboxTestResult(
+        result = SandboxTestResult(
             passed=False, skipped=True, findings=["The sandbox run produced no execution details."]
         )
+        _log_sandbox_result(workflow, result)
+        return result
 
-    result = await _evaluate_sandbox_run(detail, clone_workflow, neutralized, intent)
-    log.info(
-        "sandbox_test_finished",
-        workflow_id=str(workflow.get("id") or ""),
-        passed=result.passed,
-        skipped=result.skipped,
-        failed_node=result.failed_node,
-    )
+    result = await _evaluate_sandbox_run(detail, clone_workflow, probes, intent)
+    _log_sandbox_result(workflow, result)
     return result

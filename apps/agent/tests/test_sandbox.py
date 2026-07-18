@@ -89,14 +89,18 @@ def test_build_test_clone_converts_manual_trigger():
     assert nodes[0]["parameters"]["path"] == path
 
 
-def test_build_test_clone_returns_none_for_schedule_only():
+def test_build_test_clone_converts_schedule_trigger():
     workflow = {
         "id": "real-3",
         "name": "Demo",
         "nodes": [{"name": "Cron", "type": "n8n-nodes-base.scheduleTrigger", "parameters": {}}],
         "connections": {},
     }
-    assert _build_test_clone(workflow) is None
+    clone = _build_test_clone(workflow)
+    assert clone is not None
+    nodes, _connections, path = clone
+    assert nodes[0]["type"] == "n8n-nodes-base.webhook"
+    assert nodes[0]["parameters"]["path"] == path
 
 
 def _detail_with_run_data(run_data):
@@ -240,9 +244,17 @@ async def test_run_sandbox_test_passes_and_deletes_clone(monkeypatch):
     )
     assert result.passed is True
     assert deleted["called"] is True
-    # The action node must be neutralized in the clone that was created.
+    # The action node is replaced by an expression-aware, side-effect-free probe.
     send = next(n for n in created["nodes"] if n["name"] == "Send")
-    assert send["disabled"] is True
+    assert send["type"] == "n8n-nodes-base.set"
+    assert "credentials" not in send
+    assigned = send["parameters"]["assignments"]["assignments"]
+    assert {item["name"] for item in assigned} >= {
+        "id",
+        "threadId",
+        "labelIds",
+        "__conduut_probe",
+    }
 
 
 @pytest.mark.asyncio
@@ -299,12 +311,75 @@ async def test_run_sandbox_test_passes_return_only_workflow_without_judge(monkey
 
 
 @pytest.mark.asyncio
-async def test_run_sandbox_test_skips_schedule_only(monkeypatch):
+async def test_run_sandbox_test_drives_schedule_clone(monkeypatch):
     workflow = {
         "id": "real-9",
         "name": "Cron",
         "nodes": [{"name": "Cron", "type": "n8n-nodes-base.scheduleTrigger", "parameters": {}}],
         "connections": {},
     }
+    _wire_fake_n8n(monkeypatch, _success_detail())
     result = await sandbox.run_sandbox_test(workflow, user_id="u1", input_schema=[], intent="Cron")
-    assert result.skipped is True
+    assert result.passed is True
+    assert result.status == "passed"
+
+
+def test_identity_preflight_checks_full_upstream_read_dataset():
+    probes = [
+        sandbox.ActionProbe(
+            name="Update Status",
+            kind="sheets_update",
+            covered=True,
+            original_type="n8n-nodes-base.googleSheets",
+        )
+    ]
+    records = [
+        {
+            "node": "Update Status",
+            "kind": "sheets_update",
+            "matching_columns": ["email"],
+            "matching_values": {"email": "masked@example.com"},
+        }
+    ]
+    detail = {
+        "data": {
+            "resultData": {
+                "runData": {
+                    "Read Sheet": [
+                        {
+                            "data": {
+                                "main": [
+                                    [
+                                        {"json": {"email": "duplicate@example.com"}},
+                                        {"json": {"email": "duplicate@example.com"}},
+                                    ]
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    }
+    workflow = {
+        "nodes": [
+            {
+                "name": "Read Sheet",
+                "type": "n8n-nodes-base.googleSheets",
+                "parameters": {"operation": "read"},
+            },
+            {
+                "name": "Update Status",
+                "type": "n8n-nodes-base.set",
+                "parameters": {},
+            },
+        ],
+        "connections": {
+            "Read Sheet": {"main": [[{"node": "Update Status", "type": "main", "index": 0}]]}
+        },
+    }
+
+    findings = sandbox._identity_preflight_findings(detail, workflow, records, probes)
+
+    assert len(findings) == 1
+    assert "not assumed unique" in findings[0]

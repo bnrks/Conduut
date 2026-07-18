@@ -6,10 +6,18 @@ export interface ExecutionReference {
   workflow_name?: string;
 }
 
+export interface UserInputResponse {
+  request_id: string;
+  request_kind: "workflow_run_approval";
+  workflow_id: string;
+  decision: "approve" | "cancel";
+}
+
 export interface ChatSendRequest {
   content: string;
   conversation_id?: string;
   execution_reference?: ExecutionReference;
+  user_input_response?: UserInputResponse;
 }
 
 export interface ChatStreamEvent {

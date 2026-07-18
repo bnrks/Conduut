@@ -719,3 +719,63 @@ koruyan typed hata sinifi kullanir. Bu MVP davranisi
 
 Ilgili notlar: [[n8n-registry]], [[chat-workflow-generation]],
 [[known-issues]].
+
+## Workflow Assurance V1 (2026-07-16)
+
+[[adr-0019-workflow-assurance-v1]] ile workflow create/update/run zincirine
+ortak assurance katmani eklendi:
+
+- Build pipeline native n8n JSON'i `agent/assurance` contract katalogu ile
+  statik olarak inceler ve canonical fingerprint hesaplar. Schedule +
+  Gmail/Sheets write-back akislari ilk action oncesinde runtime identity guard
+  ile korunur.
+- Sandbox V2 Gmail/Sheets side effect node'larini probe/stub'a cevirir;
+  action/write-back count, bos required field ve identity riskini PII-safe
+  ledger'da uzlastirir. Sonuc fingerprint ile metadata'ya yazilir.
+- `WorkflowRunResultData` raw `status` yaninda `functionalStatus`, `assessment`
+  ve `claimableOutcome` tasir. HTTP route'lari ayni veriyi snake_case additive
+  contract ile sunar; `success` yalniz `verified/no_action` icindir.
+- `/preview-run` ve `/batch-preview` endpoint'leri side-effect run oncesi safe
+  probe sonucu ve fingerprint/input-hash bagli, tek kullanimlik 10 dakikalik
+  token verir. Run ve batch-run tokeni atomik tuketir; stale veya consumed token
+  409 ile reddedilir. Chat `execute_workflow` tool'u da side-effect workflow'da
+  ayni preview servisini kullanir, maskeli count/hedef ozetini gosterip
+  `request_user_input` ile kullanici onayi bekler; sonraki turda yalniz gercek
+  tek-kullanimlik token ile execution'a gecebilir.
+- AgentDeps evidence ledger'i create/sandbox/run/inspect kanitini claim
+  seviyesinde tutar. Output validator kaniti asan basari iddiasini once retry
+  eder, tekrarinda deterministic safe summary kullanir.
+- Chat run preview onayi structured bir round-trip'tir: attachment opaque
+  `requestId` + `workflowId` tasir, frontend `user_input_response` gonderir,
+  route bunu authenticated user attachment'i olarak saklar ve runner yalniz
+  son user mesajindaki karari AgentDeps'e yukler. Token prompt metnine
+  eklenmez; server-side decision modelin yazdigi tokeni override eder ve bir
+  kez tuketilir. Eski onaylar sonraki serbest mesajlarda yeniden kullanilmaz.
+- Agent bir `user_input_request` beklerken output claim validator kanittan
+  yuksek bir cumle gorurse yeni `ModelRetry` baslatmaz. Preview approval kendi
+  deterministik "onizleme hazir, henuz side effect yok" ozetini; diger eksik
+  alan/credential akislari genel "kullanici girdisi bekleniyor" ozetini
+  kullanir. Persisted request karti tek otorite kalir; modelin
+  readiness/execution tool'larina geri donmesi ve tek onayin iki izin gibi
+  gorunmesi engellenir.
+- Preview token gecersiz/stale/consumed ise veya known-side-effect sandbox
+  harness'i calisamaz ya da repair butcesi biterse `awaiting_user_input` ayni
+  turdaki yeni mutation denemelerini kapatir. Boylece ayni izin sorusu veya
+  ayni sandbox duzeltmesi model loop'u icinde tekrar tekrar uretilmez.
+- Preview consume sirasi validation-first'tur: single/batch runtime input
+  metadata schema'sina gore kontrol edilmeden token transaction'da silinmez;
+  fingerprint veya input hash uyusmazligi da tokeni yakmaz. Activation
+  assurance'i `input_payload=None` ile schema sample'i uretir. Ilk gercek run
+  oncesindeki gecikmis sandbox pretest'i varsa kullanicinin gercek input'u
+  `_test_and_gate` uzerinden probe'a aktarilir.
+- `list_credentials` custom/service API credential kutuphanesine ozeldir;
+  managed Gmail/Sheets Connections durumunu temsil etmez. Platform-state bu
+  iki listeyi ayri etiketler ve workflow node'u icin baglanti otoritesi
+  `analyze_workflow_readiness` sonucudur.
+
+Rollout `CONDUUT_WORKFLOW_ASSURANCE_MODE` ile `observe|hybrid|enforce` olarak
+yonetilir; varsayilan `hybrid`'dir. Dashboard single/batch sonucu raw n8n
+status yerine functional status ile renklendirir ve execution evidence'ini
+Runs sayfasina baglar. n8n request debug loglari workflow/runtime payload
+degerlerini yazmaz; yalniz payload key'leri, node type/count, connection count
+ve row count gibi PII-safe teknik sekil ozeti tutulur.

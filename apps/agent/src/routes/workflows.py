@@ -9,7 +9,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src import n8n_client, store
-from src.agent.schemas import WorkflowBatchRowResultData, WorkflowBatchRunResultData
+from src.agent.schemas import (
+    WorkflowBatchRowResultData,
+    WorkflowBatchRunResultData,
+    WorkflowRunAssessment,
+)
 from src.agent.tools import (
     _input_schema_payload,
     _workflow_input_schema_from_metadata,
@@ -17,6 +21,12 @@ from src.agent.tools import (
     iter_workflow_batch_with_input,
     run_workflow_batch_with_input,
     run_workflow_with_input,
+)
+from src.agent.workflow_preview import (
+    consume_workflow_preview,
+    preview_workflow_batch,
+    preview_workflow_run,
+    workflow_requires_preview,
 )
 from src.auth import get_user_id
 
@@ -27,6 +37,7 @@ log = structlog.get_logger()
 class WorkflowRunRequest(BaseModel):
     input: dict[str, Any] = Field(default_factory=dict)
     source: Literal["dashboard", "agent"] = "dashboard"
+    previewToken: str | None = None
 
 
 class WorkflowBatchRunRowRequest(BaseModel):
@@ -42,16 +53,71 @@ class WorkflowBatchRunRequest(BaseModel):
     rows: list[WorkflowBatchRunRowRequest] = Field(min_length=1, max_length=50)
     source: Literal["dashboard"] = "dashboard"
     options: WorkflowBatchRunOptions = Field(default_factory=WorkflowBatchRunOptions)
+    previewToken: str | None = None
 
 
 def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _assessment_payload(assessment: WorkflowRunAssessment) -> dict[str, Any]:
+    return {
+        "transport_ok": assessment.transportOk,
+        "execution_ok": assessment.executionOk,
+        "coverage": assessment.coverage,
+        "eligible_count": assessment.eligibleCount,
+        "action_count": assessment.actionCount,
+        "writeback_count": assessment.writebackCount,
+        "postconditions_verified": assessment.postconditionsVerified,
+        "duplicate_risk": assessment.duplicateRisk,
+        "warnings": [
+            {
+                "code": warning.code,
+                "severity": warning.severity,
+                "node_name": warning.nodeName,
+                "message": warning.message,
+            }
+            for warning in assessment.warnings
+        ],
+        "evidence": [
+            {
+                "kind": item.kind,
+                "node_name": item.nodeName,
+                "node_type": item.nodeType,
+                "mutation": item.mutation,
+                "run_status": item.runStatus,
+                "output_item_count": item.outputItemCount,
+            }
+            for item in assessment.evidence
+        ],
+        "transport_status_code": assessment.transportStatusCode,
+        "configured_mutation_nodes": assessment.configuredMutationNodes,
+        "executed_mutation_nodes": assessment.executedMutationNodes,
+        "successful_mutation_nodes": assessment.successfulMutationNodes,
+        "zero_output_mutation_nodes": assessment.zeroOutputMutationNodes,
+        "run_data_hints": [
+            {
+                "node_name": hint.nodeName,
+                "node_type": hint.nodeType,
+                "mutation": hint.mutation,
+                "run_status": hint.runStatus,
+                "branch_item_counts": hint.branchItemCounts,
+                "output_item_count": hint.outputItemCount,
+                "has_error": hint.hasError,
+            }
+            for hint in assessment.runDataHints
+        ],
+        "reasons": assessment.reasons,
+    }
+
+
 def _batch_row_payload(row: WorkflowBatchRowResultData) -> dict[str, Any]:
     return {
         "rowNumber": row.rowNumber,
         "status": row.status,
+        "functional_status": row.functionalStatus,
+        "assessment": _assessment_payload(row.assessment),
+        "claimable_outcome": row.claimableOutcome,
         "execution_id": row.executionId,
         "summary": row.summary,
         "error": row.error,
@@ -65,7 +131,11 @@ def _batch_row_payload(row: WorkflowBatchRowResultData) -> dict[str, Any]:
 
 def _batch_result_payload(result: WorkflowBatchRunResultData) -> dict[str, Any]:
     return {
-        "success": result.status != "failed",
+        "success": (
+            result.failed == 0
+            and result.skipped == 0
+            and all(row.functionalStatus in {"verified", "no_action"} for row in result.results)
+        ),
         "workflow_id": result.workflowId,
         "batchRunId": result.batchRunId,
         "status": result.status,
@@ -73,6 +143,11 @@ def _batch_result_payload(result: WorkflowBatchRunResultData) -> dict[str, Any]:
         "succeeded": result.succeeded,
         "failed": result.failed,
         "skipped": result.skipped,
+        "verified": result.verified,
+        "no_action": result.noAction,
+        "partial": result.partial,
+        "needs_attention": result.needsAttention,
+        "unknown": result.unknown,
         "results": [_batch_row_payload(row) for row in result.results],
     }
 
@@ -148,6 +223,22 @@ async def activate_workflow(workflow_id: str, request: Request):
                 status_code=409,
                 detail={"message": "Workflow has missing credentials."},
             )
+        if workflow_requires_preview(workflow):
+            assurance = await preview_workflow_run(
+                workflow,
+                user_id=user_id,
+                input_payload=None,
+                issue_token=False,
+            )
+            if not assurance.get("ready") or assurance.get("coverage") != "full":
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "workflow_assurance_required",
+                        "message": "The workflow safety check needs attention before activation.",
+                        "assurance": assurance,
+                    },
+                )
         await n8n_client.activate_workflow(workflow_id)
     except n8n_client.N8nApiError as e:
         raise HTTPException(status_code=e.status_code, detail={"message": e.message}) from e
@@ -175,10 +266,24 @@ async def run_workflow(workflow_id: str, request: Request, body: WorkflowRunRequ
                 status_code=409,
                 detail={"message": "Workflow has missing credentials."},
             )
+        input_payload = body.input if body else {}
+        if not await consume_workflow_preview(
+            workflow,
+            user_id=user_id,
+            input_payload=input_payload,
+            preview_token=body.previewToken if body else None,
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "workflow_preview_required",
+                    "message": "Review and confirm the safe action preview before running.",
+                },
+            )
         result = await run_workflow_with_input(
             workflow,
             user_id=user_id,
-            input_payload=(body.input if body else {}),
+            input_payload=input_payload,
         )
         for artifact in result.artifacts:
             try:
@@ -200,10 +305,13 @@ async def run_workflow(workflow_id: str, request: Request, body: WorkflowRunRequ
                     exc_info=True,
                 )
         return {
-            "success": result.status not in {"error", "failed"},
+            "success": result.functionalStatus in {"verified", "no_action"},
             "workflow_id": workflow_id,
             "execution_id": result.executionId,
             "status": result.status,
+            "functional_status": result.functionalStatus,
+            "assessment": _assessment_payload(result.assessment),
+            "claimable_outcome": result.claimableOutcome,
             "summary": result.summary,
             "failed_node": result.failedNode,
             "error": result.error,
@@ -217,6 +325,37 @@ async def run_workflow(workflow_id: str, request: Request, body: WorkflowRunRequ
         raise HTTPException(status_code=422, detail={"message": str(e)}) from e
     except n8n_client.N8nApiError as e:
         raise HTTPException(status_code=e.status_code, detail={"message": e.message}) from e
+
+
+@router.post("/workflows/{workflow_id}/preview-run")
+async def preview_run_workflow(
+    workflow_id: str, request: Request, body: WorkflowRunRequest | None = None
+):
+    """Resolve a side-effect-free preview and return a short-lived approval token."""
+
+    user_id = get_user_id(request)
+    workflow = await n8n_client.get_workflow(workflow_id)
+    readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id)
+    if readiness["missing_credentials"]:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Workflow has missing credentials."},
+        )
+    if not workflow_requires_preview(workflow):
+        return {
+            "workflow_id": workflow_id,
+            "ready": True,
+            "status": "not_required",
+            "coverage": "full",
+        }
+    result = await preview_workflow_run(
+        workflow,
+        user_id=user_id,
+        input_payload=body.input if body else {},
+    )
+    if not result.get("ready"):
+        raise HTTPException(status_code=409, detail=result)
+    return result
 
 
 @router.post("/workflows/{workflow_id}/batch-run")
@@ -236,10 +375,24 @@ async def batch_run_workflow(
                 status_code=409,
                 detail={"message": "Workflow has missing credentials."},
             )
+        rows = [row.model_dump() for row in body.rows]
+        if not await consume_workflow_preview(
+            workflow,
+            user_id=user_id,
+            input_payload={"rows": rows},
+            preview_token=body.previewToken,
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "workflow_preview_required",
+                    "message": "Review and confirm the safe batch preview before running.",
+                },
+            )
         result = await run_workflow_batch_with_input(
             workflow,
             user_id=user_id,
-            rows=[row.model_dump() for row in body.rows],
+            rows=rows,
         )
         for row in result.results:
             await _persist_batch_row_artifacts(user_id, workflow_id, result.batchRunId, row)
@@ -248,6 +401,34 @@ async def batch_run_workflow(
         raise HTTPException(status_code=422, detail={"message": str(e)}) from e
     except n8n_client.N8nApiError as e:
         raise HTTPException(status_code=e.status_code, detail={"message": e.message}) from e
+
+
+@router.post("/workflows/{workflow_id}/batch-preview")
+async def preview_batch_run_workflow(
+    workflow_id: str,
+    request: Request,
+    body: WorkflowBatchRunRequest,
+):
+    user_id = get_user_id(request)
+    workflow = await n8n_client.get_workflow(workflow_id)
+    readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id)
+    if readiness["missing_credentials"]:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Workflow has missing credentials."},
+        )
+    if not workflow_requires_preview(workflow):
+        return {
+            "workflow_id": workflow_id,
+            "ready": True,
+            "status": "not_required",
+            "coverage": "full",
+        }
+    rows = [row.model_dump() for row in body.rows]
+    result = await preview_workflow_batch(workflow, user_id=user_id, rows=rows)
+    if not result.get("ready"):
+        raise HTTPException(status_code=409, detail=result)
+    return result
 
 
 @router.post("/workflows/{workflow_id}/batch-run/stream")
@@ -267,6 +448,20 @@ async def stream_batch_run_workflow(
                 status_code=409,
                 detail={"message": "Workflow has missing credentials."},
             )
+        rows = [row.model_dump() for row in body.rows]
+        if not await consume_workflow_preview(
+            workflow,
+            user_id=user_id,
+            input_payload={"rows": rows},
+            preview_token=body.previewToken,
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "workflow_preview_required",
+                    "message": "Review and confirm the safe batch preview before running.",
+                },
+            )
     except n8n_client.N8nApiError as e:
         raise HTTPException(status_code=e.status_code, detail={"message": e.message}) from e
 
@@ -276,7 +471,7 @@ async def stream_batch_run_workflow(
             async for event, payload in iter_workflow_batch_with_input(
                 workflow,
                 user_id=user_id,
-                rows=[row.model_dump() for row in body.rows],
+                rows=rows,
             ):
                 if event == "started":
                     if isinstance(payload, dict):

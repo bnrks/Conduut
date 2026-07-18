@@ -58,6 +58,31 @@ def _raise_for_status(response: httpx.Response) -> None:
         ) from exc
 
 
+def _request_payload_summary(payload: Any) -> dict[str, Any] | None:
+    """Return technical shape/count metadata without workflow or user values."""
+
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        return {"type": type(payload).__name__}
+    summary: dict[str, Any] = {
+        "keys": sorted(str(key) for key in payload)[:20],
+    }
+    nodes = payload.get("nodes")
+    if isinstance(nodes, list):
+        summary["node_count"] = len(nodes)
+        summary["node_types"] = sorted(
+            {str(node.get("type")) for node in nodes if isinstance(node, dict) and node.get("type")}
+        )[:20]
+    connections = payload.get("connections")
+    if isinstance(connections, dict):
+        summary["connection_source_count"] = len(connections)
+    rows = payload.get("rows")
+    if isinstance(rows, list):
+        summary["row_count"] = len(rows)
+    return summary
+
+
 async def _request(method: str, path: str, **kwargs: Any) -> httpx.Response:
     started_at = perf_counter()
     log.debug(
@@ -65,7 +90,7 @@ async def _request(method: str, path: str, **kwargs: Any) -> httpx.Response:
         method=method.upper(),
         path=path,
         params=kwargs.get("params"),
-        payload=kwargs.get("json"),
+        payload_summary=_request_payload_summary(kwargs.get("json")),
     )
     try:
         async with _client() as c:
@@ -522,7 +547,11 @@ _WEBHOOK_RUN_TIMEOUT = 120.0
 async def call_webhook(path: str, payload: dict[str, Any] | None = None) -> httpx.Response:
     started_at = perf_counter()
     url = f"{settings.n8n_url.rstrip('/')}/webhook/{path}"
-    log.debug("n8n_webhook_request_started", path=path, payload=payload)
+    log.debug(
+        "n8n_webhook_request_started",
+        path=path,
+        payload_summary=_request_payload_summary(payload),
+    )
     try:
         async with httpx.AsyncClient(timeout=_WEBHOOK_RUN_TIMEOUT) as c:
             response = await c.post(url, json=payload or {})

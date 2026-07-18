@@ -127,3 +127,24 @@ muhakemesini kapatır.
 test-before-execute'in canlı doğrulaması: credential-ready / data-transform bir
 workflow'da kasıtlı yapısal hata (boş gövde) → execute öncesi sandbox yakalar →
 agent onarır. (Gmail auth hataları kapsam dışı kalmaya devam eder.)
+
+## 2026-07-16: Sandbox V2 ile supersede edilen kisimlar
+
+[[adr-0019-workflow-assurance-v1]] eski sandbox'in `disabled=true` pass-through
+tasarimini ve "harness build'i bloklamaz" fail-open davranisini degistirdi:
+
+- Bilinen Gmail Send ve Sheets update action'lari artik gercek node output
+  shape'ini taklit eden deterministik probe node'larina cevrilir.
+- Reserved `__conduut_probe` ledger'i resolve edilmis action girdisi, receipt ve
+  write-back sayilarini toplar; kullanici output'undan temizlenir ve hedefler
+  maskelenir.
+- Durumlar `passed | no_action | partial_coverage | needs_attention | skipped`,
+  coverage ise `full | partial | none` olarak saklanir.
+- Known side-effect workflow'da harness hatasi `observe` disinda fail-open
+  degildir; real run ve activation `needs_attention` ile durur.
+- LLM judge yalniz metin/semantik kaliteye yardimci olabilir; count, identity
+  ve dataflow dogrulugunun karar vericisi deterministik assessment'tir.
+- Fingerprint degisince onceki sandbox sonucu gecerli sayilmaz.
+
+Bu nedenle bu ADR'nin V1 sinirlari ve eski `disabled` uygulama ayrintilari
+tarihsel baglamdir; guncel karar ADR-0019'dur.

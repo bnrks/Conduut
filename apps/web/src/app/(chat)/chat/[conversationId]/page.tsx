@@ -11,7 +11,7 @@ import {
   type ClarificationPanelData,
 } from "@/components/chat/clarification-panel";
 import { useAuth } from "@/hooks/use-auth";
-import { streamChat } from "@/lib/chat/sse";
+import { streamChat, type UserInputResponse } from "@/lib/chat/sse";
 import { popConversationCache } from "@/lib/chat/conversation-cache";
 import { normalizeMessages } from "@/lib/chat/messages";
 import { toolActivityLabel } from "@/lib/chat/tool-activity";
@@ -102,7 +102,10 @@ export default function ConversationPage() {
     void loadConversation();
   }, [conversationId, user]);
 
-  const handleSend = async (content: string) => {
+  const handleSend = async (
+    content: string,
+    userInputResponse?: UserInputResponse
+  ) => {
     if (!user || isAgentTyping) return;
 
     const token = await user.getIdToken();
@@ -166,6 +169,7 @@ export default function ConversationPage() {
         body: {
           content,
           conversation_id: conversationId,
+          user_input_response: userInputResponse,
         },
         onEvent: (event) => {
           const result = reduceAssistantStreamEvent(assistantStream, event);
@@ -239,7 +243,9 @@ export default function ConversationPage() {
               <ClarificationPanel
                 key={clarification.messageId}
                 data={clarification.data}
-                onSubmit={(value) => { void handleSend(value); }}
+                onSubmit={(payload) => {
+                  void handleSend(payload.content, payload.structuredResponse);
+                }}
               />
             </div>
           </div>
@@ -248,7 +254,7 @@ export default function ConversationPage() {
             value={inputValue}
             onChange={setInputValue}
             onSend={(content) => { void handleSend(content); }}
-            disabled={!user}
+            disabled={!user || isAgentTyping}
           />
         )}
       </div>

@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     enable_tier_escalation: bool = True
     # Buffer+retry DeepSeek runs to absorb the #1244 plain-text-tool-call failure.
     enable_reliability_guard: bool = True
+    # Workflow assurance rollout: observe logs findings, hybrid enforces only
+    # deterministic rules, enforce also blocks incomplete contract coverage.
+    workflow_assurance_mode: str = "hybrid"
     # Fixed, cheap Gemini model used for decoupled web-search research
     # (API auth discovery). Provider-independent of the conversational tier.
     research_model: str = "gemini-2.5-flash"

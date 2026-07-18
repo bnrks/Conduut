@@ -27,6 +27,7 @@ class CredentialSummary:
     credential_type: str
     host: str
     status: str
+    source: str
 
 
 @dataclass
@@ -78,6 +79,11 @@ async def gather_user_state(user_id: str) -> UserPlatformState:
                 credential_type=c.credential_type,
                 host=c.host,
                 status=c.status,
+                source=(
+                    "service API credential"
+                    if getattr(c, "match_kind", "host") == "type"
+                    else "custom API credential"
+                ),
             )
             for c in credentials
         ]
@@ -113,18 +119,18 @@ def render_user_state(state: UserPlatformState) -> str:
             if c.status != "connected":
                 label += " — needs reconnect"
             items.append(label)
-        lines.append("Connected services: " + ", ".join(items) + ".")
+        lines.append("Connected services (managed by Conduut): " + ", ".join(items) + ".")
     else:
-        lines.append("Connected services: none yet.")
+        lines.append("Connected services (managed by Conduut): none yet.")
 
     if state.credentials:
         items = []
         for c in state.credentials[:_MAX_ITEMS]:
             label = c.label or c.credential_type
-            tag = c.host or c.credential_type
+            tag = c.host or c.credential_type or c.source
             suffix = " (incomplete)" if c.status == "draft" else ""
-            items.append(f"'{label}' [{tag}]{suffix}")
-        lines.append("Saved credentials: " + ", ".join(items) + ".")
+            items.append(f"'{label}' [{c.source}: {tag}]{suffix}")
+        lines.append("Saved custom API credentials: " + ", ".join(items) + ".")
 
     if state.workflows:
         items = []

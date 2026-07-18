@@ -12,6 +12,7 @@ from src.agent.artifacts import build_gmail_workflow_artifacts, build_sheets_wor
 from src.agent.schemas import (
     WorkflowBatchRowResultData,
     WorkflowBatchRunResultData,
+    WorkflowRunAssessment,
     WorkflowRunResultData,
 )
 from src.agent.tools.common import _response_full, _response_preview
@@ -35,6 +36,7 @@ from src.agent.tools.workflow_helpers import (
 log = structlog.get_logger()
 
 _FAILED_RUN_STATUSES = {"error", "failed"}
+_CLAIMABLE_FUNCTIONAL_STATUSES = {"verified", "no_action"}
 _MAX_BATCH_ROWS = 50
 # Stop the real-execution retry loop after this many failures for one workflow,
 # so a workflow that keeps failing is surfaced to the user instead of thrashing
@@ -57,9 +59,15 @@ def execution_retry_guard(
     surface the error to the user instead of retrying or rebuilding.
     """
 
-    failed = result.status in _FAILED_RUN_STATUSES or bool(result.error)
-    if not failed:
+    failed = (
+        result.functionalStatus in {"partial", "needs_attention", "failed"}
+        or result.status in _FAILED_RUN_STATUSES
+        or bool(result.error)
+    )
+    if result.functionalStatus in _CLAIMABLE_FUNCTIONAL_STATUSES and not failed:
         failures.pop(workflow_id, None)
+        return None
+    if not failed:
         return None
 
     count = failures.get(workflow_id, 0) + 1
@@ -71,6 +79,9 @@ def execution_retry_guard(
         "success": False,
         "workflow_id": workflow_id,
         "status": result.status,
+        "functionalStatus": result.functionalStatus,
+        "assessment": result.assessment.model_dump(exclude_none=True),
+        "claimableOutcome": result.claimableOutcome,
         "error": result.error,
         "stop_retrying": True,
         "instruction": (
@@ -166,6 +177,11 @@ async def iter_workflow_batch_with_input(
     succeeded = 0
     failed = 0
     skipped = 0
+    verified = 0
+    no_action = 0
+    partial = 0
+    needs_attention = 0
+    unknown = 0
     total_rows = len(rows)
 
     yield (
@@ -221,21 +237,36 @@ async def iter_workflow_batch_with_input(
             row_result_data = WorkflowBatchRowResultData(
                 rowNumber=row_number,
                 status="failed",
+                functionalStatus="failed",
+                claimableOutcome="none",
                 error=str(exc),
             )
             results.append(row_result_data)
             yield "row_finished", row_result_data
             continue
 
-        row_status = "failed" if row_result.status in _FAILED_RUN_STATUSES else "success"
-        if row_status == "failed":
-            failed += 1
-        else:
+        row_status = row_result.status
+        if row_result.functionalStatus in _CLAIMABLE_FUNCTIONAL_STATUSES:
             succeeded += 1
+            if row_result.functionalStatus == "verified":
+                verified += 1
+            else:
+                no_action += 1
+        else:
+            failed += 1
+            if row_result.functionalStatus == "partial":
+                partial += 1
+            elif row_result.functionalStatus == "needs_attention":
+                needs_attention += 1
+            elif row_result.functionalStatus == "unknown":
+                unknown += 1
         results.append(
             WorkflowBatchRowResultData(
                 rowNumber=row_number,
                 status=row_status,
+                functionalStatus=row_result.functionalStatus,
+                assessment=row_result.assessment,
+                claimableOutcome=row_result.claimableOutcome,
                 executionId=row_result.executionId,
                 summary=row_result.summary,
                 error=row_result.error,
@@ -266,6 +297,11 @@ async def iter_workflow_batch_with_input(
             succeeded=succeeded,
             failed=failed,
             skipped=skipped,
+            verified=verified,
+            noAction=no_action,
+            partial=partial,
+            needsAttention=needs_attention,
+            unknown=unknown,
             results=results,
         ),
     )
@@ -347,6 +383,12 @@ async def _run_prepared_webhook_workflow(
             workflowId=workflow_id,
             status="error",
             summary="Workflow webhook returned an error response.",
+            functionalStatus="failed",
+            assessment=WorkflowRunAssessment(
+                transportStatusCode=webhook_response.status_code,
+                reasons=[f"The workflow transport returned HTTP {webhook_response.status_code}."],
+            ),
+            claimableOutcome="none",
             error=webhook_response.text[:500],
             response=response,
         )
@@ -363,6 +405,12 @@ async def _run_prepared_webhook_workflow(
             workflowId=workflow_id,
             status="triggered",
             summary="Workflow trigger was accepted. n8n has not exposed execution details yet.",
+            functionalStatus="unknown",
+            assessment=WorkflowRunAssessment(
+                transportStatusCode=webhook_response.status_code,
+                reasons=["No execution run data was available to verify the outcome."],
+            ),
+            claimableOutcome="none",
             response=response,
         )
 

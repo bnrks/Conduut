@@ -9,11 +9,26 @@ export interface ClarificationChoice {
   value?: string;
 }
 
+export interface ClarificationStructuredResponse {
+  request_id: string;
+  request_kind: "workflow_run_approval";
+  workflow_id: string;
+  decision: "approve" | "cancel";
+}
+
+export interface ClarificationSubmitPayload {
+  content: string;
+  structuredResponse?: ClarificationStructuredResponse;
+}
+
 export interface ClarificationPanelData {
   question: string;
   missingFields?: string[];
   choices?: Array<ClarificationChoice | string>;
   reason?: string;
+  requestId?: string;
+  requestKind?: string;
+  workflowId?: string;
 }
 
 export function ClarificationPanel({
@@ -22,7 +37,7 @@ export function ClarificationPanel({
   className,
 }: {
   data: ClarificationPanelData;
-  onSubmit: (value: string) => void;
+  onSubmit: (payload: ClarificationSubmitPayload) => void;
   className?: string;
 }) {
   const [customValue, setCustomValue] = useState("");
@@ -62,13 +77,36 @@ export function ClarificationPanel({
     hasFieldInputs &&
     missingFields.every((field) => fieldValues[field]?.trim().length > 0);
 
-  const submit = (value: string) => {
+  const submit = (
+    value: string,
+    structuredResponse?: ClarificationStructuredResponse
+  ) => {
     const trimmed = value.trim();
     if (!trimmed) return;
-    onSubmit(trimmed);
+    onSubmit({ content: trimmed, structuredResponse });
     setCustomValue("");
     setSelectedValue("");
     setFieldValues({});
+  };
+
+  const buildStructuredResponse = (
+    choice: ClarificationChoice
+  ): ClarificationStructuredResponse | undefined => {
+    if (
+      data.requestKind !== "workflow_run_approval" ||
+      !data.requestId ||
+      !data.workflowId ||
+      (choice.value !== "approve" && choice.value !== "cancel")
+    ) {
+      return undefined;
+    }
+
+    return {
+      request_id: data.requestId,
+      request_kind: "workflow_run_approval",
+      workflow_id: data.workflowId,
+      decision: choice.value,
+    };
   };
 
   const submitCustom = (event: FormEvent) => {
@@ -89,17 +127,20 @@ export function ClarificationPanel({
     submit(customValue);
   };
 
-  const applyChoice = (value: string) => {
+  const applyChoice = (choice: ClarificationChoice) => {
+    const value = choice.value || choice.label;
+    const structuredResponse = buildStructuredResponse(choice);
+    const displayValue = structuredResponse ? choice.label : value;
     setSelectedValue(value);
     if (choiceField) {
       setFieldValues((current) => ({ ...current, [choiceField]: value }));
       return;
     }
     if (missingFields.length === 1) {
-      submit(`${missingFields[0]}: ${value}`);
+      submit(`${missingFields[0]}: ${displayValue}`, structuredResponse);
       return;
     }
-    submit(value);
+    submit(displayValue, structuredResponse);
   };
 
   return (
@@ -157,7 +198,7 @@ export function ClarificationPanel({
                 key={`${choice.label}-${index}`}
                 type="button"
                 onClick={() => {
-                  applyChoice(value);
+                  applyChoice(choice);
                 }}
                 className={cn(
                   "flex min-h-11 items-center gap-2 rounded-lg border px-3 text-left",
@@ -206,7 +247,7 @@ export function ClarificationPanel({
                           key={`${choice.label}-${index}`}
                           type="button"
                           onClick={() => {
-                            applyChoice(value);
+                            applyChoice(choice);
                           }}
                           className={cn(
                             "flex min-h-10 items-center gap-2 rounded-lg border px-3 text-left",

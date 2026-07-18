@@ -5,7 +5,13 @@ from src.agent.tools.workflow_runner import execution_retry_guard
 
 
 def _ok() -> WorkflowRunResultData:
-    return WorkflowRunResultData(workflowId="w1", status="success", summary="done")
+    return WorkflowRunResultData(
+        workflowId="w1",
+        status="success",
+        summary="done",
+        functionalStatus="verified",
+        claimableOutcome="run_verified",
+    )
 
 
 def _failed() -> WorkflowRunResultData:
@@ -51,3 +57,19 @@ def test_failures_are_isolated_per_workflow():
     assert execution_retry_guard(failures, "wA", _failed()) is None
     assert execution_retry_guard(failures, "wB", _failed()) is None
     assert failures == {"wA": 1, "wB": 1}
+
+
+def test_partial_functional_result_counts_as_execution_failure():
+    result = WorkflowRunResultData(
+        workflowId="w1",
+        status="success",
+        summary="partial",
+        functionalStatus="partial",
+        claimableOutcome="none",
+    )
+    failures = {"w1": 1}
+
+    stop = execution_retry_guard(failures, "w1", result)
+
+    assert stop is not None
+    assert stop["success"] is False

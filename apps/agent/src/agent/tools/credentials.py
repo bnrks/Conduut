@@ -26,6 +26,10 @@ from src.registry import registry
 
 log = structlog.get_logger()
 
+_LIST_CREDENTIALS_INSTRUCTION = (
+    "This only lists credentials saved in Conduut's custom/service API credential library. "
+    "It does not show managed Connected services such as Google Gmail or Google Sheets."
+)
 _SECRET_FIELD_LABELS = {
     "key": "API key / token",
     "value": "API key",
@@ -115,17 +119,27 @@ async def list_credentials_payload(
         else set()
     )
     return {
+        "status": "ok",
+        "source": "custom_api_credential_library",
+        "scope": "custom_api_credentials_only",
+        "instruction": _LIST_CREDENTIALS_INSTRUCTION,
         "credentials": [
             {
                 "id": credential.id,
                 "label": credential.label,
                 "credential_type": credential.credential_type,
                 "host": credential.host,
+                "status": getattr(credential, "status", "ready"),
+                "source": (
+                    "service_api_credential"
+                    if getattr(credential, "match_kind", "host") == "type"
+                    else "custom_api_credential"
+                ),
                 "matches_host": credential.id in matched_ids,
                 "matches_type": credential.id in type_ids,
             }
             for credential in credentials
-        ]
+        ],
     }
 
 

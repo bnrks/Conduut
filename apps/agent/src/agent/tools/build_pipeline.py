@@ -9,6 +9,7 @@ from typing import Any
 import structlog
 from pydantic_ai import ModelRetry
 
+from src.agent.assurance import analyze_workflow_semantics, inject_schedule_identity_guards
 from src.agent.repair import repair_workflow
 from src.agent.schemas import WorkflowInputField, WorkflowNode, dump_workflow_nodes
 from src.agent.tools.runtime_inputs import (
@@ -22,6 +23,7 @@ from src.agent.validation import (
     normalize_workflow_nodes,
     validate_workflow_payload,
 )
+from src.config import settings
 
 log = structlog.get_logger()
 
@@ -35,6 +37,7 @@ def _validated_workflow(
     _normalize_conduut_webhook_methods(normalized_nodes)
     _normalize_webhook_response_modes(normalized_nodes, normalized_connections)
     _raise_workflow_validation_errors(normalized_nodes, normalized_connections)
+    _raise_workflow_assurance_errors(normalized_nodes, normalized_connections)
     return normalized_nodes, normalized_connections
 
 
@@ -60,6 +63,9 @@ def _validated_runtime_workflow(
     )
 
     _apply_runtime_inputs_to_nodes(node_dicts, runtime_schema)
+    node_dicts, normalized_connections = inject_schedule_identity_guards(
+        node_dicts, normalized_connections
+    )
     normalized_nodes = [WorkflowNode.model_validate(node) for node in node_dicts]
     normalized_connections = normalize_workflow_connections(
         normalized_connections, normalized_nodes
@@ -67,6 +73,7 @@ def _validated_runtime_workflow(
     _normalize_conduut_webhook_methods(normalized_nodes)
     _normalize_webhook_response_modes(normalized_nodes, normalized_connections)
     _raise_workflow_validation_errors(normalized_nodes, normalized_connections)
+    _raise_workflow_assurance_errors(normalized_nodes, normalized_connections)
     return normalized_nodes, normalized_connections, runtime_schema
 
 
@@ -89,6 +96,42 @@ def _raise_workflow_validation_errors(
             "If these errors require information the user did not provide, call "
             "request_user_input with one concise question instead of inventing values."
         )
+
+
+def _raise_workflow_assurance_errors(
+    normalized_nodes: list[WorkflowNode],
+    normalized_connections: dict[str, Any],
+) -> None:
+    report = analyze_workflow_semantics(normalized_nodes, normalized_connections)
+    mode = str(settings.workflow_assurance_mode or "hybrid").strip().lower()
+    if mode not in {"observe", "hybrid", "enforce"}:
+        mode = "hybrid"
+
+    if report.findings:
+        log.info(
+            "workflow_assurance_findings",
+            mode=mode,
+            fingerprint=report.fingerprint,
+            findings=[finding.as_log_dict() for finding in report.findings],
+        )
+    if mode == "observe":
+        return
+
+    enforced_findings = report.findings if mode == "enforce" else report.blocking_findings
+    if not enforced_findings:
+        return
+
+    log.warning(
+        "workflow_assurance_failed",
+        mode=mode,
+        fingerprint=report.fingerprint,
+        findings=[finding.as_log_dict() for finding in enforced_findings],
+    )
+    details = "\n".join(f"- {finding.message}" for finding in enforced_findings)
+    raise ModelRetry(
+        "Workflow semantic assurance failed. Fix these graph/dataflow issues before retrying:\n"
+        f"{details}"
+    )
 
 
 def _normalize_webhook_response_modes(

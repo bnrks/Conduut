@@ -255,6 +255,11 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
   ise model durur ve kullanicidan gosterilen connection/credential aksiyonunu
   tamamlamasini ister. Bu, workflow olusturulduktan sonra Sheets/Gmail
   baglantisi beklenirken generic max-rounds hatasina dusmeyi engeller.
+- `list_credentials` yalniz custom/service API credential kutuphanesini
+  listeler; bos donmesi Gmail veya Sheets managed Connection'in kopuk oldugu
+  anlamina gelmez. Workflow node'larinda connection karari icin
+  `analyze_workflow_readiness` kullanilir ve platform state managed servisleri
+  custom credential'lardan ayri gosterir.
 - Gmail permanent delete default akista kullanilmaz; trash ve organize
   aksiyonlari permission pack/risk metadata'siyle ayrilir ve eksik izin varsa
   OAuth prompt'a duser.
@@ -276,6 +281,29 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
   dogrulamayi kendi yapar ve kullaniciya sade metin cevabi verir. Sheets
   ciktisi varsa teknik kanit yerine kullanici odakli `artifact_preview` karti
   gosterilir.
+- Side-effect preview onayi clarification panelinde structured tasinir.
+  Assistant attachment'indaki opaque `requestId` ve `workflowId`, kullanici
+  Approve/Cancel secenegine bastiginda `user_input_response` body alanina
+  yazilir. Runner yalniz o anki son user mesajindaki karari kabul eder; onceki
+  turdaki consumed token yeniden oynatilmaz ve modelin tokeni metinden
+  hatirlamasi gerekmez. Gecersiz token yeni bir onay karti uretir ama ayni
+  agent turunda `execute_workflow` tekrar cagrilmaz.
+- Agent cevap uretirken ana chat composer disabled olur. `handleSend` zaten
+  concurrent gonderimi reddettigi icin bu UI siniri, kullanicinin yazdigi
+  cevabin sessizce dusup input alaninin temizlenmesini engeller. Preview
+  attachment'i emit edildikten sonra output claim validator retry'a girmez;
+  run approval'a ozel preview ozeti kullanilir. Normal eksik alan/credential
+  sorulari preview/onay metniyle karistirilmaz ve genel bekleme ozeti alir.
+  Final `done` event'inden sonra tek structured approval paneli gosterilir.
+- Sandbox V2 en cok iki model repair denemesi yapar. Known-side-effect harness
+  hatasi veya biten repair butcesi `needs_attention` ve terminal user-input
+  siniri uretir; ayni turda update/run dongusune devam edilmez.
+- Runtime-input side-effect run'da approval token input validation'dan sonra
+  tuketilir; eksik alan veya input/fingerprint uyusmazligi tokeni silmez.
+  Credential bekledigi icin build sirasinda sandbox edilmemis workflow'un ilk
+  pretest'i de kullanicinin gercek run payload'uyla yapilir. Activation ise
+  runtime degeri olmadigi icin `{}` gondermez; schema'dan guvenli sample
+  uretilen `None` yolunu kullanir.
 - Dashboard, runtime input schema'si olan workflow'lari `.xlsx`/`.csv`
   satirlariyla batch calistirabilir. Bu V1 ozellik [[adr-0007-batch-workflow-runs]]
   ile Conduut tarafinda loop olarak tasarlanmistir; workflow JSON'u

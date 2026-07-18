@@ -105,6 +105,47 @@ def _platform_resources_from_messages(messages: list[dict]) -> dict[str, dict[st
     return resources
 
 
+def _workflow_preview_decisions_from_messages(
+    messages: list[dict],
+) -> tuple[dict[str, str], set[str]]:
+    """Rebuild structured workflow-run decisions without exposing tokens to the LLM.
+
+    Only the latest user message participates. This keeps an approval scoped to
+    the turn that submitted it instead of replaying consumed approval metadata
+    from older conversation history. Firestore's preview consumer still
+    enforces user, fingerprint, input and one-use constraints.
+    """
+
+    approvals: dict[str, str] = {}
+    cancellations: set[str] = set()
+    latest_message = messages[-1] if messages else None
+    if latest_message and latest_message.get("role") == "user":
+        message = latest_message
+        attachments = message.get("attachments")
+        if isinstance(attachments, list):
+            for attachment in attachments:
+                if (
+                    not isinstance(attachment, dict)
+                    or attachment.get("type") != "user_input_response"
+                ):
+                    continue
+                data = attachment.get("data")
+                if not isinstance(data, dict) or data.get("requestKind") != "workflow_run_approval":
+                    continue
+                workflow_id = str(data.get("workflowId") or "").strip()
+                request_id = str(data.get("requestId") or "").strip()
+                decision = str(data.get("decision") or "").strip().lower()
+                if not workflow_id or not request_id:
+                    continue
+                if decision == "approve":
+                    approvals[workflow_id] = request_id
+                    cancellations.discard(workflow_id)
+                elif decision == "cancel":
+                    approvals.pop(workflow_id, None)
+                    cancellations.add(workflow_id)
+    return approvals, cancellations
+
+
 def _user_input_request_context(message: dict | None) -> str | None:
     if not message or message.get("role") not in ("assistant", "agent"):
         return None

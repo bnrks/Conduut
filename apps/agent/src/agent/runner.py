@@ -28,6 +28,7 @@ from src.agent.history import (
     _conversation_workflows_from_messages,
     _history_from_store_messages,
     _platform_resources_from_messages,
+    _workflow_preview_decisions_from_messages,
     strip_internal_context,
 )
 from src.agent.model_registry import resolve
@@ -260,6 +261,9 @@ async def _run_agent_stream(
     initial_attempt_id = uuid4().hex
     platform_resources = _platform_resources_from_messages(messages)
     conversation_workflows = _conversation_workflows_from_messages(messages)
+    workflow_preview_approvals, workflow_preview_cancellations = (
+        _workflow_preview_decisions_from_messages(messages)
+    )
 
     tier, platform_state = await asyncio.gather(
         classify_tier(user_prompt, message_history),
@@ -302,6 +306,8 @@ async def _run_agent_stream(
             attempt_id=attempt_id,
             platform_resources=platform_resources,
             conversation_workflows=conversation_workflows,
+            workflow_preview_approvals=dict(workflow_preview_approvals),
+            workflow_preview_cancellations=set(workflow_preview_cancellations),
             platform_state=platform_state,
         )
 

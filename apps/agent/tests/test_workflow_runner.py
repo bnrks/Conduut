@@ -271,11 +271,17 @@ async def test_run_workflow_batch_with_input_continues_after_row_errors(monkeypa
         ],
     )
 
-    assert result.status == "completed_with_errors"
-    assert result.succeeded == 1
+    assert result.status == "failed"
+    assert result.succeeded == 0
     assert result.skipped == 1
-    assert result.failed == 1
-    assert [row.status for row in result.results] == ["success", "skipped", "failed"]
+    assert result.failed == 2
+    assert result.unknown == 1
+    assert [row.status for row in result.results] == ["triggered", "skipped", "failed"]
+    assert [row.functionalStatus for row in result.results] == [
+        "unknown",
+        "unknown",
+        "failed",
+    ]
     assert sent_payloads == [{"to": "person@example.com"}, {"to": "broken@example.com"}]
 
 
@@ -347,7 +353,8 @@ async def test_iter_workflow_batch_with_input_streams_row_progress(monkeypatch):
     ]
     assert events[0][1]["totalRows"] == 2
     assert events[1][1] == {"rowNumber": 2, "index": 1, "totalRows": 2}
-    assert events[2][1].status == "success"
+    assert events[2][1].status == "triggered"
+    assert events[2][1].functionalStatus == "unknown"
     assert events[4][1].status == "skipped"
     assert events[5][1].skipped == 1
 
@@ -660,6 +667,222 @@ def test_summarize_execution_hides_webhook_transport_metadata():
         },
     )
 
-    assert result.summary == "Workflow run completed."
+    assert result.summary == "Workflow run completed with no action needed."
+    assert result.functionalStatus == "no_action"
     assert result.outputs == []
     assert result.response is None
+
+
+def test_summarize_execution_marks_success_with_zero_output_mutation_as_partial():
+    workflow = {
+        "nodes": [
+            {
+                "name": "Send Email",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"resource": "message", "operation": "send"},
+            },
+            {
+                "name": "Update Status",
+                "type": "n8n-nodes-base.googleSheets",
+                "parameters": {"resource": "sheet", "operation": "update"},
+            },
+        ]
+    }
+    result = _summarize_execution(
+        {
+            "id": "320",
+            "workflowId": "wf_1",
+            "status": "success",
+            "data": {
+                "resultData": {
+                    "runData": {
+                        "Send Email": [
+                            {
+                                "executionStatus": "success",
+                                "data": {
+                                    "main": [
+                                        [
+                                            {"json": {"id": "m1", "labelIds": ["SENT"]}},
+                                            {"json": {"id": "m2", "labelIds": ["SENT"]}},
+                                        ]
+                                    ]
+                                },
+                            }
+                        ],
+                        "Update Status": [{"executionStatus": "success", "data": {"main": []}}],
+                    }
+                }
+            },
+        },
+        response={"statusCode": 500, "body": {"message": "No item to return was found"}},
+        workflow=workflow,
+    )
+
+    assert result.status == "success"
+    assert result.functionalStatus == "partial"
+    assert result.claimableOutcome == "none"
+    assert result.assessment.transportStatusCode == 500
+    assert result.assessment.transportOk is False
+    assert result.assessment.executionOk is True
+    assert result.assessment.coverage == "partial"
+    assert result.assessment.actionCount == 2
+    assert result.assessment.writebackCount == 0
+    assert result.assessment.postconditionsVerified is False
+    assert result.assessment.duplicateRisk is True
+    assert result.assessment.warnings
+    assert result.assessment.evidence
+    assert result.assessment.successfulMutationNodes == ["Send Email"]
+    assert result.assessment.zeroOutputMutationNodes == ["Update Status"]
+    assert result.outputs[-1] == {
+        "nodeName": "Update Status",
+        "itemCount": 0,
+        "items": [],
+        "mutation": True,
+    }
+
+
+def test_summarize_execution_marks_unreached_mutations_as_clean_no_action():
+    workflow = {
+        "nodes": [
+            {
+                "name": "Filter",
+                "type": "n8n-nodes-base.code",
+                "parameters": {},
+            },
+            {
+                "name": "Send Email",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"resource": "message", "operation": "send"},
+            },
+        ]
+    }
+    result = _summarize_execution(
+        {
+            "id": "328",
+            "workflowId": "wf_1",
+            "status": "success",
+            "data": {
+                "resultData": {
+                    "runData": {"Filter": [{"executionStatus": "success", "data": {"main": [[]]}}]}
+                }
+            },
+        },
+        response={"statusCode": 200, "body": {}},
+        workflow=workflow,
+    )
+
+    assert result.status == "success"
+    assert result.functionalStatus == "no_action"
+    assert result.claimableOutcome == "no_action"
+    assert result.assessment.executedMutationNodes == []
+    assert result.assessment.configuredMutationNodes == ["Send Email"]
+    assert result.assessment.coverage == "full"
+    assert result.assessment.eligibleCount == 0
+    assert result.assessment.postconditionsVerified is True
+
+
+def test_summarize_execution_verifies_successful_mutation_evidence():
+    workflow = {
+        "nodes": [
+            {
+                "name": "Send Email",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"resource": "message", "operation": "send"},
+            }
+        ]
+    }
+    result = _summarize_execution(
+        {
+            "id": "327",
+            "workflowId": "wf_1",
+            "status": "success",
+            "data": {
+                "resultData": {
+                    "runData": {
+                        "Send Email": [
+                            {
+                                "executionStatus": "success",
+                                "data": {"main": [[{"json": {"id": "m1", "labelIds": ["SENT"]}}]]},
+                            }
+                        ]
+                    }
+                }
+            },
+        },
+        response={"statusCode": 200, "body": {"id": "m1"}},
+        workflow=workflow,
+    )
+
+    assert result.functionalStatus == "verified"
+    assert result.claimableOutcome == "run_verified"
+    assert result.assessment.successfulMutationNodes == ["Send Email"]
+    assert result.assessment.transportOk is True
+    assert result.assessment.executionOk is True
+    assert result.assessment.coverage == "full"
+    assert result.assessment.actionCount == 1
+    assert result.assessment.writebackCount == 0
+    assert result.assessment.postconditionsVerified is True
+    assert result.assessment.duplicateRisk is False
+
+
+def test_summarize_execution_never_verifies_partial_contract_coverage():
+    workflow = {
+        "nodes": [
+            {"name": "Custom", "type": "n8n-nodes-community.custom", "parameters": {}},
+            {
+                "name": "Send Email",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"resource": "message", "operation": "send"},
+            },
+        ],
+        "connections": {"Custom": {"main": [[{"node": "Send Email", "type": "main", "index": 0}]]}},
+    }
+    result = _summarize_execution(
+        {
+            "id": "partial-coverage",
+            "workflowId": "wf_1",
+            "status": "success",
+            "data": {
+                "resultData": {
+                    "runData": {
+                        "Send Email": [
+                            {
+                                "executionStatus": "success",
+                                "data": {"main": [[{"json": {"id": "m1"}}]]},
+                            }
+                        ]
+                    }
+                }
+            },
+        },
+        response={"statusCode": 200, "body": {"id": "m1"}},
+        workflow=workflow,
+    )
+
+    assert result.functionalStatus == "needs_attention"
+    assert result.claimableOutcome == "none"
+    assert result.assessment.coverage == "partial"
+    assert any(
+        "no static output contract" in warning.message for warning in result.assessment.warnings
+    )
+
+
+def test_summarize_execution_with_mutation_but_no_run_data_is_unknown():
+    workflow = {
+        "nodes": [
+            {
+                "name": "Send Email",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"resource": "message", "operation": "send"},
+            }
+        ]
+    }
+
+    result = _summarize_execution(
+        {"id": "missing-detail", "workflowId": "wf_1", "status": "success"},
+        response={"statusCode": 200, "body": {}},
+        workflow=workflow,
+    )
+
+    assert result.functionalStatus == "unknown"
+    assert result.claimableOutcome == "none"

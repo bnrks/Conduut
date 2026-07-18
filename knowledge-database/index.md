@@ -113,6 +113,9 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
   `<details>` fallback. Yeni `tools/output_schema.py` + `workflow-result-view.tsx`.
 - [[adr-0018-execution-history-mvp]] - Runs V1 n8n source-of-truth, sanitize
   contract, structured repair handoff ve per-user n8n production gate karari.
+- [[adr-0019-workflow-assurance-v1]] - Native n8n JSON uzerinde static semantic
+  guard, Sandbox V2 probe'lari, functional execution assessment, preview token
+  ve evidence-gated agent claim zinciri.
 
 ## Kaynak Dokumanlar
 

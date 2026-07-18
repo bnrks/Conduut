@@ -115,6 +115,8 @@ async def test_run_workflow_persists_returned_artifacts(monkeypatch):
             executionId="exec_1",
             status="success",
             summary="Workflow run completed.",
+            functionalStatus="verified",
+            claimableOutcome="run_verified",
             artifacts=[artifact],
         )
 
@@ -202,6 +204,127 @@ async def test_run_workflow_returns_domain_failure_details(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_side_effect_run_requires_matching_preview_token(monkeypatch):
+    monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
+    workflow = {
+        "id": "wf_1",
+        "name": "Mailer",
+        "nodes": [
+            {
+                "name": "Send",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"operation": "send"},
+            }
+        ],
+    }
+
+    async def fake_get_workflow(_workflow_id):
+        return workflow
+
+    async def fake_readiness(_workflow, *, user_id):
+        return {"missing_credentials": []}
+
+    async def fake_consume(*args, **kwargs):
+        return False
+
+    async def fail_run(*args, **kwargs):
+        raise AssertionError("real run must not start without preview approval")
+
+    monkeypatch.setattr(workflows_route.n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(workflows_route, "analyze_workflow_readiness_payload", fake_readiness)
+    monkeypatch.setattr(workflows_route, "consume_workflow_preview", fake_consume)
+    monkeypatch.setattr(workflows_route, "run_workflow_with_input", fail_run)
+
+    with pytest.raises(HTTPException) as exc:
+        await workflows_route.run_workflow(
+            "wf_1", object(), workflows_route.WorkflowRunRequest(input={})
+        )
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "workflow_preview_required"
+
+
+@pytest.mark.asyncio
+async def test_activation_assurance_uses_generated_sample_input(monkeypatch):
+    monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
+    workflow = {
+        "id": "wf_1",
+        "name": "Reusable mailer",
+        "nodes": [
+            {
+                "name": "Send",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"operation": "send"},
+            }
+        ],
+    }
+    captured = {}
+
+    async def fake_get_workflow(_workflow_id):
+        return workflow
+
+    async def fake_readiness(_workflow, *, user_id):
+        return {"missing_credentials": []}
+
+    async def fake_preview(_workflow, **kwargs):
+        captured.update(kwargs)
+        return {"ready": True, "coverage": "full"}
+
+    async def fake_activate(_workflow_id):
+        return None
+
+    monkeypatch.setattr(workflows_route.n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(workflows_route, "analyze_workflow_readiness_payload", fake_readiness)
+    monkeypatch.setattr(workflows_route, "preview_workflow_run", fake_preview)
+    monkeypatch.setattr(workflows_route.n8n_client, "activate_workflow", fake_activate)
+
+    result = await workflows_route.activate_workflow("wf_1", object())
+
+    assert result["success"] is True
+    assert captured["input_payload"] is None
+    assert captured["issue_token"] is False
+
+
+@pytest.mark.asyncio
+async def test_preview_route_returns_safe_approval(monkeypatch):
+    monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
+    workflow = {
+        "id": "wf_1",
+        "name": "Mailer",
+        "nodes": [
+            {
+                "name": "Send",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"operation": "send"},
+            }
+        ],
+    }
+
+    async def fake_get_workflow(_workflow_id):
+        return workflow
+
+    async def fake_readiness(_workflow, *, user_id):
+        return {"missing_credentials": []}
+
+    async def fake_preview(*args, **kwargs):
+        return {
+            "ready": True,
+            "status": "passed",
+            "coverage": "full",
+            "preview_token": "token-1",
+            "action_count": 1,
+        }
+
+    monkeypatch.setattr(workflows_route.n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(workflows_route, "analyze_workflow_readiness_payload", fake_readiness)
+    monkeypatch.setattr(workflows_route, "preview_workflow_run", fake_preview)
+    result = await workflows_route.preview_run_workflow(
+        "wf_1", object(), workflows_route.WorkflowRunRequest(input={"row": "1"})
+    )
+    assert result["preview_token"] == "token-1"
+    assert result["action_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_batch_run_workflow_persists_row_artifacts(monkeypatch):
     monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
 
@@ -234,6 +357,8 @@ async def test_batch_run_workflow_persists_row_artifacts(monkeypatch):
                 WorkflowBatchRowResultData(
                     rowNumber=2,
                     status="success",
+                    functionalStatus="verified",
+                    claimableOutcome="run_verified",
                     executionId="exec_1",
                     summary="Workflow run completed.",
                     artifacts=[artifact],
@@ -532,3 +657,72 @@ async def test_run_workflow_presentation_is_none_when_absent(monkeypatch):
     )
 
     assert response["presentation"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_workflow_does_not_claim_raw_success_without_functional_evidence(monkeypatch):
+    monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
+
+    async def fake_get_workflow(_workflow_id: str):
+        return {"id": "wf_1", "name": "W", "nodes": []}
+
+    async def fake_readiness(_workflow: dict, *, user_id: str):
+        return {"missing_credentials": []}
+
+    async def fake_run_workflow_with_input(_workflow, *, user_id, input_payload):
+        return WorkflowRunResultData(
+            workflowId="wf_1",
+            executionId="exec_1",
+            status="success",
+            summary="Raw engine success without business evidence.",
+        )
+
+    monkeypatch.setattr(workflows_route.n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(workflows_route, "analyze_workflow_readiness_payload", fake_readiness)
+    monkeypatch.setattr(workflows_route, "run_workflow_with_input", fake_run_workflow_with_input)
+
+    response = await workflows_route.run_workflow(
+        "wf_1", object(), workflows_route.WorkflowRunRequest(input={})
+    )
+
+    assert response["status"] == "success"
+    assert response["functional_status"] == "unknown"
+    assert response["claimable_outcome"] == "none"
+    assert "functionalStatus" not in response
+    assert "claimableOutcome" not in response
+    assert "transport_ok" in response["assessment"]
+    assert "run_data_hints" in response["assessment"]
+    assert response["success"] is False
+
+
+@pytest.mark.asyncio
+async def test_run_workflow_claims_clean_no_action(monkeypatch):
+    monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
+
+    async def fake_get_workflow(_workflow_id: str):
+        return {"id": "wf_1", "name": "W", "nodes": []}
+
+    async def fake_readiness(_workflow: dict, *, user_id: str):
+        return {"missing_credentials": []}
+
+    async def fake_run_workflow_with_input(_workflow, *, user_id, input_payload):
+        return WorkflowRunResultData(
+            workflowId="wf_1",
+            executionId="exec_2",
+            status="success",
+            summary="No action needed.",
+            functionalStatus="no_action",
+            claimableOutcome="no_action",
+        )
+
+    monkeypatch.setattr(workflows_route.n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(workflows_route, "analyze_workflow_readiness_payload", fake_readiness)
+    monkeypatch.setattr(workflows_route, "run_workflow_with_input", fake_run_workflow_with_input)
+
+    response = await workflows_route.run_workflow(
+        "wf_1", object(), workflows_route.WorkflowRunRequest(input={})
+    )
+
+    assert response["success"] is True
+    assert response["functional_status"] == "no_action"
+    assert response["claimable_outcome"] == "no_action"
