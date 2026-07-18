@@ -9,7 +9,7 @@ from src.agent.tools.factory import _validate_evidence_gated_output
 
 
 def test_verified_claim_requires_evidence():
-    assert claimed_outcome("Mail başarıyla gönderildi ve satır güncellendi.") == "run_verified"
+    assert claimed_outcome("Mail başarıyla gönderildi ve satır güncellendi.") == "action_verified"
     assert claim_exceeds_evidence("Mail başarıyla gönderildi.", []) is True
 
 
@@ -22,6 +22,86 @@ def test_verified_evidence_supports_claim_and_safe_summary():
     evidence = [{"outcome": "run_verified", "execution_id": "327"}]
     assert claim_exceeds_evidence("Workflow başarıyla çalıştı.", evidence) is False
     assert "327" in safe_evidence_summary(evidence)
+
+
+def test_action_verified_evidence_supports_mail_claim_but_not_whole_run_claim():
+    evidence = [
+        {
+            "outcome": "action_verified",
+            "execution_id": "379",
+            "effects": ["gmail_message_sent"],
+        }
+    ]
+
+    assert claim_exceeds_evidence("Mail gönderildi.", evidence) is False
+    assert claim_exceeds_evidence("Workflow başarıyla çalıştı.", evidence) is True
+    assert "Run #379" in safe_evidence_summary(evidence)
+    assert "kısmi" in safe_evidence_summary(evidence)
+
+
+def test_no_action_and_action_evidence_are_not_interchangeable():
+    assert claim_exceeds_evidence("Mail gönderildi.", [{"outcome": "no_action"}]) is True
+    assert (
+        claim_exceeds_evidence(
+            "İşlenecek uygun kayıt bulunamadı.",
+            [{"outcome": "action_verified"}],
+        )
+        is True
+    )
+
+
+def test_whole_run_claim_wins_when_text_also_contains_action_claim():
+    evidence = [
+        {
+            "outcome": "action_verified",
+            "execution_id": "379",
+            "effects": ["gmail_message_sent"],
+        }
+    ]
+
+    assert claimed_outcome("Tüm adımlar tamamlandı ve mail gönderildi.") == "run_verified"
+    assert claim_exceeds_evidence("Tüm adımlar tamamlandı ve mail gönderildi.", evidence) is True
+
+
+def test_gmail_effect_does_not_authorize_sheet_update_claim():
+    evidence = [
+        {
+            "outcome": "action_verified",
+            "execution_id": "379",
+            "effects": ["gmail_message_sent"],
+        }
+    ]
+
+    assert claim_exceeds_evidence("Satır güncellendi.", evidence) is True
+    assert claim_exceeds_evidence("Mail gönderildi ve satır güncellendi.", evidence) is True
+
+
+def test_claim_authorization_uses_latest_execution_evidence_only():
+    evidence = [
+        {
+            "outcome": "action_verified",
+            "execution_id": "379",
+            "effects": ["gmail_message_sent"],
+        },
+        {"outcome": "no_action", "execution_id": "380"},
+    ]
+
+    assert claim_exceeds_evidence("Mail gönderildi.", evidence) is True
+    assert "uygun kayıt" in safe_evidence_summary(evidence)
+
+
+def test_run_verified_still_scopes_specific_action_claims_to_verified_effects():
+    evidence = [
+        {
+            "outcome": "run_verified",
+            "execution_id": "381",
+            "effects": ["gmail_message_sent"],
+        }
+    ]
+
+    assert claim_exceeds_evidence("Workflow başarıyla çalıştı.", evidence) is False
+    assert claim_exceeds_evidence("Mail gönderildi.", evidence) is False
+    assert claim_exceeds_evidence("Satır güncellendi.", evidence) is True
 
 
 def test_negative_statement_is_not_positive_claim():

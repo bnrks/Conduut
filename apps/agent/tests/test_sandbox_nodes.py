@@ -76,6 +76,7 @@ def test_gmail_send_is_replaced_with_output_shape_probe():
                 "sendTo": "={{ $json.email }}",
                 "subject": "Reminder",
                 "message": "={{ $json.body }}",
+                "emailType": "html",
             },
             "credentials": {"gmailOAuth2": {"id": "secret"}},
         }
@@ -95,10 +96,12 @@ def test_gmail_send_is_replaced_with_output_shape_probe():
         "__conduut_probe_target",
         "__conduut_probe_subject",
         "__conduut_probe_message",
+        "__conduut_probe_email_type",
     }
     probe_values = {item["name"]: item["value"] for item in assignments}
     assert probe_values["__conduut_probe"] == "gmail_send"
     assert probe_values["__conduut_probe_target"] == "={{ $json.email }}"
+    assert probe_values["__conduut_probe_email_type"] == "html"
 
 
 def test_sheets_probe_uses_flat_reserved_metadata_fields():

@@ -229,6 +229,25 @@ Oracle:
 - Sıfır uygun kayıt exception yerine clean `no_action` üretmelidir.
 - Schedule tetiklemelerinde production canary gönderilmemelidir.
 
+## Genel Mutation ve Semantik Regresyonlari
+
+Senaryo-spesifik rerunlardan once su ortak invariant'lar test edilir:
+
+- Ayni workflow'da iki credential attach paralel calistirilir; committed
+  workflow iki bagi da tasimali ve iki tool da ancak kendi bagi dogrulaninca
+  basari donmelidir.
+- Yalniz recipient/subject gibi bir node parametresi degistirilir;
+  `connections`, retained node `id` degerleri ve tum mevcut credential baglari
+  birebir korunmalidir. Model payload'ina eklenen credential ID etkisiz
+  kalmalidir.
+- Code -> AI -> Gmail gibi cok-hop akista erken node `1. undefined` veya
+  `URL: undefined` uretir, AI bunu duzgun gorunen "icerik yok" metnine cevirir;
+  sandbox judge'a/real action'a gecmeden deterministik `needs_attention`
+  vermelidir. Finding payload icerigini loglamamalidir.
+- Formatted digest/newsletter niyetinde Gmail probe `emailType`'i gostermeli;
+  text-mode ham Markdown basari sayilmamali, HTML-mode substantive body
+  gecebilmelidir.
+
 ## Kardeş Senaryo Turu
 
 M1 paketi geçtikten sonra assurance kurallarının M1'e özel olmadığını göstermek
@@ -274,7 +293,7 @@ Amaç yeni preview, activation ve execution assessment katmanlarının mevcut
 | Functional status | verified/no_action/partial/needs_attention/failed/unknown |
 | Gerçek side effect | Inbox ve Sheet sonucu |
 | İkinci run | Idempotency/no_action sonucu |
-| Agent claim'i | Kanıtla uyumlu kullanıcı cevabı |
+| Agent claim'i | Kanıtla uyumlu kullanıcı cevabı (`action_verified` yalniz doğrulanan side effect'i claim eder) |
 | Sonuç | Geçti/Kaldı ve kök neden |
 
 ## Geçme Kriteri
@@ -287,6 +306,13 @@ Bir senaryo yalnız aşağıdaki koşullar birlikte sağlanırsa geçmiş sayıl
 - Gerçek inbox ve Sheet sonuçları oracle ile eşleşir.
 - Functional status raw n8n status'tan bağımsız olarak doğru sınıflandırılır.
 - Agent claim'i mevcut evidence seviyesini aşmaz.
+- Partial contract coverage altinda Gmail output'u non-empty message `id` ve
+  `SENT` etiketi tasiyorsa `action_verified` uretilir; mail claim'i kabul edilir,
+  whole-workflow claim'i reddedilir. `no_action` kaniti action claim'ini acamaz;
+  `gmail_message_sent` effect'i Sheet/status update claim'ini acamaz. Ayni turda
+  `run_verified` olsa bile spesifik action claim'i kayitli effect turunu ister.
+  Birden cok execution evidence'i varsa claim yalniz en son kayda gore
+  yetkilendirilir.
 - İkinci run duplicate action üretmez.
 - Kullanıcı dış düzeltme sayısı ayrıca raporlanır; yalnız sonucun sonunda çalışması
   ilk-sefer kalitesini gizlemez.

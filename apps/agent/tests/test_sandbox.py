@@ -11,6 +11,8 @@ from src.agent.sandbox import (
     _action_summaries,
     _build_test_clone,
     _check_empty_outputs,
+    _evaluate_sandbox_run,
+    _looks_like_placeholder_business_output,
     _sample_input_for_schema,
 )
 from src.agent.schemas import WorkflowInputField
@@ -155,6 +157,19 @@ def test_action_summaries_collect_would_be_input():
     assert summaries[0]["name"] == "Send"
     assert summaries[0]["type"] == "n8n-nodes-base.gmail"
     assert summaries[0]["would_be_input"] == [{"text": "hello"}]
+
+
+def test_placeholder_business_output_only_flags_null_like_fragments():
+    assert _looks_like_placeholder_business_output("title undefined / no content available")
+    assert not _looks_like_placeholder_business_output("Article title: Undefined Behavior in C")
+
+
+def test_upstream_expression_detection_ignores_prose_but_flags_raw_expression():
+    prose = "In n8n, use $json.name to reference the incoming field in your workflow."
+    raw_expression = "$json.name"
+
+    assert sandbox._strong_placeholder_fragments(prose) == []
+    assert sandbox._strong_placeholder_fragments(raw_expression) == [raw_expression]
 
 
 @pytest.mark.asyncio
@@ -322,6 +337,269 @@ async def test_run_sandbox_test_drives_schedule_clone(monkeypatch):
     result = await sandbox.run_sandbox_test(workflow, user_id="u1", input_schema=[], intent="Cron")
     assert result.passed is True
     assert result.status == "passed"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_sandbox_run_blocks_placeholder_business_output(monkeypatch):
+    detail = {
+        "id": "exec-3",
+        "status": "success",
+        "finished": True,
+        "workflowId": "clone-1",
+        "data": {
+            "resultData": {
+                "runData": {
+                    "Build": [
+                        {
+                            "data": {
+                                "main": [[{"json": {"title": "undefined", "summary": "missing"}}]]
+                            }
+                        }
+                    ],
+                    "Send": [
+                        {
+                            "data": {
+                                "main": [
+                                    [
+                                        {
+                                            "json": {
+                                                "__conduut_probe": "gmail_send",
+                                                "__conduut_probe_target": "person@example.com",
+                                                "__conduut_probe_subject": "title undefined",
+                                                "__conduut_probe_message": "no content available",
+                                            }
+                                        }
+                                    ]
+                                ]
+                            }
+                        }
+                    ],
+                }
+            }
+        },
+    }
+    clone_workflow = {
+        "nodes": [
+            {"name": "Build", "type": "n8n-nodes-base.code", "parameters": {}},
+            {"name": "Send", "type": "n8n-nodes-base.gmail", "parameters": {"operation": "send"}},
+        ],
+        "connections": {"Build": {"main": [[{"node": "Send", "type": "main", "index": 0}]]}},
+    }
+    probes = [
+        sandbox.ActionProbe(
+            name="Send",
+            kind="gmail_send",
+            covered=True,
+            original_type="n8n-nodes-base.gmail",
+        )
+    ]
+    judge_called = {"called": False}
+
+    async def fake_judge(_intent, _records):
+        judge_called["called"] = True
+        return JudgeVerdict(ok=True)
+
+    monkeypatch.setattr(sandbox, "_run_judge", fake_judge)
+    result = await _evaluate_sandbox_run(detail, clone_workflow, probes, "Send digest")
+
+    assert result.passed is False
+    assert result.status == "needs_attention"
+    assert any("placeholder-like message content" in finding for finding in result.findings)
+    assert judge_called["called"] is False
+
+
+@pytest.mark.asyncio
+async def test_evaluate_sandbox_run_blocks_multi_hop_upstream_placeholder_content(monkeypatch):
+    detail = {
+        "id": "exec-3b",
+        "status": "success",
+        "finished": True,
+        "workflowId": "clone-1",
+        "data": {
+            "resultData": {
+                "runData": {
+                    "Build Digest": [
+                        {
+                            "data": {
+                                "main": [
+                                    [
+                                        {
+                                            "json": {
+                                                "digest": (
+                                                    "1. undefined\n"
+                                                    "URL: undefined\n"
+                                                    "Summary: no content available"
+                                                )
+                                            }
+                                        }
+                                    ]
+                                ]
+                            }
+                        }
+                    ],
+                    "Polish Copy": [
+                        {
+                            "data": {
+                                "main": [
+                                    [
+                                        {
+                                            "json": {
+                                                "message": (
+                                                    "I could not find any usable news today, "
+                                                    "so there is nothing to send right now."
+                                                )
+                                            }
+                                        }
+                                    ]
+                                ]
+                            }
+                        }
+                    ],
+                    "Send": [
+                        {
+                            "data": {
+                                "main": [
+                                    [
+                                        {
+                                            "json": {
+                                                "__conduut_probe": "gmail_send",
+                                                "__conduut_probe_target": "person@example.com",
+                                                "__conduut_probe_subject": "Daily digest",
+                                                "__conduut_probe_message": (
+                                                    "I could not find any usable news today, "
+                                                    "so there is nothing to send right now."
+                                                ),
+                                            }
+                                        }
+                                    ]
+                                ]
+                            }
+                        }
+                    ],
+                }
+            }
+        },
+    }
+    clone_workflow = {
+        "nodes": [
+            {"name": "Build Digest", "type": "n8n-nodes-base.code", "parameters": {}},
+            {
+                "name": "Polish Copy",
+                "type": "@n8n/n8n-nodes-langchain.agent",
+                "parameters": {},
+            },
+            {"name": "Send", "type": "n8n-nodes-base.gmail", "parameters": {"operation": "send"}},
+        ],
+        "connections": {
+            "Build Digest": {"main": [[{"node": "Polish Copy", "type": "main", "index": 0}]]},
+            "Polish Copy": {"main": [[{"node": "Send", "type": "main", "index": 0}]]},
+        },
+    }
+    probes = [
+        sandbox.ActionProbe(
+            name="Send",
+            kind="gmail_send",
+            covered=True,
+            original_type="n8n-nodes-base.gmail",
+        )
+    ]
+    judge_called = {"called": False}
+
+    async def fake_judge(_intent, _records):
+        judge_called["called"] = True
+        return JudgeVerdict(ok=True)
+
+    monkeypatch.setattr(sandbox, "_run_judge", fake_judge)
+    result = await _evaluate_sandbox_run(detail, clone_workflow, probes, "Send digest")
+
+    assert result.passed is False
+    assert result.status == "needs_attention"
+    assert any(
+        "upstream placeholder or unresolved content" in finding for finding in result.findings
+    )
+    assert any("Build Digest" in finding for finding in result.findings)
+    assert judge_called["called"] is False
+
+
+@pytest.mark.asyncio
+async def test_evaluate_sandbox_run_allows_real_business_output(monkeypatch):
+    detail = {
+        "id": "exec-4",
+        "status": "success",
+        "finished": True,
+        "workflowId": "clone-1",
+        "data": {
+            "resultData": {
+                "runData": {
+                    "Build": [
+                        {
+                            "data": {
+                                "main": [
+                                    [
+                                        {
+                                            "json": {
+                                                "title": "Quarterly results",
+                                                "summary": "Revenue grew 12% year over year.",
+                                            }
+                                        }
+                                    ]
+                                ]
+                            }
+                        }
+                    ],
+                    "Send": [
+                        {
+                            "data": {
+                                "main": [
+                                    [
+                                        {
+                                            "json": {
+                                                "__conduut_probe": "gmail_send",
+                                                "__conduut_probe_target": "person@example.com",
+                                                "__conduut_probe_subject": "Daily digest",
+                                                "__conduut_probe_message": (
+                                                    "Title: Quarterly results\n"
+                                                    "Summary: Revenue grew 12% year over year."
+                                                ),
+                                            }
+                                        }
+                                    ]
+                                ]
+                            }
+                        }
+                    ],
+                }
+            }
+        },
+    }
+    clone_workflow = {
+        "nodes": [
+            {"name": "Build", "type": "n8n-nodes-base.code", "parameters": {}},
+            {"name": "Send", "type": "n8n-nodes-base.gmail", "parameters": {"operation": "send"}},
+        ],
+        "connections": {"Build": {"main": [[{"node": "Send", "type": "main", "index": 0}]]}},
+    }
+    probes = [
+        sandbox.ActionProbe(
+            name="Send",
+            kind="gmail_send",
+            covered=True,
+            original_type="n8n-nodes-base.gmail",
+        )
+    ]
+    judge_called = {"called": False}
+
+    async def fake_judge(_intent, _records):
+        judge_called["called"] = True
+        return JudgeVerdict(ok=True)
+
+    monkeypatch.setattr(sandbox, "_run_judge", fake_judge)
+    result = await _evaluate_sandbox_run(detail, clone_workflow, probes, "Send digest")
+
+    assert result.passed is True
+    assert result.status == "passed"
+    assert result.action_count == 1
+    assert judge_called["called"] is True
 
 
 def test_identity_preflight_checks_full_upstream_read_dataset():

@@ -8,6 +8,7 @@ unit-test edilebilir; gerçek LLM çağrısı ``_run_judge_llm`` arkasındadır.
 """
 
 import json
+import re
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
@@ -33,6 +34,61 @@ _SAMPLE_BY_TYPE = {
     "textarea": "Sandbox test message body.",
     "string": "test value",
 }
+_SEMANTIC_NULLISH_FRAGMENT = re.compile(
+    r"""
+    ^(?:the\s+)?
+    (?:
+        (?:title|subject|message|body|summary|content|description|text|
+        headline|article|name|result|output|response)
+        \s*[:=\-]?\s*
+    )?
+    (?:
+        undefined|
+        null|
+        none|
+        n/?a|
+        unavailable|
+        not\s+available|
+        missing(?:\s+(?:data|content|text|body|message|summary|title|headline|description))?|
+        empty|
+        no\s+(?:content|data|summary|description|text|body|message|title|headline|result|output)
+        (?:\s+available)?
+    )
+    $
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_SEMANTIC_SEPARATOR = re.compile(r"[\n\r|/;]+")
+_STRONG_PLACEHOLDER_LINE = re.compile(
+    r"""
+    ^\s*
+    (?:
+        \d+\.\s*|
+        [-*]\s*|
+        (?:title|subject|message|body|summary|content|description|text|headline|
+        article|name|result|output|response|url|link|source|author|date)
+        \s*[:=\-]\s*
+    )
+    (?:
+        undefined|
+        null|
+        none|
+        n/?a|
+        unavailable|
+        not\s+available|
+        missing(?:\s+(?:data|content|text|body|message|summary|title|headline|description|url|link))?|
+        empty|
+        no\s+(?:content|data|summary|description|text|body|message|title|headline|result|output)
+        (?:\s+available)?
+    )
+    \s*$
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_UNRESOLVED_TEMPLATE_INTERPOLATION = re.compile(r"\{\{[^{}]+\}\}")
+_RAW_N8N_EXPRESSION = re.compile(
+    r"^\s*=?\s*(?:\$json(?:\b|[.\[])|\$\([^)]+\)(?:\.|\b|\[)).*$", re.IGNORECASE
+)
 
 
 def _sample_input_for_schema(input_schema: list[WorkflowInputField]) -> dict[str, Any]:
@@ -178,7 +234,7 @@ def _probe_records(detail: dict[str, Any], probes: list[ActionProbe]) -> list[di
                     "kind": payload,
                 }
                 if payload == "gmail_send":
-                    for field in ("target", "subject", "message"):
+                    for field in ("target", "subject", "message", "email_type"):
                         record[field] = item.get(f"__conduut_probe_{field}")
                 elif payload == "sheets_update":
                     columns: list[str] = []
@@ -220,6 +276,14 @@ def _probe_findings(records: list[dict[str, Any]], probes: list[ActionProbe]) ->
             ):
                 findings.append(f"The write-back '{node}' resolved an empty identity value.")
 
+        if kind == "gmail_send":
+            for field in ("subject", "message"):
+                if _looks_like_placeholder_business_output(record.get(field)):
+                    findings.append(
+                        f"The action '{node}' resolved placeholder-like {field} content "
+                        "instead of real business output."
+                    )
+
     for probe in probes:
         if probe.kind != "sheets_update" or not probe.covered:
             continue
@@ -247,6 +311,103 @@ def _probe_findings(records: list[dict[str, Any]], probes: list[ActionProbe]) ->
             "The action and write-back item counts do not match "
             f"({action_count} action, {writeback_count} write-back)."
         )
+    return findings
+
+
+def _looks_like_placeholder_business_output(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    if not text:
+        return False
+    fragments = [fragment.strip(" \t-:,.()[]{}") for fragment in _SEMANTIC_SEPARATOR.split(text)]
+    fragments = [fragment for fragment in fragments if fragment]
+    if not fragments:
+        return False
+    placeholder_fragments = [
+        fragment
+        for fragment in fragments
+        if _SEMANTIC_NULLISH_FRAGMENT.fullmatch(re.sub(r"\s+", " ", fragment.strip()))
+    ]
+    return bool(placeholder_fragments) and len(placeholder_fragments) == len(fragments)
+
+
+def _ancestor_source_names(connections: dict[str, Any], target_name: str) -> list[str]:
+    pending = list(_upstream_source_names(connections, target_name))
+    seen: set[str] = set()
+    ordered: list[str] = []
+    while pending:
+        name = pending.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        ordered.append(name)
+        pending.extend(_upstream_source_names(connections, name))
+    return ordered
+
+
+def _iter_text_values(value: Any):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for nested in value.values():
+            yield from _iter_text_values(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            yield from _iter_text_values(nested)
+
+
+def _strong_placeholder_fragments(text: str) -> list[str]:
+    fragments: list[str] = []
+    normalized = text.replace("\r", "\n")
+    for raw_line in normalized.split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if _UNRESOLVED_TEMPLATE_INTERPOLATION.search(line):
+            fragments.append(line[:160])
+            continue
+        if _RAW_N8N_EXPRESSION.fullmatch(line):
+            fragments.append(line[:160])
+            continue
+        if _STRONG_PLACEHOLDER_LINE.fullmatch(line):
+            fragments.append(line[:160])
+    return fragments
+
+
+def _upstream_semantic_findings(
+    detail: dict[str, Any],
+    clone_workflow: dict[str, Any],
+    probes: list[ActionProbe],
+) -> list[str]:
+    run_data = (((detail.get("data") or {}).get("resultData") or {}).get("runData")) or {}
+    connections = clone_workflow.get("connections") or {}
+    findings: list[str] = []
+    for probe in probes:
+        if not probe.covered:
+            continue
+        ancestor_names = _ancestor_source_names(connections, probe.name)
+        seen_fragments: list[tuple[str, str]] = []
+        for ancestor in ancestor_names:
+            for item in _node_output_items(run_data, ancestor):
+                for text in _iter_text_values(item):
+                    for fragment in _strong_placeholder_fragments(text):
+                        seen_fragments.append((ancestor, fragment))
+                        if len(seen_fragments) >= 3:
+                            break
+                    if len(seen_fragments) >= 3:
+                        break
+                if len(seen_fragments) >= 3:
+                    break
+            if len(seen_fragments) >= 3:
+                break
+        if seen_fragments:
+            affected_nodes = ", ".join(dict.fromkeys(node for node, _ in seen_fragments))
+            findings.append(
+                f"The action '{probe.name}' is fed by upstream placeholder or unresolved content "
+                f"from step(s) {affected_nodes}. Real business content is missing before the "
+                "side effect."
+            )
     return findings
 
 
@@ -410,7 +571,11 @@ _JUDGE_INSTRUCTIONS = (
     "steps that would run (their config and the data that would feed them). Set "
     "ok=false with a short issue when a key value would be empty, an expression "
     "clearly did not resolve, or the data shape is wrong (e.g. an array where a "
-    "single value is expected). Otherwise ok=true with an empty issue."
+    "single value is expected). If the purpose implies formatted or styled delivery "
+    "(for example a digest, newsletter, or richly formatted email), require the "
+    "delivery format to match; plain text or raw Markdown is not correct when the "
+    "workflow is supposed to send rendered HTML/styled output. Otherwise ok=true "
+    "with an empty issue."
 )
 
 _judge_agent = None
@@ -566,6 +731,7 @@ async def _evaluate_sandbox_run(
     deterministic_findings = [
         *_probe_findings(records, probes),
         *_identity_preflight_findings(detail, clone_workflow, records, probes),
+        *_upstream_semantic_findings(detail, clone_workflow, probes),
     ]
     action_count = sum(1 for item in records if item.get("kind") == "gmail_send")
     writeback_count = sum(1 for item in records if item.get("kind") == "sheets_update")

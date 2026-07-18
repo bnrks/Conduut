@@ -1,8 +1,12 @@
 """n8n REST API client. Tek bir n8n instance'ıyla konuşur (MVP)."""
 
+import asyncio
+from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
+from weakref import WeakValueDictionary
 
 import httpx
 import structlog
@@ -11,6 +15,8 @@ from src.config import settings
 from src.logging_config import redact_for_logging
 
 log = structlog.get_logger()
+
+_workflow_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 
 
 class N8nApiError(RuntimeError):
@@ -208,6 +214,107 @@ def _workflow_settings(workflow_settings: dict[str, Any] | None = None) -> dict[
     return merged
 
 
+def _workflow_lock(workflow_id: str) -> asyncio.Lock:
+    lock = _workflow_locks.get(workflow_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _workflow_locks[workflow_id] = lock
+    return lock
+
+
+def _workflow_payload(workflow: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": str(workflow.get("name") or "Workflow"),
+        "nodes": deepcopy(workflow.get("nodes") or []),
+        "connections": deepcopy(workflow.get("connections") or {}),
+        "settings": _workflow_settings(workflow.get("settings")),
+    }
+
+
+def _find_retained_node(
+    proposed_node: dict[str, Any],
+    current_by_name: dict[str, dict[str, Any]],
+    current_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    node_name = proposed_node.get("name")
+    node_type = proposed_node.get("type")
+    if isinstance(node_name, str):
+        current = current_by_name.get(node_name)
+        if current and current.get("type") == node_type:
+            return current
+
+    node_id = proposed_node.get("id")
+    if isinstance(node_id, str):
+        current = current_by_id.get(node_id)
+        if current and current.get("type") == node_type:
+            return current
+    return None
+
+
+def _merge_retained_node_state(
+    current_nodes: list[dict[str, Any]],
+    proposed_nodes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    current_by_name = {
+        node["name"]: node
+        for node in current_nodes
+        if isinstance(node, dict) and isinstance(node.get("name"), str)
+    }
+    current_by_id = {
+        node["id"]: node
+        for node in current_nodes
+        if isinstance(node, dict) and isinstance(node.get("id"), str)
+    }
+    merged_nodes: list[dict[str, Any]] = []
+    for raw_node in proposed_nodes:
+        node = deepcopy(raw_node)
+        node.pop("credentials", None)
+        current = _find_retained_node(node, current_by_name, current_by_id)
+        if not current:
+            merged_nodes.append(node)
+            continue
+
+        current_id = current.get("id")
+        if isinstance(current_id, str) and current_id:
+            node["id"] = current_id
+
+        if "credentials" in current:
+            node["credentials"] = deepcopy(current["credentials"])
+
+        merged_nodes.append(node)
+    return merged_nodes
+
+
+WorkflowMutator = Callable[[dict[str, Any]], tuple[dict[str, Any], bool]]
+WorkflowVerifier = Callable[[dict[str, Any]], bool]
+
+
+async def _mutate_workflow(
+    workflow_id: str,
+    mutate: WorkflowMutator,
+    *,
+    verify: WorkflowVerifier | None = None,
+) -> dict[str, Any]:
+    async with _workflow_lock(workflow_id):
+        current = await get_workflow(workflow_id)
+        mutated, changed = mutate(deepcopy(current))
+        if not changed:
+            return current
+        committed = await _put_workflow_preserving_activation(
+            workflow_id,
+            _workflow_payload(mutated),
+            was_active=bool(current.get("active", False)),
+        )
+        if verify and not verify(committed):
+            raise N8nApiError(
+                409,
+                "Workflow mutation could not be verified against the committed result",
+                method="PUT",
+                path=f"/workflows/{workflow_id}",
+            )
+        return committed
+
+
 async def _put_workflow_preserving_activation(
     workflow_id: str,
     payload: dict[str, Any],
@@ -262,22 +369,41 @@ async def update_workflow(
     workflow_id: str,
     name: str,
     nodes: list[dict],
-    connections: dict,
+    connections: dict | None,
     settings: dict[str, Any] | None = None,
 ) -> N8nWorkflow:  # noqa: E501
-    current = await get_workflow(workflow_id)
-    was_active = bool(current.get("active", False))
-    payload = {
-        "name": name,
-        "nodes": nodes,
-        "connections": connections,
-        "settings": _workflow_settings(settings),
-    }
-    w = await _put_workflow_preserving_activation(
-        workflow_id,
-        payload,
-        was_active=was_active,
-    )
+    def mutate(current: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        current_nodes = current.get("nodes") if isinstance(current.get("nodes"), list) else []
+        current_connections = (
+            current.get("connections") if isinstance(current.get("connections"), dict) else {}
+        )
+        current_settings = (
+            current.get("settings") if isinstance(current.get("settings"), dict) else {}
+        )
+        current_name = str(current.get("name") or "Workflow")
+        merged_nodes = _merge_retained_node_state(current_nodes, nodes)
+        next_connections = (
+            deepcopy(connections) if connections is not None else deepcopy(current_connections)
+        )
+        next_settings = _workflow_settings(settings if settings is not None else current_settings)
+        changed = (
+            current_name != name
+            or current_nodes != merged_nodes
+            or current_connections != next_connections
+            or current_settings != next_settings
+        )
+        return (
+            {
+                **current,
+                "name": name,
+                "nodes": merged_nodes,
+                "connections": next_connections,
+                "settings": next_settings,
+            },
+            changed,
+        )
+
+    w = await _mutate_workflow(workflow_id, mutate)
     return N8nWorkflow(
         id=w["id"],
         name=w["name"],
@@ -374,11 +500,11 @@ async def attach_credential_to_workflow(
     Default None preserves the existing behaviour (Gmail/Sheets OAuth).
     """
 
-    workflow = await get_workflow(workflow_id)
-    nodes = workflow.get("nodes", [])
-    matched = False
-    for node in nodes:
-        if node.get("name") == node_name:
+    def mutate(workflow: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        nodes = workflow.get("nodes") if isinstance(workflow.get("nodes"), list) else []
+        for node in nodes:
+            if node.get("name") != node_name:
+                continue
             existing_credential = node.get("credentials", {}).get(credential_type, {})
             same_credential = (
                 isinstance(existing_credential, dict)
@@ -391,29 +517,50 @@ async def attach_credential_to_workflow(
                 and parameters.get("genericAuthType") == generic_auth_type
             )
             if same_credential and generic_auth_configured:
-                return workflow
+                return workflow, False
             if generic_auth_type:
                 params = node.setdefault("parameters", {})
                 params["authentication"] = "genericCredentialType"
                 params["genericAuthType"] = generic_auth_type
             credentials = node.setdefault("credentials", {})
             credentials[credential_type] = {"id": credential_id, "name": credential_name}
-            matched = True
-            break
-    if not matched:
-        raise N8nApiError(404, f"Node '{node_name}' was not found", method="PUT", path="/workflows")
+            return workflow, True
+        raise N8nApiError(
+            404,
+            f"Node '{node_name}' was not found",
+            method="PUT",
+            path=f"/workflows/{workflow_id}",
+        )
 
-    payload = {
-        "name": workflow.get("name", "Workflow"),
-        "nodes": nodes,
-        "connections": workflow.get("connections", {}),
-        "settings": _workflow_settings(workflow.get("settings")),
-    }
-    return await _put_workflow_preserving_activation(
-        workflow_id,
-        payload,
-        was_active=bool(workflow.get("active", False)),
-    )
+    def verify(committed: dict[str, Any]) -> bool:
+        nodes = committed.get("nodes")
+        if not isinstance(nodes, list):
+            return False
+        for node in nodes:
+            if node.get("name") != node_name:
+                continue
+            credentials = node.get("credentials")
+            if not isinstance(credentials, dict):
+                return False
+            attached = credentials.get(credential_type)
+            credential_matches = (
+                isinstance(attached, dict)
+                and str(attached.get("id") or "") == credential_id
+                and str(attached.get("name") or "") == credential_name
+            )
+            if not credential_matches:
+                return False
+            if not generic_auth_type:
+                return True
+            parameters = node.get("parameters")
+            return (
+                isinstance(parameters, dict)
+                and parameters.get("authentication") == "genericCredentialType"
+                and parameters.get("genericAuthType") == generic_auth_type
+            )
+        return False
+
+    return await _mutate_workflow(workflow_id, mutate, verify=verify)
 
 
 # ---------------------------------------------------------------------------

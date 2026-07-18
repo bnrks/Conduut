@@ -42,11 +42,25 @@ Assurance zinciri su sirayla calisir:
    `assessment` ve `claimable_outcome` ekler. HTTP `success=true` yalniz
    `verified` ve `no_action` icin kullanilir. Action olup zorunlu write-back
    yoksa `partial` ve `duplicate_risk=true` olur; eksik contract coverage
-   `verified` uretemez.
+   `verified` uretemez. Bununla birlikte node-specific runtime effect verifier
+   gercek side effect'i kanitlarsa `action_verified` ara claim seviyesi
+   kullanilir: Gmail `message.send` icin basarili node run'i yaninda non-empty
+   message `id` ve `labelIds` icinde `SENT` zorunludur. Bu seviye "mail
+   gonderildi" iddiasini destekler, "tum workflow dogrulandi" iddiasini
+   desteklemez; `functional_status=needs_attention` ve partial coverage korunur.
 5. Agent tool sonuclari evidence ledger'a yazilir. Final cevap claim seviyesi
    kaniti asarsa once `ModelRetry`, tekrarinda assessment'tan uretilen guvenli
    deterministik ozet kullanilir. LLM yalniz dildeki claim'i siniflandirir;
    fonksiyonel basari kararini vermez.
+   Claim uyumlulugu duz bir sayisal merdiven degildir: `no_action` kaniti action
+   claim'ini, `action_verified` kaniti da whole-run claim'ini acamaz. Acik
+   compatibility matrix kullanilir. `action_verified` evidence kaydi effect
+   turunu da tasir (`gmail_message_sent`); Gmail kaniti Sheets/status update
+   claim'ini acamaz. Bu effect-scope `run_verified` icin de gecerlidir: whole-run
+   claim'i acik olsa bile spesifik action claim'i ayni run'da kayitli effect'i
+   gerektirir. Final cevap yalniz ayni turdaki en son execution/inspect
+   evidence kaydiyla yetkilendirilir; eski bir run'in action kaniti daha yeni
+   `no_action` veya baska execution sonucunu override etmez.
 6. Dashboard manual ve batch side-effect run'larindan once safe preview alir.
    Firestore'daki tek kullanimlik token user id, workflow fingerprint ve input
    hash'ine baglidir; 10 dakika sonra, kullanildiginda veya workflow/input
@@ -78,6 +92,17 @@ Assurance zinciri su sirayla calisir:
     yerine `None` ile sample-input sandbox yolunu kullanir. Credential nedeniyle
     build sirasinda test edilemeyen workflow'un ilk run pretest'i de sample
     yerine gercek run payload'unu kullanir.
+11. Sandbox semantic guard yalniz action sinirindaki bos degeri kontrol etmez;
+    covered action'a kadar calismis tum upstream ancestor output'larini tarar.
+    Structured `undefined`/`null`/missing placeholder satirlari ve resolve
+    olmamis n8n expression'lari, sonraki AI adimi bunlari duzgun gorunen fallback
+    metne cevirse bile side effect oncesinde deterministik `needs_attention`
+    uretir. Finding node adlariyla sinirlidir; business payload loglanmaz.
+12. Gmail probe resolved `emailType` degerini de ledger'a alir. LLM judge,
+    formatted/styled digest veya newsletter niyetini delivery mode ile
+    karsilastirir; `emailType=text` icinde ham Markdown'i rendered HTML basarisi
+    saymaz. Gmail normalizer eski `bodyContentType=text/html` girdisini
+    `emailType=html` olarak korur.
 
 ## Rollout
 

@@ -823,9 +823,13 @@ def test_summarize_execution_verifies_successful_mutation_evidence():
     assert result.assessment.writebackCount == 0
     assert result.assessment.postconditionsVerified is True
     assert result.assessment.duplicateRisk is False
+    assert any(
+        item.kind == "effect_verified" and item.verifier == "gmail_message_sent"
+        for item in result.assessment.evidence
+    )
 
 
-def test_summarize_execution_never_verifies_partial_contract_coverage():
+def test_summarize_execution_allows_action_verified_for_partial_contract_coverage():
     workflow = {
         "nodes": [
             {"name": "Custom", "type": "n8n-nodes-community.custom", "parameters": {}},
@@ -848,7 +852,53 @@ def test_summarize_execution_never_verifies_partial_contract_coverage():
                         "Send Email": [
                             {
                                 "executionStatus": "success",
-                                "data": {"main": [[{"json": {"id": "m1"}}]]},
+                                "data": {"main": [[{"json": {"id": "m1", "labelIds": ["SENT"]}}]]},
+                            }
+                        ]
+                    }
+                }
+            },
+        },
+        response={"statusCode": 200, "body": {"id": "m1", "labelIds": ["SENT"]}},
+        workflow=workflow,
+    )
+
+    assert result.functionalStatus == "needs_attention"
+    assert result.claimableOutcome == "action_verified"
+    assert result.assessment.coverage == "partial"
+    assert any(
+        "no static output contract" in warning.message for warning in result.assessment.warnings
+    )
+    assert any(
+        item.kind == "effect_verified" and item.nodeName == "Send Email"
+        for item in result.assessment.evidence
+    )
+
+
+def test_summarize_execution_requires_sent_label_for_gmail_action_verified():
+    workflow = {
+        "nodes": [
+            {"name": "Custom", "type": "n8n-nodes-community.custom", "parameters": {}},
+            {
+                "name": "Send Email",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"resource": "message", "operation": "send"},
+            },
+        ],
+        "connections": {"Custom": {"main": [[{"node": "Send Email", "type": "main", "index": 0}]]}},
+    }
+    result = _summarize_execution(
+        {
+            "id": "missing-sent",
+            "workflowId": "wf_1",
+            "status": "success",
+            "data": {
+                "resultData": {
+                    "runData": {
+                        "Send Email": [
+                            {
+                                "executionStatus": "success",
+                                "data": {"main": [[{"json": {"id": "m1", "labelIds": ["INBOX"]}}]]},
                             }
                         ]
                     }
@@ -862,9 +912,69 @@ def test_summarize_execution_never_verifies_partial_contract_coverage():
     assert result.functionalStatus == "needs_attention"
     assert result.claimableOutcome == "none"
     assert result.assessment.coverage == "partial"
-    assert any(
-        "no static output contract" in warning.message for warning in result.assessment.warnings
+    assert not any(item.kind == "effect_verified" for item in result.assessment.evidence)
+
+
+def test_summarize_execution_blocking_assurance_keeps_claimable_outcome_none():
+    workflow = {
+        "nodes": [
+            {"name": "Webhook", "type": "n8n-nodes-base.webhook", "parameters": {}},
+            {
+                "name": "Update Status",
+                "type": "n8n-nodes-base.googleSheets",
+                "parameters": {
+                    "resource": "sheet",
+                    "operation": "update",
+                    "columns": {
+                        "mappingMode": "defineBelow",
+                        "matchingColumns": ["email"],
+                        "value": {"status": "sent", "email": "={{ $json.email }}"},
+                    },
+                },
+            },
+            {
+                "name": "Send Email",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"resource": "message", "operation": "send"},
+            },
+        ],
+        "connections": {
+            "Webhook": {"main": [[{"node": "Update Status", "type": "main", "index": 0}]]},
+            "Update Status": {"main": [[{"node": "Send Email", "type": "main", "index": 0}]]},
+        },
+    }
+    result = _summarize_execution(
+        {
+            "id": "blocking-assurance",
+            "workflowId": "wf_1",
+            "status": "success",
+            "data": {
+                "resultData": {
+                    "runData": {
+                        "Update Status": [
+                            {
+                                "executionStatus": "success",
+                                "data": {"main": [[{"json": {"updated": True}}]]},
+                            }
+                        ],
+                        "Send Email": [
+                            {
+                                "executionStatus": "success",
+                                "data": {"main": [[{"json": {"id": "m1", "labelIds": ["SENT"]}}]]},
+                            }
+                        ],
+                    }
+                }
+            },
+        },
+        response={"statusCode": 200, "body": {"id": "m1"}},
+        workflow=workflow,
     )
+
+    assert result.functionalStatus == "needs_attention"
+    assert result.claimableOutcome == "none"
+    assert result.assessment.coverage == "partial"
+    assert any(warning.severity == "error" for warning in result.assessment.warnings)
 
 
 def test_summarize_execution_with_mutation_but_no_run_data_is_unknown():

@@ -186,7 +186,16 @@ geçirmelidir → genellik guard'ının canlı örneği.
   Schedule ve Gmail send node'ları hatasız tamamlandı; Gmail çıktısı gerçek
   message/thread ID ve `SENT` etiketi döndürdü. Önceki iki reminder workflow'u
   hâlâ aktif olduğundan ayrıca mail üretebilir; kullanıcı onayı olmadan kapatılmadı.
-- **SONRAKİ: [[scenario-m1-sheets-filter-email]].**
+- **M2 — GEÇTİ ✅ (2026-07-19, kullanıcı-kabul varyantı):** Yeni chat task'i
+  "her çalıştırmamda" dediği için `Pflac4S8KvCxhWQe` Webhook kullandı; kullanıcı
+  trigger ve HTML code-fence farkını bu test için kabul etti. Sandbox `#371-#376`
+  sorunları gerçek mail atmadan yakaladı, `#377/#378` passed oldu. Onay sonrası
+  tek gerçek execution `#379`, NewsAPI 5 article + AI 5 başlık/5 link + Gmail
+  message/thread id ve `SENT` kanıtı üretti. Credential bağları update'ler boyunca
+  korundu. Yeni `action_verified` outcome'u Gmail `id + SENT` effect'ini partial
+  AI contract'tan ayırdı; whole-run claim hâlâ kapalıdır. Ayrıntı:
+  [[scenario-m2-schedule-http-digest]].
+- **SONRAKİ: [[scenario-m3-webhook-http-sheets]].**
 - Yeniden test sırası: **E1 → E2 → E3 → M1 → M2 → M3 → H1 → H2 → H3**.
 
 ## Güncelleme kuralı

@@ -463,7 +463,7 @@ def _normalize_gmail_node(data: dict[str, Any]) -> None:
         body_type = str(
             parameters.get("bodyContentType") or additional_fields.get("bodyContentType") or ""
         ).lower()
-        parameters["emailType"] = "text" if "text" in body_type else "text"
+        parameters["emailType"] = "html" if "html" in body_type else "text"
 
     for alias in (
         "toEmail",

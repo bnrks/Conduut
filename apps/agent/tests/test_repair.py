@@ -79,6 +79,23 @@ def _all_main_targets(connections):
     return targets
 
 
+def test_update_mode_does_not_infer_missing_connections():
+    nodes = [
+        _node("Webhook", "n8n-nodes-base.webhook"),
+        _node("Code", "n8n-nodes-base.code", parameters={"jsCode": "return items;"}),
+    ]
+
+    _, connections, repairs = repair_workflow(
+        nodes,
+        {},
+        registry=REGISTRY,
+        infer_missing_connections=False,
+    )
+
+    assert connections == {}
+    assert "inferred linear main connections" not in repairs
+
+
 # --------------------------------------------------------------------------
 # Stage 1 — boilerplate fill
 # --------------------------------------------------------------------------

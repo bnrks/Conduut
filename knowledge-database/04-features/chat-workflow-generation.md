@@ -103,6 +103,18 @@ connection referanslarini node `name` formatina normalize eder; model `1`/`2`
 veya `node1`/`node2` gibi id/sira alias'lari uretirse bunlar n8n'e yazilmadan
 once ilgili node adlarina cevrilir.
 
+`update_workflow` parameter-only editlerde mevcut operasyonel state'i korur:
+connections bos/atlanmissa var olan graf kullanilir; retained node ID'leri ve
+credential baglari model payload'iyla degistirilemez. Topology degisikligi tam
+non-empty connections ister, credential degisikligi ise yalniz dedicated attach
+tool'lariyla yapilir. Boylece alici/konu gibi tek alanli bir edit tum workflow'u
+yeniden wire etmez veya baglantilari koparmaz.
+
+Gmail send icin format niyeti aciktir: formatted/styled digest veya newsletter
+`emailType=html` ve gercek HTML body kullanir; ham Markdown `emailType=text`
+altinda render edilmis sayilmaz. Bilerek plain-text istenirse `emailType=text`
+korunur.
+
 > **DIKKAT — IR/compiler yolu kaldirildi ([[adr-0010-json-surface-repair-normalizer]],
 > [[workspace-refactor]] Faz 3):** Bu bolum eskiden tercih edilen yolun
 > `WorkflowPlan` action graph IR + `create_workflow_from_plan` tool'u (ve eski
@@ -236,6 +248,10 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
   `subject` ve `message` alanlari webhook output shape'ine gore expression'a
   cevrildikten sonra validate edilir. n8n expression recipient degerleri
   placeholder email kontrolunden gecirilmez.
+- Clarification sonrasi agent ayni adla tekrar `create_workflow` cagirirsa bu
+  cagri mevcut conversation workflow'una dedupe edilir. Model connections'i
+  vermediyse mevcut topology korunur; ozellikle branched graf lineer inference
+  ile ezilmez. Topology degisikligi tam ve non-empty connections ister.
 - Gmail/Sheets connection veya gerekli canonical capability yoksa chat'e
   `oauth_prompt` attachment gelir. Google Sheets node'u credential istediginde
   read operasyonlari icin `sheets.range.read`, write/append/create

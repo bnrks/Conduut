@@ -377,6 +377,31 @@ def test_normalize_workflow_nodes_maps_gmail_send_alias_parameters():
     assert "bodyContent" not in normalized[2].parameters
 
 
+def test_normalize_workflow_nodes_preserves_html_body_content_type():
+    nodes = valid_nodes()
+    nodes.append(
+        {
+            "id": "gmail",
+            "name": "Gmail",
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.1,
+            "position": [750, 300],
+            "parameters": {
+                "resource": "message",
+                "operation": "send",
+                "toEmail": "user@example.test",
+                "subject": "Digest",
+                "bodyContent": "<h1>Digest</h1>",
+                "bodyContentType": "text/html",
+            },
+        }
+    )
+
+    normalized = normalize_workflow_nodes(nodes, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+
+    assert normalized[2].parameters["emailType"] == "html"
+
+
 def test_normalize_workflow_nodes_rewrites_google_sheets_append_resource_to_sheet():
     nodes = valid_nodes()
     nodes.append(

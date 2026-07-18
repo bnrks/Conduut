@@ -99,6 +99,7 @@ def repair_workflow(
     runtime_fields: set[str] | frozenset[str] = frozenset(),
     trigger_name: str | None = None,
     registry: Any = default_registry,
+    infer_missing_connections: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
     """Repair compact n8n JSON in place-safe fashion. Returns (nodes, connections, repairs)."""
 
@@ -108,7 +109,7 @@ def repair_workflow(
 
     _fill_boilerplate(nodes, registry, repairs)
 
-    if not connections:
+    if not connections and infer_missing_connections:
         _infer_linear_connections(nodes, connections, repairs)
 
     if trigger_name is None:

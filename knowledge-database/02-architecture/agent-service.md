@@ -717,6 +717,23 @@ koruyan typed hata sinifi kullanir. Bu MVP davranisi
 [[adr-0003-google-oauth-broker-mvp]] icinde, platform capability katmani ise
 [[adr-0006-platform-capability-layer]] icinde kayitlidir.
 
+2026-07-18 itibariyla workflow yazmalari `workflow_id` bazli ortak mutation
+primitive'inden gecer. Ayni agent process'i icinde ayni workflow'a eszamanli
+read-modify-write islemleri siralanir; farkli workflow'lar birbirini bekletmez.
+Normal `update_workflow` mevcut node `id` degerlerini ve credential baglarini
+korur, yeni/retype edilmis node'daki model-kaynakli `credentials` alanini atar;
+credential degisikligi yalniz ownership/onay kontrollu dedicated attach
+yollarindan yapilir. `connections` update'te verilmez veya bos verilirse mevcut
+graf korunur; topology degisikligi tam ve non-empty connection payload'i ister.
+Bu kural clarification sonrasi `create_workflow` ayni conversation workflow'una
+dedupe oldugunda da gecerlidir; eksik connections mevcut branched grafi lineer
+olarak yeniden kurmaz. Credential attach, committed n8n sonucunda istenen bagin
+gercekten bulundugunu; generic HTTP auth icin ayrica
+`authentication=genericCredentialType` ve dogru `genericAuthType` wiring'ini
+dogrulamadan basari donmez. Lock process-local'dir; gelecekte coklu agent replica
+veya dis n8n editor yazarlari icin distributed/optimistic concurrency ayrica
+gerekecektir.
+
 Ilgili notlar: [[n8n-registry]], [[chat-workflow-generation]],
 [[known-issues]].
 
@@ -744,7 +761,18 @@ ortak assurance katmani eklendi:
   tek-kullanimlik token ile execution'a gecebilir.
 - AgentDeps evidence ledger'i create/sandbox/run/inspect kanitini claim
   seviyesinde tutar. Output validator kaniti asan basari iddiasini once retry
-  eder, tekrarinda deterministic safe summary kullanir.
+  eder, tekrarinda deterministic safe summary kullanir. `action_verified`,
+  partial contract coverage altinda node-specific runtime effect'i ayri tutar:
+  Gmail send sonucu non-empty message `id` ve `SENT` etiketi tasiyorsa agent
+  "mail gonderildi" diyebilir, fakat `run_verified` olmadan "tum workflow
+  basariyla tamamlandi" diyemez. `no_action`, `action_verified` ve
+  `run_verified` birbirinin yerine gecmez; explicit claim compatibility matrix
+  kullanilir. Evidence item'i verifier effect turunu (`gmail_message_sent`)
+  tasir; bu nedenle Gmail kaniti Sheet/status update claim'ini yetkilendirmez.
+  `run_verified` da spesifik action cümleleri için aynı effect-scope kontrolünden
+  geçer; whole-run doğrulaması ilgisiz bir mutation claim'ini açmaz.
+  Claim gate ayni turdaki en son execution/inspect evidence kaydini esas alir;
+  onceki execution kaniti yeni sonuca tasinmaz.
 - Chat run preview onayi structured bir round-trip'tir: attachment opaque
   `requestId` + `workflowId` tasir, frontend `user_input_response` gonderir,
   route bunu authenticated user attachment'i olarak saklar ve runner yalniz
@@ -772,6 +800,14 @@ ortak assurance katmani eklendi:
   managed Gmail/Sheets Connections durumunu temsil etmez. Platform-state bu
   iki listeyi ayri etiketler ve workflow node'u icin baglanti otoritesi
   `analyze_workflow_readiness` sonucudur.
+- Sandbox probe degerlendirmesi action'a kadar olan tum upstream ancestor
+  output'larini tarar. `undefined`/`null` gibi structured placeholder satirlari
+  veya resolve olmamis n8n expression'i daha sonraki AI node'u tarafindan duzgun
+  gorunen metne cevrilse bile real side effect oncesinde `needs_attention`
+  uretir. Findings business payload'i loglamaz; yalniz etkilenen node adlarini
+  tasir. Gmail probe ayrica `emailType` kaydeder; formatted digest/newsletter
+  niyetinde text/ham Markdown ile rendered HTML uyusmazligi judge tarafindan
+  reddedilir.
 
 Rollout `CONDUUT_WORKFLOW_ASSURANCE_MODE` ile `observe|hybrid|enforce` olarak
 yonetilir; varsayilan `hybrid`'dir. Dashboard single/batch sonucu raw n8n

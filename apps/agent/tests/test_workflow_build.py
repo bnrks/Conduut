@@ -17,7 +17,11 @@ from src.agent.tools import (
     _workflow_with_conduut_webhook_trigger,
     _workflow_with_post_webhook_trigger,
 )
-from src.agent.tools.factory import _dedup_existing_workflow, _normalized_user_input_request
+from src.agent.tools.factory import (
+    _dedup_existing_workflow,
+    _normalized_user_input_request,
+    _validated_create_or_dedup_workflow,
+)
 
 
 def test_normalized_user_input_request_limits_missing_fields_to_current_step():
@@ -209,6 +213,33 @@ def test_runtime_pipeline_repairs_compact_broken_ai_workflow(monkeypatch):
     for node in validated_nodes:
         assert node.typeVersion is not None
         assert node.position is not None
+
+
+def test_validated_runtime_workflow_preserves_fallback_connections_for_update():
+    nodes = [
+        WorkflowNode(
+            name="Webhook",
+            type="n8n-nodes-base.webhook",
+            typeVersion=2,
+            parameters={"httpMethod": "POST", "path": "existing"},
+        ),
+        WorkflowNode(
+            name="Code",
+            type="n8n-nodes-base.code",
+            typeVersion=2,
+            parameters={"jsCode": "return items;"},
+        ),
+    ]
+    existing_connections = {"Webhook": {"main": [[{"node": "Code", "type": "main", "index": 0}]]}}
+
+    _, validated_connections, _ = _validated_runtime_workflow(
+        nodes,
+        None,
+        fallback_connections=existing_connections,
+        infer_missing_connections=False,
+    )
+
+    assert validated_connections == existing_connections
 
 
 def test_validated_workflow_adds_webhook_id_and_response_node_mode(monkeypatch):
@@ -535,3 +566,67 @@ async def test_dedup_existing_workflow_reraises_non_404(monkeypatch):
     monkeypatch.setattr(n8n_client, "get_workflow", fake_get)
     with pytest.raises(n8n_client.N8nApiError):
         await _dedup_existing_workflow("boom-id")
+
+
+def test_deduped_create_preserves_existing_topology_when_connections_are_omitted(monkeypatch):
+    schemas = {
+        "manualTrigger": {
+            "type": "n8n-nodes-base.manualTrigger",
+            "typeVersion": 1,
+            "isTrigger": True,
+        },
+        "set": {
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "isTrigger": False,
+        },
+    }
+    monkeypatch.setattr(
+        "src.agent.validation.default_registry.get_node_schema",
+        lambda node_type: schemas.get(node_type) or schemas.get(node_type.split(".")[-1]),
+    )
+    nodes = [
+        WorkflowNode(name="Trigger", type="manualTrigger", parameters={}),
+        WorkflowNode(
+            name="Branch A",
+            type="set",
+            parameters={
+                "mode": "manual",
+                "assignments": {
+                    "assignments": [{"id": "a", "name": "branch", "type": "string", "value": "a"}]
+                },
+                "options": {},
+            },
+        ),
+        WorkflowNode(
+            name="Branch B",
+            type="set",
+            parameters={
+                "mode": "manual",
+                "assignments": {
+                    "assignments": [{"id": "b", "name": "branch", "type": "string", "value": "b"}]
+                },
+                "options": {},
+            },
+        ),
+    ]
+    existing_connections = {
+        "Trigger": {
+            "main": [
+                [
+                    {"node": "Branch A", "type": "main", "index": 0},
+                    {"node": "Branch B", "type": "main", "index": 0},
+                ]
+            ]
+        }
+    }
+
+    _, validated_connections, _, requested_connections = _validated_create_or_dedup_workflow(
+        nodes,
+        None,
+        None,
+        {"id": "wf-1", "connections": existing_connections},
+    )
+
+    assert requested_connections is None
+    assert validated_connections == existing_connections

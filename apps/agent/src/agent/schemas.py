@@ -259,6 +259,7 @@ FunctionalStatus = Literal[
 ClaimableOutcome = Literal[
     "workflow_created",
     "sandbox_passed",
+    "action_verified",
     "run_verified",
     "no_action",
     "none",
@@ -291,6 +292,8 @@ class ActionEvidence(BaseModel):
     mutation: bool = False
     runStatus: str | None = None
     outputItemCount: int | None = None
+    effectVerified: bool = False
+    verifier: str | None = None
 
 
 class WorkflowRunAssessment(BaseModel):
@@ -425,12 +428,16 @@ class AgentDeps:
         *,
         workflow_id: str | None = None,
         execution_id: str | None = None,
+        effects: list[str] | None = None,
     ) -> None:
         item: dict[str, Any] = {"outcome": outcome}
         if workflow_id:
             item["workflow_id"] = workflow_id
         if execution_id:
             item["execution_id"] = execution_id
+        normalized_effects = [effect for effect in (effects or []) if effect]
+        if normalized_effects:
+            item["effects"] = list(dict.fromkeys(normalized_effects))
         self.claim_evidence.append(item)
 
     async def emit_tool_call(self, tool: str) -> None:

@@ -45,6 +45,9 @@ def _validated_runtime_workflow(
     nodes: list[WorkflowNode],
     connections: dict[str, Any] | None,
     input_schema: list[WorkflowInputField] | None = None,
+    *,
+    fallback_connections: dict[str, Any] | None = None,
+    infer_missing_connections: bool = True,
 ) -> tuple[list[WorkflowNode], dict[str, Any], list[WorkflowInputField]]:
     normalized_nodes = normalize_workflow_nodes(nodes)
     node_dicts = dump_workflow_nodes(normalized_nodes)
@@ -55,11 +58,15 @@ def _validated_runtime_workflow(
     # Canonicalize connection shape/aliases, then deterministically repair the
     # compact JSON the model wrote (boilerplate, linear wiring, AI sub-node
     # ports, runtime-input expressions) before applying runtime inputs.
-    normalized_connections = normalize_workflow_connections(connections or {}, normalized_nodes)
+    source_connections = connections if connections is not None else fallback_connections
+    normalized_connections = normalize_workflow_connections(
+        source_connections or {}, normalized_nodes
+    )
     node_dicts, normalized_connections, _repairs = repair_workflow(
         node_dicts,
         normalized_connections,
         runtime_fields={field.name for field in runtime_schema},
+        infer_missing_connections=infer_missing_connections,
     )
 
     _apply_runtime_inputs_to_nodes(node_dicts, runtime_schema)

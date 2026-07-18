@@ -116,6 +116,7 @@ def _gmail_probe(node: dict[str, Any]) -> bool:
     send_to = parameters.get("sendTo", "")
     subject = parameters.get("subject", "")
     message = parameters.get("message", "")
+    email_type = parameters.get("emailType", "")
     assignments = [
         _assignment("id", "conduut-sandbox-message"),
         _assignment("threadId", "conduut-sandbox-thread"),
@@ -129,6 +130,7 @@ def _gmail_probe(node: dict[str, Any]) -> bool:
             _assignment(f"{_PROBE_PREFIX}_target", send_to),
             _assignment(f"{_PROBE_PREFIX}_subject", subject),
             _assignment(f"{_PROBE_PREFIX}_message", message),
+            _assignment(f"{_PROBE_PREFIX}_email_type", email_type),
         ],
     )
     return True

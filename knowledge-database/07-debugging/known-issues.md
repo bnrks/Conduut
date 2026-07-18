@@ -714,6 +714,30 @@ credential/OAuth attachment'i emit edince `awaiting_user_input` durumuna gecip
 side-effect tool'larini durdurur ve kullaniciya once connection'i tamamlamasini
 soylemelidir.
 
+## Workflow Update Credential Lost-Update Yarisi (2026-07-18, cozuldu)
+
+M2 digest varyantinda yalniz Gmail recipient degistiren `update_workflow`,
+modelin eksik full-node payload'ini n8n'e PUT ederek NewsAPI ve Anthropic
+credential baglarini dusurdu. Agent iki `attach_credential` tool'unu paralel
+cagirdiginda her cagri ayni eski workflow snapshot'ini okuyup tum workflow'u
+yeniden yazdi; iki tool da HTTP basarisi donmesine ragmen son yazan diger
+credential'i ezdi.
+
+Kalici cozum `n8n_client` seviyesinde workflow-id scoped mutation primitive'idir:
+same-workflow read-modify-write islemleri process icinde siralanir, update
+retained node ID/credential state'ini ve atlanan connections'i korur, yeni node
+model credential'larini atar ve attach committed sonucu dogrular. Bu koruma
+process-local'dir; coklu agent replica veya n8n editorunden eszamanli dis yazilar
+icin distributed/optimistic concurrency henuz yoktur. Ilgili:
+[[adr-0012-custom-http-credentials]], [[agent-service]].
+
+Bu olay ayni zamanda Sandbox V2'nin yalniz action-boundary bosluk kontrolunun
+yetersiz oldugunu gosterdi: upstream Code `undefined` uretirken AI bunu duzgun
+gorunen "icerik yok" metnine cevirdi. Sandbox artik covered action'in tum
+upstream ancestor output'larinda structured placeholder/unresolved expression
+arar ve payload'i loglamadan `needs_attention` verir; bkz.
+[[adr-0019-workflow-assurance-v1]].
+
 ## Google Sheets OAuth Credential Schema
 
 2026-05-09'da Sheets connection callback'i Google token exchange ve userinfo

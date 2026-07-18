@@ -7,8 +7,22 @@ CLAIM_LEVELS = {
     "none": 0,
     "workflow_created": 1,
     "sandbox_passed": 2,
-    "no_action": 3,
-    "run_verified": 4,
+    "action_verified": 3,
+    "no_action": 4,
+    "run_verified": 5,
+}
+
+# Evidence outcomes are not a single monotonic ladder: ``no_action`` must never
+# authorize an action claim, and ``action_verified`` must never authorize a
+# whole-workflow success claim. Keep priority only for choosing a safe summary;
+# use this explicit compatibility matrix for claim authorization.
+_SUPPORTED_CLAIMS = {
+    "none": {"none"},
+    "workflow_created": {"none", "workflow_created"},
+    "sandbox_passed": {"none", "workflow_created", "sandbox_passed"},
+    "action_verified": {"none", "workflow_created", "action_verified"},
+    "no_action": {"none", "workflow_created", "no_action"},
+    "run_verified": {"none", "workflow_created", "run_verified"},
 }
 
 _RUN_PATTERNS = (
@@ -18,21 +32,33 @@ _RUN_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(
-        r"\b(?:mail|e-?posta|mesaj)\b[^.\n]{0,80}\b(?:gönderildi|atıldı)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:satır|tablo|sheet|durum)\b[^.\n]{0,80}\b(?:güncellendi|işaretlendi)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
         r"\b(?:workflow|automation)\s+(?:successfully\s+)?"
         r"(?:ran|executed|completed)\b",
         re.IGNORECASE,
     ),
     re.compile(
-        r"\b(?:mail|email|message|row|sheet|status)\b[^.\n]{0,80}"
-        r"\b(?:sent|updated)\b",
+        r"\b(?:all\s+steps|tüm\s+adımlar)\b[^.\n]{0,80}"
+        r"\b(?:completed|succeeded|tamamlandı|başarıyla\s+çalıştı)\b",
+        re.IGNORECASE,
+    ),
+)
+_MAIL_ACTION_PATTERNS = (
+    re.compile(
+        r"\b(?:mail|e-?posta|mesaj)\b[^.\n]{0,80}\b(?:gönderildi|atıldı)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:mail|email|message)\b[^.\n]{0,80}\b(?:sent)\b",
+        re.IGNORECASE,
+    ),
+)
+_ROW_ACTION_PATTERNS = (
+    re.compile(
+        r"\b(?:satır|tablo|sheet|durum)\b[^.\n]{0,80}\b(?:güncellendi|işaretlendi)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:row|sheet|status)\b[^.\n]{0,80}\b(?:updated)\b",
         re.IGNORECASE,
     ),
 )
@@ -54,6 +80,8 @@ def claimed_outcome(text: str) -> str:
     for pattern in _RUN_PATTERNS:
         if pattern.search(text):
             return "run_verified"
+    if claimed_action_effects(text):
+        return "action_verified"
     for pattern in _NO_ACTION_PATTERNS:
         if pattern.search(text):
             return "no_action"
@@ -66,6 +94,15 @@ def claimed_outcome(text: str) -> str:
     return "none"
 
 
+def claimed_action_effects(text: str) -> set[str]:
+    effects: set[str] = set()
+    if any(pattern.search(text) for pattern in _MAIL_ACTION_PATTERNS):
+        effects.add("gmail_message_sent")
+    if any(pattern.search(text) for pattern in _ROW_ACTION_PATTERNS):
+        effects.add("sheets_row_updated")
+    return effects
+
+
 def highest_evidence_outcome(evidence: list[dict[str, Any]]) -> str:
     best = "none"
     for item in evidence:
@@ -76,11 +113,27 @@ def highest_evidence_outcome(evidence: list[dict[str, Any]]) -> str:
 
 
 def claim_exceeds_evidence(text: str, evidence: list[dict[str, Any]]) -> bool:
-    return CLAIM_LEVELS[claimed_outcome(text)] > CLAIM_LEVELS[highest_evidence_outcome(evidence)]
+    claim = claimed_outcome(text)
+    if claim == "none":
+        return False
+    latest = evidence[-1] if evidence else {"outcome": "none"}
+    outcome = str(latest.get("outcome") or "none")
+    if claim == "action_verified":
+        required_effects = claimed_action_effects(text)
+        verified_effects = {
+            str(effect) for effect in (latest.get("effects") or []) if str(effect).strip()
+        }
+        return not (
+            outcome in {"action_verified", "run_verified"}
+            and bool(required_effects)
+            and required_effects.issubset(verified_effects)
+        )
+    return claim not in _SUPPORTED_CLAIMS.get(outcome, {"none"})
 
 
 def safe_evidence_summary(evidence: list[dict[str, Any]]) -> str:
-    outcome = highest_evidence_outcome(evidence)
+    latest = evidence[-1] if evidence else {"outcome": "none"}
+    outcome = str(latest.get("outcome") or "none")
     if outcome == "run_verified":
         execution_id = next(
             (
@@ -92,6 +145,22 @@ def safe_evidence_summary(evidence: list[dict[str, Any]]) -> str:
         )
         suffix = f" (Run #{execution_id})" if execution_id else ""
         return f"Gerçek çalıştırma ve beklenen sonuçlar doğrulandı{suffix}."
+    if outcome == "action_verified":
+        execution_id = next(
+            (
+                str(item.get("execution_id"))
+                for item in reversed(evidence)
+                if item.get("execution_id")
+            ),
+            "",
+        )
+        suffix = f" (Run #{execution_id})" if execution_id else ""
+        effects = {str(effect) for effect in (latest.get("effects") or [])}
+        action = "Mail gönderimi" if "gmail_message_sent" in effects else "Dış aksiyon"
+        return (
+            f"{action} n8n execution kanıtıyla doğrulandı"
+            f"{suffix}; ancak workflow'un uçtan uca sözleşme doğrulaması hâlâ kısmi."
+        )
     if outcome == "no_action":
         return "Çalıştırma tamamlandı; işlenecek uygun kayıt bulunmadığı için yan etki oluşmadı."
     if outcome == "sandbox_passed":

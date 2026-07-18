@@ -56,6 +56,14 @@ kalir).
   Deterministik baglama node'un `authentication`/`genericAuthType` parametrelerini
   ve `credentials` alanini yazar (`n8n_client.attach_credential_to_workflow`
   `generic_auth_type` parametresi).
+- Attach islemi workflow-bazli ortak mutation lock'u icinde calisir. Ayni
+  workflow'da birden cok credential paralel baglansa bile her tur en son
+  committed state'i yeniden okur; bir credential digerini ezmez. Tool, n8n'in
+  committed cevabinda istenen credential bagini dogrulamadan basari donmez.
+- Genel `update_workflow` credential otoritesi degildir: retained node'un mevcut
+  credential state'i aynen korunur, yeni/retype node'daki model-kaynakli
+  `credentials` atilir. Credential degisikligi yalniz bu dedicated/onayli yol ve
+  managed readiness katmani uzerinden yapilir.
 - Eslesme yoksa tip-secicili `credential_request` karti (4 tip + host onceden
   dolu) gosterilir; formu doldurup kaydetmek zaten bir onaydir.
 
@@ -102,6 +110,10 @@ degistirilir. Boylece yaygin durum sifir-friction, nadir durumlar Gelismis ile.
   metadata->credential map'i dogal olarak per-container store'a tasinir.
 - Eski `workflow_credentials` koleksiyonu deprecate; yeni creds `credentials`
   koleksiyonuna yazilir (migrasyon yok, MVP).
+- HTTP credential attach basarisi yalniz credential id/name nesnesine bakmaz;
+  committed node parametrelerinde `authentication=genericCredentialType` ve
+  beklenen `genericAuthType` da korunmus olmalidir. n8n bunlardan birini dusururse
+  client 409 ile fail-closed davranir.
 
 ## Ilgili
 

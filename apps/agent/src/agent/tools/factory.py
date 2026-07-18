@@ -308,6 +308,30 @@ async def _dedup_existing_workflow(existing_id: str | None) -> dict[str, Any] | 
         raise
 
 
+def _validated_create_or_dedup_workflow(
+    nodes: list[WorkflowNode],
+    connections: dict[str, Any] | None,
+    input_schema: list[WorkflowInputField] | None,
+    existing: dict[str, Any] | None,
+) -> tuple[
+    list[WorkflowNode],
+    dict[str, Any],
+    list[WorkflowInputField],
+    dict[str, Any] | None,
+]:
+    """Validate create input without rebuilding a deduped workflow's topology."""
+
+    requested_connections = connections or None
+    validated_nodes, validated_connections, runtime_schema = _validated_runtime_workflow(
+        nodes,
+        requested_connections,
+        input_schema,
+        fallback_connections=(existing.get("connections", {}) if existing is not None else None),
+        infer_missing_connections=requested_connections is not None or existing is None,
+    )
+    return validated_nodes, validated_connections, runtime_schema, requested_connections
+
+
 def _normalized_user_input_request(
     question: str,
     missing_fields: list[str] | None,
@@ -584,12 +608,6 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             return _waiting_for_user_input_result()
         await ctx.deps.emit_tool_call("create_workflow")
         started_at = perf_counter()
-        validated_nodes, validated_connections, runtime_schema = _validated_runtime_workflow(
-            nodes,
-            connections,
-            input_schema,
-        )
-        node_dicts = dump_workflow_nodes(validated_nodes)
 
         # Dedup: if this conversation already built a workflow with this name,
         # update it instead of creating a duplicate (the agent often rebuilds the
@@ -598,18 +616,28 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
 
         try:
             existing = await _dedup_existing_workflow(existing_id)
+            (
+                validated_nodes,
+                validated_connections,
+                runtime_schema,
+                requested_connections,
+            ) = _validated_create_or_dedup_workflow(
+                nodes,
+                connections,
+                input_schema,
+                existing,
+            )
+            node_dicts = dump_workflow_nodes(validated_nodes)
             if existing_id and existing is not None:
                 ctx.deps.mark_replay_unsafe("create_workflow")
                 workflow = await n8n_client.update_workflow(
                     workflow_id=existing_id,
                     name=name,
                     nodes=node_dicts,
-                    connections=validated_connections,
-                    settings=(
-                        existing.get("settings")
-                        if isinstance(existing.get("settings"), dict)
-                        else None
+                    connections=(
+                        validated_connections if requested_connections is not None else None
                     ),
+                    settings=None,
                 )
                 log.info(
                     "create_workflow_deduped_to_update",
@@ -687,10 +715,12 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         input_schema: list[WorkflowInputField] | None = None,
         output_schema: list[WorkflowOutputField] | None = None,
     ) -> dict[str, Any]:
-        """Update an existing workflow with the complete compact n8n JSON.
+        """Update an existing workflow with compact n8n JSON.
 
-        First call get_workflow, then pass the full updated node/connection
-        structure. Same compact-JSON contract and auto-repair as create_workflow
+        First call get_workflow, then pass the full updated node structure. Existing
+        connections are preserved when connections is omitted or empty; topology
+        changes must pass the complete non-empty connection structure. Same
+        compact-JSON contract and auto-repair as create_workflow
         (boilerplate filled, AI sub-nodes wired to ai_* ports, webhook inputs
         read as $json.body.<field>).
         When the workflow returns data to the user, pass output_schema (named
@@ -702,26 +732,35 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             return _waiting_for_user_input_result()
         await ctx.deps.emit_tool_call("update_workflow")
         started_at = perf_counter()
+        try:
+            existing_workflow = await n8n_client.get_workflow(workflow_id)
+        except Exception as exc:
+            log.error("tool_error", tool="update_workflow", error=str(exc))
+            result = {"error": _safe_error(exc)}
+            _log_tool_finished("update_workflow", started_at, result)
+            return result
+
+        requested_connections = connections or None
+        existing_connections = existing_workflow.get("connections")
         validated_nodes, validated_connections, runtime_schema = _validated_runtime_workflow(
             nodes,
-            connections,
+            requested_connections,
             input_schema,
+            fallback_connections=(
+                existing_connections if isinstance(existing_connections, dict) else {}
+            ),
+            infer_missing_connections=requested_connections is not None,
         )
         node_dicts = dump_workflow_nodes(validated_nodes)
 
         try:
-            existing_workflow = await n8n_client.get_workflow(workflow_id)
             ctx.deps.mark_replay_unsafe("update_workflow")
             workflow = await n8n_client.update_workflow(
                 workflow_id=workflow_id,
                 name=name,
                 nodes=node_dicts,
-                connections=validated_connections,
-                settings=(
-                    existing_workflow.get("settings")
-                    if isinstance(existing_workflow.get("settings"), dict)
-                    else None
-                ),
+                connections=(validated_connections if requested_connections is not None else None),
+                settings=None,
             )
         except Exception as exc:
             log.error("tool_error", tool="update_workflow", error=str(exc))
@@ -973,10 +1012,16 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             for artifact in result.artifacts:
                 await ctx.deps.emit_attachment(ArtifactPreviewAttachment(data=artifact))
             payload = result.model_dump(exclude_none=True)
+            verified_effects = [
+                item.verifier
+                for item in result.assessment.evidence
+                if item.effectVerified and item.verifier
+            ]
             ctx.deps.record_claim_evidence(
                 result.claimableOutcome,
                 workflow_id=result.workflowId,
                 execution_id=result.executionId,
+                effects=verified_effects,
             )
             _log_tool_finished("execute_workflow", started_at, payload)
             return payload
@@ -1050,10 +1095,16 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         try:
             result = await executions.inspect_run(ctx.deps.user_id, execution_id)
             payload = result.model_dump(exclude_none=True)
+            verified_effects = [
+                item.verifier
+                for item in result.assessment.evidence
+                if item.effectVerified and item.verifier
+            ]
             ctx.deps.record_claim_evidence(
                 result.claimableOutcome,
                 workflow_id=result.workflowId,
                 execution_id=result.executionId or execution_id,
+                effects=verified_effects,
             )
             _log_tool_finished("inspect_execution", started_at, payload)
             return payload

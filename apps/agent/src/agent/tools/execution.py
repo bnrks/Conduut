@@ -78,6 +78,101 @@ _WRITEBACK_TYPE_MARKERS = (
 )
 
 
+def _latest_run_output_items(execution: dict[str, Any], node_name: str) -> list[Any]:
+    data = execution.get("data") if isinstance(execution.get("data"), dict) else {}
+    result_data = data.get("resultData", {}) if isinstance(data, dict) else {}
+    run_data = result_data.get("runData") if isinstance(result_data, dict) else None
+    runs = run_data.get(node_name) if isinstance(run_data, dict) else None
+    if not isinstance(runs, list) or not runs:
+        return []
+    latest_run = runs[-1] if isinstance(runs[-1], dict) else {}
+    node_data = latest_run.get("data") if isinstance(latest_run.get("data"), dict) else {}
+    main_outputs = node_data.get("main") if isinstance(node_data.get("main"), list) else []
+    items: list[Any] = []
+    for branch in main_outputs:
+        if not isinstance(branch, list):
+            continue
+        items.extend(branch)
+    return items
+
+
+def _item_json_payload(item: Any) -> dict[str, Any] | None:
+    if isinstance(item, dict):
+        payload = item.get("json") if "json" in item else item
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
+def _normalize_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _gmail_send_effect_verified(
+    node: dict[str, Any] | None,
+    *,
+    execution: dict[str, Any],
+    node_name: str,
+) -> bool:
+    if not node:
+        return False
+    if str(node.get("type") or "") != "n8n-nodes-base.gmail":
+        return False
+    parameters = node.get("parameters") if isinstance(node.get("parameters"), dict) else {}
+    if str(parameters.get("resource") or "").lower() != "message":
+        return False
+    if str(parameters.get("operation") or "").lower() != "send":
+        return False
+    for item in _latest_run_output_items(execution, node_name):
+        payload = _item_json_payload(item)
+        if not payload:
+            continue
+        message_id = str(payload.get("id") or "").strip()
+        labels = {label.upper() for label in _normalize_string_list(payload.get("labelIds"))}
+        if message_id and "SENT" in labels:
+            return True
+    return False
+
+
+def _verified_action_effects(
+    execution: dict[str, Any],
+    *,
+    workflow: dict[str, Any] | None,
+    hints: list[WorkflowRunDataHint],
+) -> list[ActionEvidence]:
+    nodes = _nodes_by_name(workflow)
+    verified: list[ActionEvidence] = []
+    for hint in hints:
+        if (
+            not hint.mutation
+            or hint.hasError
+            or hint.runStatus in {"error", "failed"}
+            or hint.outputItemCount <= 0
+            or _is_writeback_node(nodes.get(hint.nodeName))
+        ):
+            continue
+        node = nodes.get(hint.nodeName)
+        verifier: str | None = None
+        if _gmail_send_effect_verified(node, execution=execution, node_name=hint.nodeName):
+            verifier = "gmail_message_sent"
+        if verifier:
+            verified.append(
+                ActionEvidence(
+                    kind="effect_verified",
+                    nodeName=hint.nodeName,
+                    nodeType=hint.nodeType,
+                    mutation=True,
+                    runStatus=hint.runStatus,
+                    outputItemCount=hint.outputItemCount,
+                    effectVerified=True,
+                    verifier=verifier,
+                )
+            )
+    return verified
+
+
 def _node_type_by_name(workflow: dict[str, Any] | None) -> dict[str, str]:
     if not workflow:
         return {}
@@ -341,6 +436,7 @@ def _transport_status_code(response: dict[str, Any] | None) -> int | None:
 
 def _functional_assessment(
     *,
+    execution: dict[str, Any],
     raw_status: str,
     error_message: str | None,
     response: dict[str, Any] | None,
@@ -395,6 +491,8 @@ def _functional_assessment(
     raw_failed = raw_status in {"error", "failed"} or bool(error_message)
     reasons: list[str] = []
     warnings: list[WorkflowAssessmentWarning] = []
+    verified_action_effects = _verified_action_effects(execution, workflow=workflow, hints=hints)
+    verified_action_nodes = [item.nodeName for item in verified_action_effects if item.nodeName]
 
     def add_warning(
         code: str,
@@ -450,6 +548,7 @@ def _functional_assessment(
             severity="error",
         )
 
+    pre_assurance_status: FunctionalStatus
     if raw_failed or transport_failed or mutation_errors:
         if successful_mutations:
             functional_status: FunctionalStatus = "partial"
@@ -485,9 +584,11 @@ def _functional_assessment(
             "execution_detail_missing",
             "No execution run data was available to verify the outcome.",
         )
+    pre_assurance_status = functional_status
 
     if cardinality_mismatch:
         functional_status = "partial" if action_count else "needs_attention"
+        pre_assurance_status = functional_status
 
     assurance_partial = False
     assurance_blocking = False
@@ -517,6 +618,14 @@ def _functional_assessment(
         claimable = "run_verified"
     elif functional_status == "no_action":
         claimable = "no_action"
+    elif (
+        pre_assurance_status == "verified"
+        and functional_status == "needs_attention"
+        and assurance_partial
+        and not assurance_blocking
+        and bool(verified_action_nodes)
+    ):
+        claimable = "action_verified"
 
     duplicate_risk = bool(
         action_count > 0
@@ -546,7 +655,7 @@ def _functional_assessment(
             outputItemCount=hint.outputItemCount,
         )
         for hint in hints
-    ]
+    ] + verified_action_effects
 
     assessment = WorkflowRunAssessment(
         transportStatusCode=transport_status,
@@ -608,6 +717,7 @@ def _summarize_execution(
     output_count = sum(int(output.get("itemCount") or 0) for output in outputs)
     has_visible_result = output_count > 0 or visible_response not in ({}, [], None, "")
     functional_status, claimable_outcome, assessment = _functional_assessment(
+        execution=execution,
         raw_status=str(status),
         error_message=error_message,
         response=response,

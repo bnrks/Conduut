@@ -1,5 +1,9 @@
 """Tests for n8n_client credential attachment wiring."""
 
+import asyncio
+
+import pytest
+
 from src import n8n_client
 
 
@@ -37,6 +41,17 @@ def _patch(monkeypatch, node):
         captured["method"] = method
         captured["path"] = path
         captured["json"] = kwargs.get("json")
+        if method == "PUT":
+            return _JsonResp(
+                {
+                    "id": "wf1",
+                    "name": captured["json"]["name"],
+                    "active": False,
+                    "nodes": captured["json"]["nodes"],
+                    "connections": captured["json"]["connections"],
+                    "settings": captured["json"]["settings"],
+                }
+            )
         return _FakeResp()
 
     monkeypatch.setattr(n8n_client, "get_workflow", fake_get_workflow)
@@ -154,7 +169,12 @@ async def test_attach_different_credential_reregisters_active_workflow(monkeypat
     async def fake_request(method, path, **_kwargs):
         calls.append((method, path))
         if method == "PUT":
-            return _JsonResp({**workflow, "nodes": workflow["nodes"]})
+            payload = _kwargs["json"]
+            workflow["nodes"] = payload["nodes"]
+            workflow["connections"] = payload["connections"]
+            workflow["settings"] = payload["settings"]
+            workflow["name"] = payload["name"]
+            return _JsonResp({**workflow})
         return _JsonResp({})
 
     monkeypatch.setattr(n8n_client, "get_workflow", fake_get_workflow)
@@ -237,6 +257,379 @@ async def test_update_does_not_reactivate_after_concurrent_deactivation(monkeypa
 
     assert result.active is False
     assert calls == [("PUT", "/workflows/wf1")]
+
+
+async def test_update_preserves_retained_node_credentials_and_ids(monkeypatch):
+    captured: dict = {}
+    workflow = {
+        "id": "wf1",
+        "name": "WF",
+        "active": False,
+        "nodes": [
+            {
+                "id": "stable-http-id",
+                "name": "HTTP Request",
+                "type": "n8n-nodes-base.httpRequest",
+                "parameters": {"url": "https://old.example.com"},
+                "credentials": {"httpHeaderAuth": {"id": "cred-1", "name": "Existing"}},
+            },
+            {
+                "id": "keep-trigger-id",
+                "name": "Trigger",
+                "type": "n8n-nodes-base.webhook",
+                "parameters": {"path": "incoming"},
+            },
+        ],
+        "connections": {
+            "Trigger": {"main": [[{"node": "HTTP Request", "type": "main", "index": 0}]]}
+        },
+        "settings": {"executionOrder": "v1", "timezone": "Europe/Istanbul"},
+    }
+
+    async def fake_get_workflow(_workflow_id):
+        return workflow
+
+    async def fake_request(method, path, **kwargs):
+        captured["method"] = method
+        captured["path"] = path
+        captured["json"] = kwargs.get("json")
+        return _JsonResp(
+            {
+                "id": "wf1",
+                "name": kwargs["json"]["name"],
+                "active": False,
+                "nodes": kwargs["json"]["nodes"],
+                "connections": kwargs["json"]["connections"],
+                "settings": kwargs["json"]["settings"],
+            }
+        )
+
+    monkeypatch.setattr(n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(n8n_client, "_request", fake_request)
+
+    await n8n_client.update_workflow(
+        "wf1",
+        "WF updated",
+        [
+            {
+                "id": "model-regenerated-id",
+                "name": "HTTP Request",
+                "type": "n8n-nodes-base.httpRequest",
+                "parameters": {"url": "https://new.example.com"},
+            },
+            {
+                "id": "brand-new-trigger-id",
+                "name": "Trigger",
+                "type": "n8n-nodes-base.webhook",
+                "parameters": {"path": "incoming"},
+            },
+        ],
+        None,
+    )
+
+    nodes = captured["json"]["nodes"]
+    by_name = {node["name"]: node for node in nodes}
+    assert by_name["HTTP Request"]["id"] == "stable-http-id"
+    assert by_name["HTTP Request"]["credentials"]["httpHeaderAuth"]["id"] == "cred-1"
+    assert by_name["Trigger"]["id"] == "keep-trigger-id"
+    assert captured["json"]["connections"] == workflow["connections"]
+
+
+async def test_update_ignores_attempted_credential_override_on_retained_node(monkeypatch):
+    captured: dict = {}
+    workflow = {
+        "id": "wf1",
+        "name": "WF",
+        "active": False,
+        "nodes": [
+            {
+                "id": "stable-http-id",
+                "name": "HTTP Request",
+                "type": "n8n-nodes-base.httpRequest",
+                "parameters": {"url": "https://old.example.com"},
+                "credentials": {"httpHeaderAuth": {"id": "cred-1", "name": "Existing"}},
+            }
+        ],
+        "connections": {},
+        "settings": {"executionOrder": "v1"},
+    }
+
+    async def fake_get_workflow(_workflow_id):
+        return workflow
+
+    async def fake_request(method, path, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return _JsonResp(
+            {
+                "id": "wf1",
+                "name": kwargs["json"]["name"],
+                "active": False,
+                "nodes": kwargs["json"]["nodes"],
+                "connections": kwargs["json"]["connections"],
+                "settings": kwargs["json"]["settings"],
+            }
+        )
+
+    monkeypatch.setattr(n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(n8n_client, "_request", fake_request)
+
+    await n8n_client.update_workflow(
+        "wf1",
+        "WF updated",
+        [
+            {
+                "id": "model-regenerated-id",
+                "name": "HTTP Request",
+                "type": "n8n-nodes-base.httpRequest",
+                "parameters": {"url": "https://new.example.com"},
+                "credentials": {"httpHeaderAuth": {"id": "cred-override", "name": "Override"}},
+            }
+        ],
+        {},
+    )
+
+    node = captured["json"]["nodes"][0]
+    assert node["id"] == "stable-http-id"
+    assert node["credentials"] == workflow["nodes"][0]["credentials"]
+
+
+async def test_update_strips_credentials_from_new_node(monkeypatch):
+    captured: dict = {}
+    workflow = {
+        "id": "wf1",
+        "name": "WF",
+        "active": False,
+        "nodes": [],
+        "connections": {},
+        "settings": {"executionOrder": "v1"},
+    }
+
+    async def fake_get_workflow(_workflow_id):
+        return workflow
+
+    async def fake_request(method, path, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return _JsonResp(
+            {
+                "id": "wf1",
+                "name": kwargs["json"]["name"],
+                "active": False,
+                "nodes": kwargs["json"]["nodes"],
+                "connections": kwargs["json"]["connections"],
+                "settings": kwargs["json"]["settings"],
+            }
+        )
+
+    monkeypatch.setattr(n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(n8n_client, "_request", fake_request)
+
+    await n8n_client.update_workflow(
+        "wf1",
+        "WF updated",
+        [
+            {
+                "id": "new-node-id",
+                "name": "New HTTP",
+                "type": "n8n-nodes-base.httpRequest",
+                "parameters": {"url": "https://new.example.com"},
+                "credentials": {"httpHeaderAuth": {"id": "cred-new", "name": "Injected"}},
+            }
+        ],
+        {},
+    )
+
+    node = captured["json"]["nodes"][0]
+    assert "credentials" not in node
+
+
+async def test_concurrent_attach_credential_mutations_do_not_clobber_each_other(monkeypatch):
+    state = {
+        "id": "wf1",
+        "name": "WF",
+        "active": False,
+        "nodes": [
+            {"name": "HTTP One", "type": "n8n-nodes-base.httpRequest", "parameters": {}},
+            {"name": "HTTP Two", "type": "n8n-nodes-base.httpRequest", "parameters": {}},
+        ],
+        "connections": {},
+        "settings": {"executionOrder": "v1", "timezone": "Europe/Istanbul"},
+    }
+
+    async def fake_get_workflow(_workflow_id):
+        return {
+            "id": state["id"],
+            "name": state["name"],
+            "active": state["active"],
+            "nodes": [dict(node) for node in state["nodes"]],
+            "connections": dict(state["connections"]),
+            "settings": dict(state["settings"]),
+        }
+
+    async def fake_request(method, path, **kwargs):
+        if method != "PUT":
+            return _JsonResp({})
+        await asyncio.sleep(0.01)
+        payload = kwargs["json"]
+        state["name"] = payload["name"]
+        state["nodes"] = payload["nodes"]
+        state["connections"] = payload["connections"]
+        state["settings"] = payload["settings"]
+        return _JsonResp({"id": "wf1", "active": False, **payload})
+
+    monkeypatch.setattr(n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(n8n_client, "_request", fake_request)
+
+    await asyncio.gather(
+        n8n_client.attach_credential_to_workflow(
+            "wf1",
+            "HTTP One",
+            "httpHeaderAuth",
+            "cred-1",
+            "Cred One",
+            generic_auth_type="httpHeaderAuth",
+        ),
+        n8n_client.attach_credential_to_workflow(
+            "wf1",
+            "HTTP Two",
+            "httpHeaderAuth",
+            "cred-2",
+            "Cred Two",
+            generic_auth_type="httpHeaderAuth",
+        ),
+    )
+
+    by_name = {node["name"]: node for node in state["nodes"]}
+    assert by_name["HTTP One"]["credentials"]["httpHeaderAuth"]["id"] == "cred-1"
+    assert by_name["HTTP Two"]["credentials"]["httpHeaderAuth"]["id"] == "cred-2"
+
+
+async def test_attach_verifies_committed_result_contains_requested_credential(monkeypatch):
+    workflow = {
+        "id": "wf1",
+        "name": "WF",
+        "active": False,
+        "nodes": [{"name": "HTTP Request", "type": "n8n-nodes-base.httpRequest", "parameters": {}}],
+        "connections": {},
+        "settings": {"executionOrder": "v1"},
+    }
+
+    async def fake_get_workflow(_workflow_id):
+        return workflow
+
+    async def fake_request(method, path, **_kwargs):
+        if method == "PUT":
+            return _JsonResp(
+                {
+                    **workflow,
+                    "nodes": [{"name": "HTTP Request", "type": "n8n-nodes-base.httpRequest"}],
+                }
+            )
+        return _JsonResp({})
+
+    monkeypatch.setattr(n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(n8n_client, "_request", fake_request)
+
+    try:
+        await n8n_client.attach_credential_to_workflow(
+            "wf1",
+            "HTTP Request",
+            "httpHeaderAuth",
+            "cred-1",
+            "Cred",
+            generic_auth_type="httpHeaderAuth",
+        )
+    except n8n_client.N8nApiError as exc:
+        assert exc.status_code == 409
+    else:
+        raise AssertionError("expected committed credential verification to fail")
+
+
+async def test_attach_verifies_committed_generic_auth_configuration(monkeypatch):
+    workflow = {
+        "id": "wf1",
+        "name": "WF",
+        "active": False,
+        "nodes": [{"name": "HTTP Request", "type": "n8n-nodes-base.httpRequest", "parameters": {}}],
+        "connections": {},
+        "settings": {"executionOrder": "v1"},
+    }
+
+    async def fake_get_workflow(_workflow_id):
+        return workflow
+
+    async def fake_request(method, path, **_kwargs):
+        if method == "PUT":
+            return _JsonResp(
+                {
+                    **workflow,
+                    "nodes": [
+                        {
+                            "name": "HTTP Request",
+                            "type": "n8n-nodes-base.httpRequest",
+                            "parameters": {},
+                            "credentials": {"httpHeaderAuth": {"id": "cred-1", "name": "Cred"}},
+                        }
+                    ],
+                }
+            )
+        return _JsonResp({})
+
+    monkeypatch.setattr(n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(n8n_client, "_request", fake_request)
+
+    with pytest.raises(n8n_client.N8nApiError) as exc_info:
+        await n8n_client.attach_credential_to_workflow(
+            "wf1",
+            "HTTP Request",
+            "httpHeaderAuth",
+            "cred-1",
+            "Cred",
+            generic_auth_type="httpHeaderAuth",
+        )
+
+    assert exc_info.value.status_code == 409
+
+
+async def test_mutations_do_not_serialize_across_different_workflows(monkeypatch):
+    states = {
+        "wf1": {"id": "wf1", "name": "WF 1", "active": False},
+        "wf2": {"id": "wf2", "name": "WF 2", "active": False},
+    }
+    in_flight = 0
+    both_in_flight = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_get_workflow(workflow_id):
+        state = states[workflow_id]
+        return {
+            "id": state["id"],
+            "name": state["name"],
+            "active": state["active"],
+            "nodes": [],
+            "connections": {},
+            "settings": {"executionOrder": "v1"},
+        }
+
+    async def fake_request(method, path, **kwargs):
+        nonlocal in_flight
+        if method == "PUT":
+            in_flight += 1
+            if in_flight == 2:
+                both_in_flight.set()
+            await release.wait()
+            in_flight -= 1
+            workflow_id = path.rsplit("/", 1)[-1]
+            return _JsonResp({"id": workflow_id, "active": False, **kwargs["json"]})
+        return _JsonResp({})
+
+    monkeypatch.setattr(n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(n8n_client, "_request", fake_request)
+
+    task_one = asyncio.create_task(n8n_client.update_workflow("wf1", "WF 1 updated", [], {}))
+    task_two = asyncio.create_task(n8n_client.update_workflow("wf2", "WF 2 updated", [], {}))
+    await asyncio.wait_for(both_in_flight.wait(), timeout=0.2)
+    release.set()
+    await asyncio.gather(task_one, task_two)
 
 
 async def test_call_webhook_uses_long_timeout_for_llm_workflows(monkeypatch):
