@@ -129,6 +129,57 @@ def test_sheets_probe_uses_flat_reserved_metadata_fields():
     assert probe_values["__conduut_probe_matching_value_0"] == "={{ $json.customer_id }}"
 
 
+def test_sheets_append_is_replaced_with_row_shape_probe():
+    nodes = [
+        {
+            "name": "Append",
+            "type": "n8n-nodes-base.googleSheets",
+            "parameters": {
+                "operation": "append",
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "device": "={{ $json.device }}",
+                        "temperature": "={{ $json.temperature }}",
+                    },
+                },
+            },
+            "credentials": {"googleSheetsOAuth2Api": {"id": "secret"}},
+        }
+    ]
+
+    probes = replace_action_nodes_with_probes(nodes)
+    assignments = nodes[0]["parameters"]["assignments"]["assignments"]
+    probe_values = {item["name"]: item["value"] for item in assignments}
+
+    assert probes[0].covered is True
+    assert probes[0].kind == "sheets_append"
+    assert nodes[0]["type"] == "n8n-nodes-base.set"
+    assert "credentials" not in nodes[0]
+    assert probe_values["device"] == "={{ $json.device }}"
+    assert probe_values["temperature"] == "={{ $json.temperature }}"
+    assert probe_values["__conduut_probe"] == "sheets_append"
+    assert probe_values["__conduut_probe_columns"] == '["device", "temperature"]'
+
+
+def test_sheets_append_automap_probe_preserves_input_fields():
+    nodes = [
+        {
+            "name": "Append",
+            "type": "n8n-nodes-base.googleSheets",
+            "parameters": {
+                "operation": "append",
+                "columns": {"mappingMode": "autoMapInputData"},
+            },
+        }
+    ]
+
+    probes = replace_action_nodes_with_probes(nodes)
+
+    assert probes[0].covered is True
+    assert nodes[0]["parameters"]["includeOtherFields"] is True
+
+
 def test_unsupported_action_is_disabled_and_partial():
     nodes = [{"name": "Slack", "type": "n8n-nodes-base.slack", "parameters": {}}]
     probes = replace_action_nodes_with_probes(nodes)

@@ -94,6 +94,8 @@ def _replace_with_set_probe(
     node: dict[str, Any],
     assignments: list[dict[str, Any]],
     probe_assignments: list[dict[str, Any]],
+    *,
+    include_other_fields: bool = False,
 ) -> None:
     assignments.extend(probe_assignments)
     node["type"] = "n8n-nodes-base.set"
@@ -102,7 +104,7 @@ def _replace_with_set_probe(
         "mode": "manual",
         "duplicateItem": False,
         "assignments": {"assignments": assignments},
-        "includeOtherFields": False,
+        "includeOtherFields": include_other_fields,
         "options": {},
     }
     node.pop("credentials", None)
@@ -171,6 +173,36 @@ def _sheets_update_probe(node: dict[str, Any]) -> bool:
     return True
 
 
+def _sheets_append_probe(node: dict[str, Any]) -> bool:
+    """Expose the row an append would write without calling Google Sheets."""
+
+    parameters = node.get("parameters") if isinstance(node.get("parameters"), dict) else {}
+    if _operation(node) != "append":
+        return False
+    columns = parameters.get("columns") if isinstance(parameters.get("columns"), dict) else {}
+    mapping_mode = str(columns.get("mappingMode") or "").lower()
+    values = columns.get("value") if isinstance(columns.get("value"), dict) else {}
+    explicit_columns = [str(key) for key in values if str(key).strip()]
+    assignments = [
+        _assignment(str(key), value, "string") for key, value in values.items() if str(key).strip()
+    ]
+    _replace_with_set_probe(
+        node,
+        assignments,
+        [
+            _assignment(_PROBE_PREFIX, "sheets_append"),
+            _assignment(
+                f"{_PROBE_PREFIX}_columns",
+                json.dumps(explicit_columns, ensure_ascii=False),
+            ),
+        ],
+        # autoMapInputData writes the incoming item as-is. Preserve those fields
+        # in the probe output so the sandbox can verify that a real row exists.
+        include_other_fields=mapping_mode == "automapinputdata",
+    )
+    return True
+
+
 def replace_action_nodes_with_probes(nodes: list[dict[str, Any]]) -> list[ActionProbe]:
     """Replace supported actions with safe probes and disable unsupported ones."""
 
@@ -186,8 +218,13 @@ def replace_action_nodes_with_probes(nodes: list[dict[str, Any]]) -> list[Action
             covered = _gmail_probe(node)
             kind = "gmail_send" if covered else kind
         elif node_type == _SHEETS_NODE_TYPE:
-            covered = _sheets_update_probe(node)
-            kind = "sheets_update" if covered else kind
+            operation = _operation(node)
+            if operation == "append":
+                covered = _sheets_append_probe(node)
+                kind = "sheets_append" if covered else kind
+            else:
+                covered = _sheets_update_probe(node)
+                kind = "sheets_update" if covered else kind
         if not covered:
             node["disabled"] = True
         probes.append(ActionProbe(name=name, kind=kind, covered=covered, original_type=node_type))

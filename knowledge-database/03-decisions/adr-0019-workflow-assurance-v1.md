@@ -103,6 +103,18 @@ Assurance zinciri su sirayla calisir:
     karsilastirir; `emailType=text` icinde ham Markdown'i rendered HTML basarisi
     saymaz. Gmail normalizer eski `bodyContentType=text/html` girdisini
     `emailType=html` olarak korur.
+13. Google Sheets `append` artık unsupported/disabled action olarak geçmez.
+    `defineBelow` mapping değerleri Set probe assignment'larına çevrilir;
+    `autoMapInputData` için incoming alanlar korunur. Ledger kolon listesini ve
+    satırın tamamen boş olup olmadığını PII-safe şekilde denetler. Yalnız
+    `coverage=full` sandbox sonucu `sandbox_passed` evidence üretir; partial
+    coverage bir başarı iddiasını açmaz.
+14. Aktivasyon execution kanıtından ayrıdır. `activate_workflow` yalnız
+    `workflow_activated` evidence kaydeder ve `run_verified=false` döner.
+    Claim policy workflow'un aktif olduğunu söylemeye izin verir; gerçek bir
+    execution/effect kanıtı olmadan Sheet'e veri yazıldığı veya yazılacağı
+    iddiasına izin vermez. Bu sınırın canlı kaynağı M3'tür:
+    [[scenario-m3-webhook-http-sheets]].
 
 ## Rollout
 
@@ -119,7 +131,7 @@ assessment ve kanittan yuksek claim korumasi kalir.
 - E-posta veya isim kendiliginden unique sayilmaz; identity kullanici tarafindan
   secilmeli ve safe preflight'ta dogrulanmalidir. Row-number fallback yoktur.
 - Contract katalogu ilk etapta IF, Code, Set/Edit Fields, Merge, Gmail Send ve
-  Google Sheets read/update ailelerine odaklanir. Diger node'lar coverage'i
+  Google Sheets read/update/append ailelerine odaklanir. Diger node'lar coverage'i
   `partial` yapar.
 
 ## Ilgili kod ve testler

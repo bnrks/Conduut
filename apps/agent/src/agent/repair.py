@@ -85,6 +85,10 @@ _SHEET_ROW_OPERATIONS = frozenset({"read", "update", "append", "appendOrUpdate",
 # googleSheets ``range`` that matches this is a real cell range (left for
 # validation); a bare value that does NOT match is a tab name -> sheetName.
 _A1_RANGE_RE = re.compile(r"^[A-Za-z]{1,3}\d*(?::[A-Za-z]{1,3}\d*)?$")
+# Top-level ``sheetId`` is ambiguous when it is numeric-only: in Google Sheets /
+# n8n usage that often means a tab gid, not the spreadsheet document id. Leave
+# those for validation rather than silently writing to the wrong target.
+_AMBIGUOUS_SHEET_ID_RE = re.compile(r"^\d+$")
 
 _INPUT_EXPR_RE = re.compile(r"\{\{\s*input\.(\w+)\s*\}\}")
 _JSON_DOT_RE = re.compile(r"\$json\.(?!body\.)(\w+)")
@@ -531,6 +535,9 @@ def _normalize_google_sheets_schema(nodes: list[dict[str, Any]], repairs: list[s
     * ``resource: "spreadsheet"`` + a row-level op -> ``resource: "sheet"``
     * ``spreadsheetId`` (string) -> ``documentId`` (wrapped into an ``__rl`` object
       by :func:`_normalize_resource_locators`, which runs next)
+    * legacy top-level ``sheetId`` -> ``documentId`` only when it is a non-empty,
+      non-numeric string (numeric ``sheetId`` is ambiguous with a tab gid and is
+      left for validation)
     * ``range: "Tab!A:F"`` -> ``sheetName: "Tab"`` (v4 read/update have no free A1
       range; the tab is the literal before ``!``). A range without ``!`` is
       ambiguous (bare tab vs bare A1 range) and is left for validation.
@@ -559,6 +566,17 @@ def _normalize_google_sheets_schema(nodes: list[dict[str, Any]], repairs: list[s
             del parameters["spreadsheetId"]
             parameters["documentId"] = spreadsheet_id
             repairs.append(f"mapped googleSheets spreadsheetId->documentId on '{name}'")
+
+        sheet_id = parameters.get("sheetId")
+        if (
+            isinstance(sheet_id, str)
+            and (raw_sheet_id := sheet_id.strip())
+            and "documentId" not in parameters
+            and not _AMBIGUOUS_SHEET_ID_RE.fullmatch(raw_sheet_id)
+        ):
+            del parameters["sheetId"]
+            parameters["documentId"] = raw_sheet_id
+            repairs.append(f"mapped googleSheets sheetId->documentId on '{name}'")
 
         range_value = parameters.get("range")
         if isinstance(range_value, str) and range_value.strip() and "sheetName" not in parameters:

@@ -258,6 +258,7 @@ FunctionalStatus = Literal[
 ]
 ClaimableOutcome = Literal[
     "workflow_created",
+    "workflow_activated",
     "sandbox_passed",
     "action_verified",
     "run_verified",

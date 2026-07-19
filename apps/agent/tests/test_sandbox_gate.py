@@ -106,6 +106,31 @@ async def test_sandbox_no_action_is_not_real_execution_evidence(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_partial_coverage_is_not_recorded_as_sandbox_passed(monkeypatch):
+    _patch_store(monkeypatch)
+    evidence = []
+    ctx = _ctx()
+    ctx.deps.record_claim_evidence = lambda outcome, **kwargs: evidence.append(
+        {"outcome": outcome, **kwargs}
+    )
+
+    async def fake_test(workflow, *, user_id, input_schema, intent):
+        return SandboxTestResult(
+            passed=True,
+            status="partial_coverage",
+            coverage="partial",
+            findings=["Unsupported action contract."],
+        )
+
+    monkeypatch.setattr(gate, "run_sandbox_test", fake_test)
+    result = await gate._test_and_gate(ctx, _WF, "Demo", dict(_BASE))
+
+    assert result["test_status"] == "partial_coverage"
+    assert result["test_coverage"] == "partial"
+    assert evidence == []
+
+
+@pytest.mark.asyncio
 async def test_gate_failure_within_budget_raises_model_retry(monkeypatch):
     _patch_store(monkeypatch)
 

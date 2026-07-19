@@ -7,6 +7,40 @@ Bu not, repo icinde gorulen bilinen sorunlari ve dikkat noktalarini toplar.
 Kullanicinin yeni fark ettigi ve henuz triage edilmemis sorun/bug notlari icin
 ayri alan: [[issue-backlog]].
 
+## Sheets Document boş kaldı, dropdown 403 verdi ve agent aktivasyonu run başarısı sandı (2026-07-19, Document fix canlı doğrulandı; assurance takibi açık)
+
+**Belirti:** [[scenario-m3-webhook-http-sheets]] workflow'u
+`YJEk1macGLuzYuAN` içindeki Google Sheets append node'unda top-level `sheetId`
+taşıyor, `documentId` taşımıyordu. n8n logu önce
+`Can not get sheet 'From List' with a value of ''`, ardından Document alanının
+listeleme çağrısında 403 `Forbidden` gösterdi. Ana workflow için execution yoktu;
+yalnız sandbox clone `#380` çalışmıştı. Buna rağmen agent workflow'u aktif edip
+ölçümlerin Sheet'e kaydedileceğini söyledi.
+
+**Kök neden:** Sheets v4 row operasyonunun spreadsheet locator'ı `documentId`
+alanıdır; modelin yazdığı legacy `sheetId` repair tarafından taşınmıyordu ve
+validation dolu `documentId` istemiyordu. Sandbox append action'ını probe
+etmeyip disable ettiği için coverage partial kaldı; partial sandbox sonucu claim
+evidence'a yazıldı ve aktivasyon ayrıca gerçek run'dan ayrılmadı. Aynı Google
+credential'ının doğru `documentId` kullanan execution `#352` ve `#356` içinde
+başarılı olması, 403'ün birincil çözümünün OAuth scope genişletmek olmadığını
+gösterir.
+
+**Düzeltme:** Non-numeric legacy `sheetId` deterministik olarak `documentId`'ye
+taşınıyor; numeric gid belirsizliği ve eksik/çakışan document kimlikleri
+validation'da reddediliyor. Sheets append için yan etkisiz row probe eklendi;
+partial coverage artık `sandbox_passed` evidence üretmiyor. Aktivasyon ayrı
+`workflow_activated` outcome'u ve `run_verified=false` sonucu taşıyor; Sheets
+write claim'i gerçek execution/effect kanıtı istiyor. Unit ve tüm agent testleri
+yeşil. M3 canlı rerun'ında yeni `iYOMbsf7VUmfoVSU` doğru `documentId` ile
+üretildi; ilk column-header mismatch agent tarafından execution `#382` üzerinden
+onarılıp ikinci dış execution `#384`te yedi sütunla başarılı append doğrulandı.
+Document/403 düzeltmesi böylece canlıda kanıtlandı ve M3 fonksiyonel olarak
+geçti. Bununla birlikte sandbox `#381` remote header drift'ini kaçırdı, düzeltme
+sonrası `#383` gerçek run başarılı olduğu halde `required_field_empty` verdi ve
+activation claim retry'ı future-write ifadesini tamamen kapatmadı. Bu üç bulgu
+ayrı Workflow Assurance takibi olarak açıktır.
+
 ## Aktif Schedule workflow PUT sonrasi cron kaydini kaybediyordu (2026-07-15, cozuldu; canli trigger dogrulandi)
 
 **Belirti:** [[scenario-e3-schedule-gmail-reminder]] workflow'u
@@ -152,6 +186,11 @@ paketi nedeniyle tekrar exit etti; bu nedenle yeni E2 kodunun canli kabul kosusu
 baslatilamadi. Groq destegi aktif tutulacaksa dependency eklenmeli; opsiyonelse
 lazy import/provider izolasyonu uygulanmali. Ardindan agent boot dogrulanip
 [[scenario-e2-gmail-to-sheets-log]] yeniden kosulmali.
+
+2026-07-19 M3 düzeltmesi sonrası image yeniden başarıyla build edildi; container
+aynı `ModuleNotFoundError: No module named 'groq'` ile startup'ta durdu. Bu durum
+M3 kaynak diff'inden bağımsızdır ve canlı [[scenario-m3-webhook-http-sheets]]
+rerun'ını da bloklamaktadır.
 
 ## Workflow ici Anthropic Chat Model eski Claude model ID'leriyle patladi (2026-07-08, cozuldu)
 

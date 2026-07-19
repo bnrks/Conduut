@@ -195,7 +195,16 @@ geçirmelidir → genellik guard'ının canlı örneği.
   korundu. Yeni `action_verified` outcome'u Gmail `id + SENT` effect'ini partial
   AI contract'tan ayırdı; whole-run claim hâlâ kapalıdır. Ayrıntı:
   [[scenario-m2-schedule-http-digest]].
-- **SONRAKİ: [[scenario-m3-webhook-http-sheets]].**
+- **M3 — GEÇTİ ✅ (2026-07-19):** Yeni workflow `iYOMbsf7VUmfoVSU` doğru
+  Sheets `documentId` locator'ı ve aktif webhook ile üretildi. İlk dış execution
+  `#382`, Türkçe Sheet başlıkları ile İngilizce mapping/schema anahtarları
+  uyuşmadığı için kaldı. Kullanıcı yalnız hatayı bildirdiğinde agent execution'ı
+  kendi inceleyip workflow'u yerinde düzeltti. İkinci dış execution `#384`, yedi
+  ölçüm sütununu Google Sheets'e başarıyla append etti. Sandbox'ın remote header
+  drift'ini kaçırması, düzeltme sonrası false-negative vermesi ve activation
+  claim retry varyantı ayrı assurance takip bulgularıdır. Ayrıntı:
+  [[scenario-m3-webhook-http-sheets]].
+- **SONRAKİ: [[scenario-h1-cold-outreach-status]].**
 - Yeniden test sırası: **E1 → E2 → E3 → M1 → M2 → M3 → H1 → H2 → H3**.
 
 ## Güncelleme kuralı

@@ -252,6 +252,23 @@ def _probe_records(detail: dict[str, Any], probes: list[ActionProbe]) -> list[di
                         index += 1
                     record["matching_columns"] = columns
                     record["matching_values"] = values
+                elif payload == "sheets_append":
+                    raw_columns = item.get("__conduut_probe_columns")
+                    try:
+                        parsed_columns = json.loads(str(raw_columns or "[]"))
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        parsed_columns = []
+                    columns = (
+                        [str(column) for column in parsed_columns if str(column).strip()]
+                        if isinstance(parsed_columns, list)
+                        else []
+                    )
+                    if not columns:
+                        columns = [
+                            str(key) for key in item if not str(key).startswith("__conduut_probe")
+                        ]
+                    record["columns"] = columns
+                    record["values"] = {column: item.get(column) for column in columns}
                 records.append(record)
     return records
 
@@ -275,6 +292,15 @@ def _probe_findings(records: list[dict[str, Any]], probes: list[ActionProbe]) ->
                 not _non_blank(values.get(str(column))) for column in columns
             ):
                 findings.append(f"The write-back '{node}' resolved an empty identity value.")
+        elif kind == "sheets_append":
+            columns = record.get("columns")
+            values = record.get("values")
+            if not isinstance(columns, list) or not columns:
+                findings.append(f"The append action '{node}' resolved no row columns.")
+            elif not isinstance(values, dict) or not any(
+                _non_blank(values.get(str(column))) for column in columns
+            ):
+                findings.append(f"The append action '{node}' resolved an empty row.")
 
         if kind == "gmail_send":
             for field in ("subject", "message"):
@@ -530,6 +556,14 @@ def _preview_actions(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "matching_columns": list(record.get("matching_columns") or []),
                 }
             )
+        elif kind == "sheets_append":
+            preview.append(
+                {
+                    "kind": kind,
+                    "node": str(record.get("node") or ""),
+                    "columns": list(record.get("columns") or []),
+                }
+            )
     return preview
 
 
@@ -733,7 +767,7 @@ async def _evaluate_sandbox_run(
         *_identity_preflight_findings(detail, clone_workflow, records, probes),
         *_upstream_semantic_findings(detail, clone_workflow, probes),
     ]
-    action_count = sum(1 for item in records if item.get("kind") == "gmail_send")
+    action_count = sum(1 for item in records if item.get("kind") in {"gmail_send", "sheets_append"})
     writeback_count = sum(1 for item in records if item.get("kind") == "sheets_update")
     eligible_count = max(action_count, writeback_count)
     coverage = "full" if all(probe.covered for probe in probes) else "partial"

@@ -142,6 +142,16 @@ tüm satır-op'larında (yalnız update değil) eksik `sheetName`'i reddeder. Ka
 E1 (webhook→Sheets append) build+aktif ama runtime "workflow has issues" ile hiç
 çalışmadı. Detay: [[known-issues]] E1 alt-başlığı, [[scenario-bank]].
 
+**Güncelleme (2026-07-19, senaryo-bankası M3):** Model spreadsheet kimliğini
+legacy top-level `sheetId` alanına yazdığında n8n v4.7 `documentId` locator'ı boş
+kalıyor. `sheetId` non-empty, non-numeric string ise tek doğru yorum olarak
+`documentId`'ye taşınır ve sonraki resourceLocator stage'inde `mode=id` ile
+sarılır. Numeric-only değer tab gid olabileceğinden sessizce dönüştürülmez.
+Validation bütün row operasyonlarında dolu `documentId` + `sheetName` ister;
+current `documentId` ile farklı legacy `spreadsheetId`/`sheetId` birlikteyse
+yanlış spreadsheet'e yazma riski nedeniyle payload reddedilir. Canlı kök neden
+ve rerun durumu için bkz. [[scenario-m3-webhook-http-sheets]].
+
 ## İlgili
 
 [[adr-0009-workflow-graph-compiler]], [[adr-0005-workflow-spec-compiler]],

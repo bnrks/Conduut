@@ -112,6 +112,22 @@ def test_workflow_updated_is_creation_level_not_real_run():
     assert claimed_outcome("Workflow güncellendi.") == "workflow_created"
 
 
+def test_activation_is_distinct_from_real_run_evidence():
+    evidence = [{"outcome": "workflow_activated", "workflow_id": "wf-1"}]
+
+    assert claimed_outcome("Otomasyon aktif.") == "workflow_activated"
+    assert claim_exceeds_evidence("Otomasyon aktif.", evidence) is False
+    assert "henüz doğrulanmadı" in safe_evidence_summary(evidence)
+
+
+def test_activation_does_not_authorize_future_sheet_write_claim():
+    evidence = [{"outcome": "workflow_activated", "workflow_id": "wf-1"}]
+    text = "Cihazlardan gelen her ölçüm Google Sheet'e kaydedilecek."
+
+    assert claimed_outcome(text) == "action_verified"
+    assert claim_exceeds_evidence(text, evidence) is True
+
+
 def test_waiting_for_approval_does_not_retry_or_overclaim():
     deps = SimpleNamespace(
         claim_evidence=[],

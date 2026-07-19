@@ -493,6 +493,7 @@ def test_google_sheets_update_matching_column_missing_from_value_fails_validatio
             {
                 "resource": "sheet",
                 "operation": "update",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
                 "sheetName": {"__rl": True, "mode": "name", "value": "Siparisler"},
                 "columns": {
                     "mappingMode": "defineBelow",
@@ -536,6 +537,7 @@ def test_google_sheets_update_columns_without_matching_fails_validation():
             {
                 "resource": "sheet",
                 "operation": "update",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
                 "sheetName": {"__rl": True, "mode": "name", "value": "Siparisler"},
                 "columns": {"mappingMode": "defineBelow", "value": {"teslim_mail": "evet"}},
             }
@@ -661,6 +663,75 @@ def test_google_sheets_row_op_missing_sheetname_fails_validation():
     )
     errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
     assert any("sheetName" in error for error in errors)
+
+
+def test_google_sheets_row_op_missing_documentid_fails_validation():
+    nodes = valid_nodes()
+    nodes.append(
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "append",
+                "sheetName": {"__rl": True, "mode": "name", "value": "Kayıtlar"},
+            }
+        )
+    )
+    errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+    assert any("documentId" in error for error in errors)
+
+
+def test_google_sheets_row_op_empty_documentid_fails_validation():
+    nodes = valid_nodes()
+    nodes.append(
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "read",
+                "documentId": {"__rl": True, "mode": "id", "value": ""},
+                "sheetName": {"__rl": True, "mode": "name", "value": "Siparisler"},
+            }
+        )
+    )
+    errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+    assert any("documentId" in error for error in errors)
+
+
+def test_google_sheets_row_op_numeric_sheetid_is_rejected_as_ambiguous():
+    nodes = valid_nodes()
+    nodes.append(
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "append",
+                "sheetId": "123456789",
+                "sheetName": {"__rl": True, "mode": "name", "value": "Kayıtlar"},
+            }
+        )
+    )
+    errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+    assert any("sheetId looks numeric" in error for error in errors)
+
+
+def test_google_sheets_row_op_conflicting_legacy_and_current_document_ids_fail_validation():
+    nodes = valid_nodes()
+    nodes.append(
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "append",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "sheetId": "1different",
+                "sheetName": {"__rl": True, "mode": "name", "value": "Kayıtlar"},
+                "columns": {
+                    "mappingMode": "autoMapInputData",
+                    "matchingColumns": [],
+                    "schema": [],
+                },
+            }
+        )
+    )
+    errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
+    assert any("conflicting legacy sheetId" in error for error in errors)
 
 
 def test_gmail_send_placeholder_recipient_fails_validation():

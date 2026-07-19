@@ -806,7 +806,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
 
     @agent.tool
     async def activate_workflow(ctx: RunContext[AgentDeps], workflow_id: str) -> dict[str, Any]:
-        """Activate a workflow so it runs automatically on its trigger."""
+        """Activate a workflow trigger; activation alone does not verify a real run."""
 
         if ctx.deps.awaiting_user_input:
             return _waiting_for_user_input_result()
@@ -823,6 +823,9 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                 _log_tool_finished("activate_workflow", started_at, block)
                 return block
             metadata = await store.get_workflow_metadata(ctx.deps.user_id, workflow_id)
+            test_status = metadata.resources.get("test_status") if metadata else None
+            assurance = metadata.resources.get("assurance") if metadata else None
+            test_coverage = assurance.get("coverage") if isinstance(assurance, dict) else None
             if _needs_pretest(metadata, workflow):
                 gate = await _run_pretest_gate(ctx, workflow)
                 if gate.get("test_status") == "needs_attention":
@@ -830,9 +833,23 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                     gate["workflow_id"] = workflow_id
                     _log_tool_finished("activate_workflow", started_at, gate)
                     return gate
+                test_status = gate.get("test_status") or test_status
+                test_coverage = gate.get("test_coverage") or test_coverage
             ctx.deps.mark_replay_unsafe("activate_workflow")
             await n8n_client.activate_workflow(workflow_id)
-            result = {"success": True, "workflow_id": workflow_id}
+            ctx.deps.record_claim_evidence("workflow_activated", workflow_id=workflow_id)
+            result = {
+                "success": True,
+                "workflow_id": workflow_id,
+                "test_status": test_status,
+                "test_coverage": test_coverage,
+                "run_verified": False,
+                "instruction": (
+                    "The workflow trigger is active, but activation is not execution evidence. "
+                    "You may say it is active; do not claim external data was sent or written "
+                    "until execute_workflow or inspect_execution verifies a real run."
+                ),
+            }
             _log_tool_finished("activate_workflow", started_at, result)
             return result
         except Exception as exc:

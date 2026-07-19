@@ -306,6 +306,8 @@ _GOOGLE_SHEETS_SUPPORTED_MAPPING_MODES = {"definebelow", "automapinputdata"}
 # Row-level ops that address a specific tab; all need a v4 sheetName resourceLocator.
 _GOOGLE_SHEETS_ROW_OPS = {"read", "append", "update", "appendorupdate", "clear", "remove"}
 _GOOGLE_SHEETS_LEGACY_KEYS = ("dataMode", "values", "range")
+_GOOGLE_SHEETS_LEGACY_DOCUMENT_KEYS = ("spreadsheetId", "sheetId")
+_AMBIGUOUS_SHEET_ID_RE = re.compile(r"^\d+$")
 
 
 def _has_sheet_name(value: Any) -> bool:
@@ -316,6 +318,14 @@ def _has_sheet_name(value: Any) -> bool:
     return False
 
 
+def _resource_locator_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, Mapping):
+        return str(value.get("value") or "").strip()
+    return ""
+
+
 def _validate_google_sheets_node(node: Mapping[str, Any], label: str) -> list[str]:
     if node.get("type") != "n8n-nodes-base.googleSheets":
         return []
@@ -324,15 +334,47 @@ def _validate_google_sheets_node(node: Mapping[str, Any], label: str) -> list[st
         return [f"Google Sheets node '{label}' parameters must be an object"]
     operation = str(parameters.get("operation") or "").lower()
 
-    # v4 row ops address the tab via a sheetName resourceLocator; a top-level range
-    # leaves n8n unable to find the sheet ("workflow has issues, cannot execute").
-    if operation in _GOOGLE_SHEETS_ROW_OPS and not _has_sheet_name(parameters.get("sheetName")):
-        return [
-            f"Google Sheets node '{label}' operation '{operation}' is missing "
-            "parameters.sheetName. n8n v4 addresses the tab via a resourceLocator, not a "
-            'top-level range: set parameters.sheetName = {"__rl": true, "mode": "name", '
-            '"value": "<tab name>"}.'
-        ]
+    if operation in _GOOGLE_SHEETS_ROW_OPS:
+        row_op_errors: list[str] = []
+        document_id = _resource_locator_value(parameters.get("documentId"))
+        if not document_id:
+            legacy_sheet_id = _resource_locator_value(parameters.get("sheetId"))
+            legacy_note = ""
+            if legacy_sheet_id and _AMBIGUOUS_SHEET_ID_RE.fullmatch(legacy_sheet_id):
+                legacy_note = (
+                    " Top-level sheetId looks numeric, which is ambiguous with a tab gid; "
+                    "do not use it as documentId."
+                )
+            row_op_errors.append(
+                f"Google Sheets node '{label}' operation '{operation}' is missing "
+                "parameters.documentId. n8n v4 addresses the spreadsheet via a resourceLocator: "
+                'set parameters.documentId = {"__rl": true, "mode": "id", "value": '
+                '"<spreadsheet id>"}.' + legacy_note
+            )
+
+        # Keep only one spreadsheet identity source of truth. If both current and
+        # legacy fields are present with different values, reject rather than guess.
+        if document_id:
+            for legacy_key in _GOOGLE_SHEETS_LEGACY_DOCUMENT_KEYS:
+                legacy_value = _resource_locator_value(parameters.get(legacy_key))
+                if legacy_value and legacy_value != document_id:
+                    row_op_errors.append(
+                        f"Google Sheets node '{label}' mixes parameters.documentId="
+                        f"'{document_id}' with conflicting legacy {legacy_key}='{legacy_value}'. "
+                        "Keep only documentId with the intended spreadsheet id."
+                    )
+
+        # v4 row ops address the tab via a sheetName resourceLocator; a top-level range
+        # leaves n8n unable to find the sheet ("workflow has issues, cannot execute").
+        if not _has_sheet_name(parameters.get("sheetName")):
+            row_op_errors.append(
+                f"Google Sheets node '{label}' operation '{operation}' is missing "
+                "parameters.sheetName. n8n v4 addresses the tab via a resourceLocator, not a "
+                'top-level range: set parameters.sheetName = {"__rl": true, "mode": "name", '
+                '"value": "<tab name>"}.'
+            )
+        if row_op_errors:
+            return row_op_errors
 
     if operation not in _GOOGLE_SHEETS_COLUMN_MAP_OPS | {"append"}:
         return []

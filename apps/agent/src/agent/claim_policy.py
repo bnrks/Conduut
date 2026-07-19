@@ -6,10 +6,11 @@ from typing import Any
 CLAIM_LEVELS = {
     "none": 0,
     "workflow_created": 1,
-    "sandbox_passed": 2,
-    "action_verified": 3,
-    "no_action": 4,
-    "run_verified": 5,
+    "workflow_activated": 2,
+    "sandbox_passed": 3,
+    "action_verified": 4,
+    "no_action": 5,
+    "run_verified": 6,
 }
 
 # Evidence outcomes are not a single monotonic ladder: ``no_action`` must never
@@ -19,6 +20,7 @@ CLAIM_LEVELS = {
 _SUPPORTED_CLAIMS = {
     "none": {"none"},
     "workflow_created": {"none", "workflow_created"},
+    "workflow_activated": {"none", "workflow_created", "workflow_activated"},
     "sandbox_passed": {"none", "workflow_created", "sandbox_passed"},
     "action_verified": {"none", "workflow_created", "action_verified"},
     "no_action": {"none", "workflow_created", "no_action"},
@@ -61,6 +63,16 @@ _ROW_ACTION_PATTERNS = (
         r"\b(?:row|sheet|status)\b[^.\n]{0,80}\b(?:updated)\b",
         re.IGNORECASE,
     ),
+    re.compile(
+        r"\b(?:ölçüm|veri|kayıt|satır)\b[^.\n]{0,100}"
+        r"\b(?:kaydedilecek|kaydedilir|kaydediyor|eklenecek|yazılacak)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:measurement|data|record|row)s?\b[^.\n]{0,100}"
+        r"\b(?:will be saved|will be added|will be written|is saved|is added)\b",
+        re.IGNORECASE,
+    ),
 )
 _NO_ACTION_PATTERNS = (
     re.compile(r"\b(?:uygun|işlenecek)\s+(?:kayıt|satır)\s+(?:yok|bulunamadı)\b", re.IGNORECASE),
@@ -73,6 +85,10 @@ _SANDBOX_PATTERNS = (
 _CREATED_PATTERNS = (
     re.compile(r"\bworkflow\s+(?:oluşturuldu|hazırlandı|güncellendi)\b", re.IGNORECASE),
     re.compile(r"\bworkflow\s+(?:created|built|updated)\b", re.IGNORECASE),
+)
+_ACTIVATED_PATTERNS = (
+    re.compile(r"\b(?:workflow|otomasyon)\b[^.\n]{0,40}\baktif\b", re.IGNORECASE),
+    re.compile(r"\b(?:workflow|automation)\b[^.\n]{0,40}\bactivated\b", re.IGNORECASE),
 )
 
 
@@ -88,6 +104,9 @@ def claimed_outcome(text: str) -> str:
     for pattern in _SANDBOX_PATTERNS:
         if pattern.search(text):
             return "sandbox_passed"
+    for pattern in _ACTIVATED_PATTERNS:
+        if pattern.search(text):
+            return "workflow_activated"
     for pattern in _CREATED_PATTERNS:
         if pattern.search(text):
             return "workflow_created"
@@ -165,6 +184,8 @@ def safe_evidence_summary(evidence: list[dict[str, Any]]) -> str:
         return "Çalıştırma tamamlandı; işlenecek uygun kayıt bulunmadığı için yan etki oluşmadı."
     if outcome == "sandbox_passed":
         return "Yan etkisiz sandbox testi geçti; gerçek bir gönderim veya güncelleme yapılmadı."
+    if outcome == "workflow_activated":
+        return "Workflow aktif; gerçek bir gönderim veya veri yazma işlemi henüz doğrulanmadı."
     if outcome == "workflow_created":
         return "Workflow oluşturuldu; gerçek çalıştırmanın sonucu henüz doğrulanmadı."
     return (

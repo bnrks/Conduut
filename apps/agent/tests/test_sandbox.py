@@ -602,6 +602,65 @@ async def test_evaluate_sandbox_run_allows_real_business_output(monkeypatch):
     assert judge_called["called"] is True
 
 
+def test_sheets_append_probe_records_a_nonempty_row():
+    probes = [
+        sandbox.ActionProbe(
+            name="Append",
+            kind="sheets_append",
+            covered=True,
+            original_type="n8n-nodes-base.googleSheets",
+        )
+    ]
+    detail = {
+        "data": {
+            "resultData": {
+                "runData": {
+                    "Append": [
+                        {
+                            "data": {
+                                "main": [
+                                    [
+                                        {
+                                            "json": {
+                                                "device": "sensor-1",
+                                                "temperature": "22.5",
+                                                "__conduut_probe": "sheets_append",
+                                                "__conduut_probe_columns": (
+                                                    '["device", "temperature"]'
+                                                ),
+                                            }
+                                        }
+                                    ]
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    }
+
+    records = sandbox._probe_records(detail, probes)
+
+    assert records == [
+        {
+            "node": "Append",
+            "covered": True,
+            "kind": "sheets_append",
+            "columns": ["device", "temperature"],
+            "values": {"device": "sensor-1", "temperature": "22.5"},
+        }
+    ]
+    assert sandbox._probe_findings(records, probes) == []
+    assert sandbox._preview_actions(records) == [
+        {
+            "kind": "sheets_append",
+            "node": "Append",
+            "columns": ["device", "temperature"],
+        }
+    ]
+
+
 def test_identity_preflight_checks_full_upstream_read_dataset():
     probes = [
         sandbox.ActionProbe(

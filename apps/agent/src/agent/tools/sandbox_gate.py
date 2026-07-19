@@ -131,7 +131,7 @@ async def _test_and_gate(
         if result.findings:
             out["test_findings"] = result.findings
         record = getattr(ctx.deps, "record_claim_evidence", None)
-        if callable(record):
+        if callable(record) and result.coverage == "full":
             record(
                 "sandbox_passed",
                 workflow_id=workflow_id,

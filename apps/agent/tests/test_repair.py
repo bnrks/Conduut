@@ -652,6 +652,54 @@ def test_google_sheets_update_addressing_upgraded_from_expression_range():
     assert "range" not in params
 
 
+def test_google_sheets_append_sheetid_alias_upgraded_to_documentid():
+    # M3 regression shape: the model wrote the spreadsheet id into a legacy
+    # top-level sheetId field instead of documentId.
+    nodes = [
+        _node(
+            "Append Olcum",
+            "n8n-nodes-base.googleSheets",
+            parameters={
+                "resource": "sheet",
+                "operation": "append",
+                "sheetId": "1m3SpreadsheetId",
+                "sheetName": "Olcumler",
+            },
+        ),
+    ]
+
+    repaired, _conns, repairs = repair_workflow(nodes, None, registry=REGISTRY)
+    params = next(n for n in repaired if n["name"] == "Append Olcum")["parameters"]
+
+    assert params["documentId"] == {"__rl": True, "mode": "id", "value": "1m3SpreadsheetId"}
+    assert "sheetId" not in params
+    assert any("sheetId->documentId" in repair for repair in repairs)
+
+
+def test_google_sheets_numeric_sheetid_left_alone_for_validation():
+    # Numeric sheetId is ambiguous with a tab gid; do not silently convert it to
+    # documentId and risk writing to the wrong spreadsheet.
+    nodes = [
+        _node(
+            "Append Olcum",
+            "n8n-nodes-base.googleSheets",
+            parameters={
+                "resource": "sheet",
+                "operation": "append",
+                "sheetId": "123456789",
+                "sheetName": "Olcumler",
+            },
+        ),
+    ]
+
+    repaired, _conns, repairs = repair_workflow(nodes, None, registry=REGISTRY)
+    params = next(n for n in repaired if n["name"] == "Append Olcum")["parameters"]
+
+    assert "documentId" not in params
+    assert params["sheetId"] == "123456789"
+    assert not any("sheetId->documentId" in repair for repair in repairs)
+
+
 def test_google_sheets_spreadsheet_create_left_alone():
     # resource "spreadsheet" + "create" is a genuine spreadsheet-level operation;
     # it must NOT be rewritten to resource "sheet".
