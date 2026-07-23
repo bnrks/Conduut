@@ -81,6 +81,7 @@ _WRITEBACK_TYPE_MARKERS = (
     "postgres",
     "spreadsheet",
 )
+_NO_ITEM_WEBHOOK_MESSAGE = "no item to return was found"
 
 
 def _latest_run_output_items(execution: dict[str, Any], node_name: str) -> list[Any]:
@@ -447,6 +448,19 @@ def _transport_status_code(response: dict[str, Any] | None) -> int | None:
         return None
 
 
+def _is_no_item_webhook_response(response: dict[str, Any] | None) -> bool:
+    """Recognize n8n's last-node webhook sentinel for a zero-item execution."""
+
+    if not isinstance(response, dict):
+        return False
+    body = response.get("body")
+    if isinstance(body, dict):
+        message = body.get("message")
+    else:
+        message = body
+    return isinstance(message, str) and _NO_ITEM_WEBHOOK_MESSAGE in message.strip().casefold()
+
+
 _IDENTITY_WARNING_CODES = {
     "sheets_matching_key_missing",
     "sheets_matching_value_missing",
@@ -646,9 +660,18 @@ def _functional_assessment(
     ]
     action_count = sum(hint.outputItemCount for hint in successful_action_hints)
     writeback_count = sum(hint.outputItemCount for hint in successful_writeback_hints)
-    transport_status = _transport_status_code(response)
-    transport_failed = transport_status is not None and transport_status >= 400
     raw_failed = raw_status in {"error", "failed"} or bool(error_message)
+    transport_status = _transport_status_code(response)
+    no_action_transport = bool(
+        transport_status == 500
+        and _is_no_item_webhook_response(response)
+        and not raw_failed
+        and not mutation_hints
+        and hints
+    )
+    transport_failed = bool(
+        transport_status is not None and transport_status >= 400 and not no_action_transport
+    )
     reasons: list[str] = []
     warnings: list[WorkflowAssessmentWarning] = []
     verified_action_effects = _verified_action_effects(execution, workflow=workflow, hints=hints)
@@ -768,9 +791,9 @@ def _functional_assessment(
                     severity="error" if finding.blocking else "shadow",
                     node_name=finding.node_name,
                 )
-        if functional_status in {"verified", "no_action"} and (
-            assurance_partial or assurance_blocking
-        ):
+        if functional_status == "verified" and (assurance_partial or assurance_blocking):
+            functional_status = "needs_attention"
+        elif functional_status == "no_action" and assurance_blocking:
             functional_status = "needs_attention"
 
     if functional_status in {"verified", "no_action"} and not exact_context_verified:

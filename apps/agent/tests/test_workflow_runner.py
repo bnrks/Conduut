@@ -224,6 +224,168 @@ async def test_run_workflow_with_input_summarizes_execution_after_webhook_error(
 
 
 @pytest.mark.asyncio
+async def test_run_workflow_with_input_normalizes_no_item_webhook_as_no_action(monkeypatch):
+    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str):
+        return store.WorkflowMetadata(
+            workflow_id=workflow_id,
+            input_schema=[],
+            resources={},
+            created_at="now",
+            updated_at="now",
+        )
+
+    async def fake_readiness(_workflow: dict, *, user_id: str):
+        assert user_id == "user_1"
+        return {"webhook_nodes": [{"parameters": {"path": "runtime-test"}}]}
+
+    async def fake_call_webhook(_path: str, _payload: dict):
+        return httpx.Response(500, json={"message": "No item to return was found"})
+
+    async def fake_list_executions(*_args, **_kwargs):
+        return [SimpleNamespace(id="exec_no_action")]
+
+    async def fake_get_execution_detail(_execution_id: str):
+        return {
+            "id": "exec_no_action",
+            "workflowId": "wf_1",
+            "status": "success",
+            "finished": True,
+            "data": {
+                "resultData": {
+                    "runData": {
+                        "Webhook": [
+                            {
+                                "executionStatus": "success",
+                                "data": {"main": [[{"json": {"body": {}}}]]},
+                            }
+                        ],
+                        "Read Sheet": [
+                            {
+                                "executionStatus": "success",
+                                "data": {
+                                    "main": [
+                                        [
+                                            {
+                                                "json": {
+                                                    "musteri_no": 1001,
+                                                    "tanıtım maili atıldı mı": "Evet",
+                                                }
+                                            }
+                                        ]
+                                    ]
+                                },
+                            }
+                        ],
+                        "Filter": [
+                            {
+                                "executionStatus": "success",
+                                "data": {
+                                    "main": [
+                                        [],
+                                        [
+                                            {
+                                                "json": {
+                                                    "musteri_no": 1001,
+                                                    "tanıtım maili atıldı mı": "Evet",
+                                                }
+                                            }
+                                        ],
+                                    ]
+                                },
+                            }
+                        ],
+                    }
+                }
+            },
+        }
+
+    monkeypatch.setattr("src.agent.tools.store.get_workflow_metadata", fake_get_workflow_metadata)
+    monkeypatch.setattr(
+        "src.agent.tools.workflow_runner.analyze_workflow_readiness_payload",
+        fake_readiness,
+    )
+    monkeypatch.setattr("src.agent.tools.n8n_client.call_webhook", fake_call_webhook)
+    monkeypatch.setattr("src.agent.tools.n8n_client.list_executions", fake_list_executions)
+    monkeypatch.setattr(
+        "src.agent.tools.n8n_client.get_execution_detail", fake_get_execution_detail
+    )
+
+    result = await run_workflow_with_input(
+        {
+            "id": "wf_1",
+            "name": "Runtime workflow",
+            "active": True,
+            "nodes": [
+                {
+                    "name": "Webhook",
+                    "type": "n8n-nodes-base.webhook",
+                    "parameters": {
+                        "path": "runtime-test",
+                        "httpMethod": "POST",
+                        "responseMode": "lastNode",
+                    },
+                },
+                {
+                    "name": "Read Sheet",
+                    "type": "n8n-nodes-base.googleSheets",
+                    "parameters": {"resource": "sheet", "operation": "read"},
+                },
+                {
+                    "name": "Filter",
+                    "type": "n8n-nodes-base.filter",
+                    "parameters": {},
+                },
+                {
+                    "name": "AI Agent",
+                    "type": "@n8n/n8n-nodes-langchain.agent",
+                    "parameters": {},
+                },
+                {
+                    "name": "Gmail Send",
+                    "type": "n8n-nodes-base.gmail",
+                    "parameters": {"resource": "message", "operation": "send"},
+                },
+                {
+                    "name": "Sheets Update",
+                    "type": "n8n-nodes-base.googleSheets",
+                    "parameters": {
+                        "resource": "sheet",
+                        "operation": "update",
+                        "columns": {
+                            "matchingColumns": ["musteri_no"],
+                            "value": {
+                                "musteri_no": "={{ $('Filter').item.json.musteri_no }}",
+                                "tanıtım maili atıldı mı": "Evet",
+                            },
+                        },
+                    },
+                },
+            ],
+            "connections": {
+                "Webhook": {"main": [[{"node": "Read Sheet", "type": "main", "index": 0}]]},
+                "Read Sheet": {"main": [[{"node": "Filter", "type": "main", "index": 0}]]},
+                "Filter": {"main": [[{"node": "AI Agent", "type": "main", "index": 0}]]},
+                "AI Agent": {"main": [[{"node": "Gmail Send", "type": "main", "index": 0}]]},
+                "Gmail Send": {"main": [[{"node": "Sheets Update", "type": "main", "index": 0}]]},
+            },
+        },
+        user_id="user_1",
+        input_payload={},
+    )
+
+    assert result.status == "success"
+    assert result.functionalStatus == "no_action"
+    assert result.claimableOutcome == "no_action"
+    assert result.summary == "Workflow run completed with no action needed."
+    assert result.assessment.transportStatusCode == 500
+    assert result.assessment.transportOk is True
+    assert result.assessment.eligibleCount == 0
+    assert result.assessment.actionCount == 0
+    assert result.assessment.writebackCount == 0
+    assert result.response is None
+
+
+@pytest.mark.asyncio
 async def test_run_workflow_batch_with_input_continues_after_row_errors(monkeypatch):
     sent_payloads: list[dict] = []
 

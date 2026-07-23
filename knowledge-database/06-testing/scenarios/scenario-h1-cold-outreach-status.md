@@ -38,22 +38,20 @@ satırı güncellemeli (matchingColumns doğru olmalı).
 
 ## Sonuç geçmişi
 
-**Guncel durum (2026-07-23): KALDI; Assurance/Card V2 kodu ve otomatik
-regresyonlari gecti, canli kabul kosusu bekliyor.** Execution `#395` gercek
-Gmail/Sheets side effect uretti ancak filtre
-onceden gonderilmis satirlari da gecirdi ve Gmail butun item'larda ilk AI
-ciktisini kullandi. Sonraki workflow `vDwEqG2MHbMYOsmT` real side effect'e
-gecmedi; sandbox clone execution `#396/#397/#398` failed ve son bulgu
-`Could not get parameter - Parameter: jsCode` oldu. Kayitli Code filter
-`language="javascript"` kullanirken n8n exact `javaScript` bekliyordu; agent-facing
-Code semasi da contextual `jsCode` alanini gostermiyordu. Registry artik
-IF/Filter icin canonical nested condition, Code icin `javaScript + jsCode`
-ornegi verir; Filter/Code build validation hatali sekilleri fail-closed reddeder.
-H1 ancak yeni workflow ile ilk run ve hemen ardindan `0 action` ikinci run
-kanitlandiginda gecti sayilacak.
+**Guncel durum (2026-07-23): GECTI.** Workflow `8gUbKCVF28CzKNO2` ilk real
+execution `#421` icinde yalniz `Hayir` durumundaki `musteri_no=1002/1004`
+satirlarini gecirdi; iki farkli AI cikti, iki Gmail `SENT` receipt, iki esit
+identity write-back ve bounded remote Sheet read-back ile `Evet` kanitlandi.
+Hemen sonraki preview `0/0/0`, real execution `#423` ise Sheet'teki dort
+satirin tamamini `Evet` okuyup Filter true branch'te `0` item uretti; AI,
+Gmail ve Sheets Update hic calismadi. Boylece tekrar-gonderim engeli canlida
+dogrulandi. n8n'in sifir-item `lastNode` webhook cevabini HTTP 500 +
+`No item to return was found` vermesi execution assessment'ta exact
+`success + no mutation` kosulunda `no_action` olarak normalize edildi.
 
 | Tarih | Geçti/Kaldı | Bulunan bug → kök-neden → katman → commit → kardeş-doğrulama |
 |-------|-------------|--------------------------------------------------------------|
+| 2026-07-23 | Gecti | Workflow `8gUbKCVF28CzKNO2`: ilk real execution `#421` `2 eligible / 2 Gmail SENT / 2 Sheet write-back` ve remote read-back verdi; kimlikler `1002/1004`, AI ciktilari item-bazli ve farkliydi. Ikinci preview `0/0/0`; real execution `#423` Filter true branch `0`, false branch `4 Evet`, AI/Gmail/Sheets Update runData yok. Idempotency canli kanitlandi. Ikinci run'da n8n `lastNode` sifir-item sentinel'i HTTP 500 donduruyordu; execution `success`, runData mevcut ve mutation yoksa bu exact cevap `no_action` sayilacak sekilde execution assessment duzeltildi. Mutation calismis 500'ler partial/failed kalir. Hedefli workflow runner/route/claim/sandbox regresyonlari `87 passed`; `#423` snapshot'i yeni kodla `no_action`, `eligible=0`, `action=0`, `writeback=0`, `transportOk=true` verdi. |
 | 2026-07-23 | Kaldi (yeni canli kosu bekliyor) | Card runtime wiring duzeltildi: local agent generated corpus'u yanlis `apps/agent/data` yolunda ariyordu ve `workflow_card_count=0` ile legacy fallback'e dusuyordu. Data-dir resolver localde `packages/n8n-registry/data`, Docker'da `/app/data` seciyor. Community detail'in dis node katalog ozeti yerine native `workflow.workflow` JSON'u extract ediliyor; H1'in parametreleri bosaltildigi icin exact operation uydurulmadan node type/name uzerinden action/write-back, `send_email/read_sheet/update_sheet_rows/scheduled_run` ve high-risk inference'i uretiliyor. Seed + raw merge sonrasinda n8n `1.121.3` icin 497 gecerli Workflow Card, 7.727 Node Card ve uyumlu manifest/index hazir. H1 Community template `4214` sorguda top-1. Bu kanit retrieval readiness'tir; gercek ilk/ikinci H1 execution oracle'i olmadigi icin senaryo halen gecmis sayilmaz. |
 | 2026-07-23 | Kaldi (ikinci real run bekliyor) | `Potansiyel Müşterilere Tanıtım Maili` execution `#416` ilk-run fonksiyonel kaniti gercekte basariliydi: 2 Gmail `SENT` receipt, ayni iki `musteri_no` (`1002`, `1004`) write-back ve remote Sheet read'de iki `Evet`. UI'nin `Needs attention` sonucu yanlis negatifti: bounded read-after-write resolver `={{ $('IF').item.json.musteri_no }}` ifadesini resolved output yerine literal kimlik sanarak remote eslesmeyi fail ediyordu. Resolver artik dinamik expression hedefini write-node execution output'undan aliyor, configured literal postcondition'i koruyor. Ayni run'daki `Haklisiniz` metni kullanici mesaji degil, evidence output validator `ModelRetry` geri bildiriminin model tarafindan konusma gibi yorumlanmasiydi; claim ihlali artik retry yerine stream/final ortak deterministic summary ile kapanir. Hedefli claim/read-after-write testleri gecti. H1 tam kabul icin acik onayli ikinci real run `0/0/0` halen bekleniyor. |
 | 2026-07-23 | Kaldi (canli kabul bekliyor) | [[adr-0020-workflow-node-cards-assurance-v2]] implemente edildi. Registry operation selector bug'i duzeltildi; Gmail `message.send` ve Sheets exact operation contract'lari artik dogru. Workflow Card top-10/max-3 retrieval, live Sheet header fail-closed build, typed Oracle/ProbeEvidence, projected status-loop `0/0/0`, immutable execution evidence, contextless-verified engeli, item-bazli Gmail receipt, bounded Sheets read-after-write, partial-side-effect auto-retry bloku ve streamed claim gate eklendi. Registry ve agent otomatik testleri gecti. Bu degisiklik gercek mail/Sheet mutation'i yapmadi; H1 ancak acik onayli ilk run `2/2/2` + read-back ve ikinci real run `0/0/0` kanitiyla gecer. |

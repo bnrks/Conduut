@@ -752,6 +752,12 @@ ortak assurance katmani eklendi:
 - `WorkflowRunResultData` raw `status` yaninda `functionalStatus`, `assessment`
   ve `claimableOutcome` tasir. HTTP route'lari ayni veriyi snake_case additive
   contract ile sunar; `success` yalniz `verified/no_action` icindir.
+- n8n Webhook `responseMode=lastNode` akisi sifir item uretilen temiz
+  execution'da HTTP 500 + `No item to return was found` dondurebilir. Execution
+  snapshot'i `success`, mutation runData'si bos ve runData mevcutsa bu exact
+  sentinel transport failure sayilmaz; sonuc deterministik `no_action`
+  (`0/0/0`) olur. Herhangi bir mutation calismissa veya execution hata
+  durumundaysa ayni 500 normalize edilmez ve partial/failed davranisi korunur.
 - `/preview-run` ve `/batch-preview` endpoint'leri side-effect run oncesi safe
   probe sonucu ve fingerprint/input-hash bagli, tek kullanimlik 10 dakikalik
   token verir. Run ve batch-run tokeni atomik tuketir; stale veya consumed token

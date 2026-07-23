@@ -7,6 +7,29 @@ Bu not, repo icinde gorulen bilinen sorunlari ve dikkat noktalarini toplar.
 Kullanicinin yeni fark ettigi ve henuz triage edilmemis sorun/bug notlari icin
 ayri alan: [[issue-backlog]].
 
+## Sifir eligible item `lastNode` webhook'unda HTTP 500 gorunuyordu (2026-07-23, cozuldu)
+
+**Belirti:** Gecen H1 workflow'unun ikinci real execution'i `#423` Sheet'teki
+dort satirin tamamini `Evet` okuyup Filter true branch'te sifir item uretti.
+AI Agent, Gmail ve Sheets Update hic calismadi; n8n execution `success` idi.
+Buna ragmen Webhook `responseMode=lastNode`, son item bulamayinca HTTP 500
+`No item to return was found` dondurdu ve Conduut sonucu `failed` siniflandirdi.
+
+**Kok neden:** Execution assessment tum HTTP `>=400` cevaplarini execution
+snapshot'indan bagimsiz transport failure kabul ediyordu. Ayrica statik
+`contract_coverage_missing` shadow finding'i, hic calismayan AI Agent icin
+dogrulanmis `no_action` sonucunu `needs_attention` seviyesine indiriyordu.
+
+**Duzeltme:** Yalniz exact n8n sentinel'i icin; execution raw status `success`,
+runData mevcut ve hic mutation node calismamissa 500 transport failure
+sayilmiyor. `no_action` shadow coverage nedeniyle dusurulmuyor; blocking
+assurance finding'i varsa fail-closed davranis korunuyor. Mutation calismis,
+partial write-back olmus veya execution hata vermis ayni 500 normalize
+edilmiyor. Hedefli workflow runner/execution/route/claim/sandbox testleri `87`
+passed; kayitli `#423` snapshot'i yeni kodla `no_action`, `0/0/0`,
+`transportOk=true` verdi. Ilgili: [[scenario-h1-cold-outreach-status]],
+[[agent-service]].
+
 ## IF v2 string operator butun satirlari true branch'e tasidi; `.first()` kisisellestirmeyi ezdi (2026-07-21, kodda cozuldu; canli H1 tekrar kosusu bekliyor)
 
 **Belirti:** [[scenario-h1-cold-outreach-status]] workflow'u
