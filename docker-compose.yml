@@ -1,6 +1,6 @@
 services:
   n8n:
-    image: n8nio/n8n:latest
+    image: n8nio/n8n:${CONDUUT_N8N_VERSION:-1.121.3}
     container_name: conduut-n8n
     environment:
       N8N_API_DISABLED: "false"
@@ -51,6 +51,7 @@ services:
       CONDUUT_RUN_LOG_RETENTION_DAYS: ${CONDUUT_RUN_LOG_RETENTION_DAYS:-30}
       CONDUUT_RUN_LOG_PREVIEW_CHARS: ${CONDUUT_RUN_LOG_PREVIEW_CHARS:-300}
       CONDUUT_N8N_URL: http://n8n:5678
+      CONDUUT_N8N_VERSION: ${CONDUUT_N8N_VERSION:-1.121.3}
       CONDUUT_N8N_API_KEY: ***REMOVED***
       CONDUUT_WORKFLOW_TIMEZONE: ${CONDUUT_WORKFLOW_TIMEZONE:-Europe/Istanbul}
       CONDUUT_PUBLIC_WEB_URL: ${CONDUUT_PUBLIC_WEB_URL:-http://localhost:3000}

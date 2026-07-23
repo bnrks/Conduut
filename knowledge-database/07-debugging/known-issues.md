@@ -7,6 +7,36 @@ Bu not, repo icinde gorulen bilinen sorunlari ve dikkat noktalarini toplar.
 Kullanicinin yeni fark ettigi ve henuz triage edilmemis sorun/bug notlari icin
 ayri alan: [[issue-backlog]].
 
+## IF v2 string operator butun satirlari true branch'e tasidi; `.first()` kisisellestirmeyi ezdi (2026-07-21, kodda cozuldu; canli H1 tekrar kosusu bekliyor)
+
+**Belirti:** [[scenario-h1-cold-outreach-status]] workflow'u
+`RfDitjuT1Kg8dj8c`, execution `#395` icinde Sheet'ten durumlari sirasiyla
+`Evet, Hayir, Evet, Hayir` olan dort satir okudu. `Filter Unsent` true branch'i
+dort satirin tamamini gecirdi, false branch sifir item aldi; Gmail dort ayri
+`SENT` message id uretti ve write-back dort `musteri_no` degerini `Evet` yapti.
+Ayrica AI Agent dort farkli cikti uretmesine ragmen Gmail `message` alani
+`$('AI Agent').first().json.output` kullandigi icin ilk metni her item'a yeniden
+uyguladi. Transport/action/write-back count'lari esit oldugundan eski functional
+assessment sonucu yanlis bicimde basarili gorundu.
+
+**Kok neden:** IF v2.2 rule'u canonical object yerine `operator="equals"`
+string'i tasiyordu. System prompt yalniz branch wiring'i anlatiyor, operator
+seklini gostermiyor ve multi-item baglamini ayirmadan `.first()` ornekleri
+veriyordu. Core validation'da IF-specific shape kontrolu yoktu; static assurance
+yalniz coklu condition combinator'ini denetliyor, sandbox ise branch output'unun
+predicate'e gercekten uydugunu karsilastirmiyordu.
+
+**Duzeltme:** Prompt canonical IF operator object'ini ve collection akislarinda
+`$json` / `$('Node').item` kullanimini acikca zorunlu kiliyor. IF v2+ validation
+bos rule listesi, string/missing/eksik operator object'i n8n'e ulasmadan
+ModelRetry ile reddediyor. Static assurance side-effect node'unda dogrudan
+predecessor `.first()` kullanimini, diger alanlarin scope'undan bagimsiz olarak,
+blocking finding yapiyor.
+Sandbox da guvenle degerlendirilebilen tek-rule string `equals` kosullarinda
+true/false branch output'unu predicate ile karsilastirip celiskiyi side-effect
+oncesinde durduruyor. Exact H1 hata sekilleri validation, assurance ve sandbox
+regresyon testleriyle korunuyor. Canli H1/H2 kabul kosusu henuz yapilmadi.
+
 ## Sheets Document boş kaldı, dropdown 403 verdi ve agent aktivasyonu run başarısı sandı (2026-07-19, Document fix canlı doğrulandı; assurance takibi açık)
 
 **Belirti:** [[scenario-m3-webhook-http-sheets]] workflow'u

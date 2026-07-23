@@ -197,3 +197,105 @@ def test_display_options_version_conditions_filter_latest_parameters():
     assert "resourceConditional" not in names
 
 
+def test_if_schema_includes_operator_object_conditions_example():
+    schema = build_schema_response(
+        NodeInfo(
+            type_name="n8n-nodes-base.if",
+            display_name="If",
+            description="Branch on conditions",
+            type_version=2.2,
+            credentials=[],
+            category="Core Nodes",
+            is_trigger=False,
+            key_properties=[
+                {
+                    "name": "conditions",
+                    "displayName": "Conditions",
+                    "type": "fixedCollection",
+                }
+            ],
+        )
+    )
+
+    rule = schema["exampleNode"]["parameters"]["conditions"]["conditions"][0]
+
+    assert rule["operator"] == {"type": "string", "operation": "equals"}
+    assert schema["exampleNode"]["parameters"]["conditions"]["combinator"] == "and"
+    assert schema["exampleNode"]["parameters"]["conditions"]["options"]["version"] == 2
+    assert schema["usageHints"]
+
+
+def test_filter_schema_includes_operator_object_conditions_example():
+    schema = build_schema_response(
+        NodeInfo(
+            type_name="n8n-nodes-base.filter",
+            display_name="Filter",
+            description="Keep matching items",
+            type_version=2.1,
+            credentials=[],
+            category="Core Nodes",
+            is_trigger=False,
+            key_properties=[],
+        )
+    )
+
+    rule = schema["exampleNode"]["parameters"]["conditions"]["conditions"][0]
+
+    assert rule["operator"] == {"type": "string", "operation": "equals"}
+    assert schema["exampleNode"]["parameters"]["conditions"]["combinator"] == "and"
+    assert schema["exampleNode"]["parameters"]["conditions"]["options"]["version"] == 2
+    assert "single-path row elimination" in " ".join(schema["usageHints"])
+
+
+def test_code_schema_adds_jscode_and_canonical_javascript_example_despite_display_options():
+    raw = {
+        "name": "n8n-nodes-base.code",
+        "displayName": "Code",
+        "description": "Run custom code",
+        "version": [1, 2],
+        "properties": [
+            {
+                "displayName": "Mode",
+                "name": "mode",
+                "type": "options",
+                "default": "runOnceForAllItems",
+                "options": [{"name": "Run Once", "value": "runOnceForAllItems"}],
+            },
+            {
+                "displayName": "Language",
+                "name": "language",
+                "type": "options",
+                "default": "javaScript",
+                "options": [
+                    {"name": "JavaScript", "value": "javaScript"},
+                    {"name": "Python", "value": "python"},
+                    {"name": "Python (Native)", "value": "pythonNative"},
+                ],
+            },
+            {
+                "displayName": "JavaScript Code",
+                "name": "jsCode",
+                "type": "string",
+                "default": "",
+                "displayOptions": {"show": {"language": ["javaScript"]}},
+            },
+            {
+                "displayName": "Python Code",
+                "name": "pythonCode",
+                "type": "string",
+                "default": "",
+                "displayOptions": {"show": {"language": ["python"]}},
+            },
+        ],
+    }
+
+    node = parse_nodes_json([raw])[0]
+    schema = build_schema_response(node)
+
+    js_code = next(param for param in schema["keyParameters"] if param["name"] == "jsCode")
+    language = next(param for param in schema["keyParameters"] if param["name"] == "language")
+
+    assert language["default"] == "javaScript"
+    assert js_code["name"] == "jsCode"
+    assert schema["exampleNode"]["parameters"]["language"] == "javaScript"
+    assert "jsCode" in schema["exampleNode"]["parameters"]

@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
 )
 
 from src import store
+from src.agent.claim_policy import claim_exceeds_evidence, safe_evidence_summary
 from src.agent.history import (
     _conversation_workflows_from_messages,
     _history_from_store_messages,
@@ -108,6 +109,45 @@ class _GuardedTextEmitter:
         return safe
 
 
+class _ClaimGatedTextEmitter:
+    """Hold model text until a complete sentence can be checked against evidence."""
+
+    def __init__(self, evidence: list[dict]) -> None:
+        self._evidence = evidence
+        self._pending = ""
+
+    def feed(self, chunk: str) -> str:
+        if not chunk:
+            return ""
+        self._pending += chunk
+        released: list[str] = []
+        start = 0
+        for index, character in enumerate(self._pending):
+            if character not in ".!?\n":
+                continue
+            sentence = self._pending[start : index + 1]
+            released.append(self._gate(sentence))
+            start = index + 1
+        self._pending = self._pending[start:]
+        return "".join(released)
+
+    def finish_model_response(self) -> str:
+        sentence = self._pending
+        self._pending = ""
+        return self._gate(sentence)
+
+    def _gate(self, sentence: str) -> str:
+        if not sentence or not claim_exceeds_evidence(sentence, self._evidence):
+            return sentence
+        log.warning(
+            "agent_stream_claim_exceeds_evidence",
+            evidence_outcomes=[item.get("outcome") for item in self._evidence],
+        )
+        leading = sentence[: len(sentence) - len(sentence.lstrip())]
+        trailing = sentence[len(sentence.rstrip()) :]
+        return f"{leading}{safe_evidence_summary(self._evidence)}{trailing}"
+
+
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
@@ -149,6 +189,7 @@ async def _emit_stream_event(
     *,
     attempt_id: str | None = None,
     guarded_text: _GuardedTextEmitter | None = None,
+    claim_gate: _ClaimGatedTextEmitter | None = None,
 ) -> None:
     """Pydantic AI model-stream event'ini SSE event'ine çevirip queue'ya koyar.
 
@@ -160,6 +201,7 @@ async def _emit_stream_event(
         part = event.part
         if isinstance(part, TextPart) and part.content:
             visible = guarded_text.feed(part.content) if guarded_text else part.content
+            visible = claim_gate.feed(visible) if claim_gate else visible
             text_chunks.append(visible)
             if not visible:
                 return
@@ -178,6 +220,7 @@ async def _emit_stream_event(
             visible = (
                 guarded_text.feed(delta.content_delta) if guarded_text else delta.content_delta
             )
+            visible = claim_gate.feed(visible) if claim_gate else visible
             text_chunks.append(visible)
             if not visible:
                 return
@@ -364,6 +407,7 @@ async def _run_live(
 
     # Akan görünür metni persist için biriktir (düşünce kaydedilmez).
     text_chunks: list[str] = []
+    claim_gate = _ClaimGatedTextEmitter(deps.claim_evidence)
 
     async def _agent_stream():
         # agent.iter() graph'ı node-node sürer; model-request node'larında cevabı
@@ -389,7 +433,21 @@ async def _run_live(
                                 conv_id,
                                 text_chunks,
                                 attempt_id=attempt_id,
+                                claim_gate=claim_gate,
                             )
+                    tail = claim_gate.finish_model_response()
+                    if tail:
+                        text_chunks.append(tail)
+                        await event_queue.put(
+                            (
+                                "token",
+                                {
+                                    "text": tail,
+                                    "conversation_id": conv_id,
+                                    "attempt_id": attempt_id,
+                                },
+                            )
+                        )
             return agent_run.result
 
     assembler = StepAssembler()
@@ -684,6 +742,7 @@ async def _run_guarded_attempt(
     assembler = StepAssembler()
     guard = IncrementalReliabilityGuard()
     guarded_text = _GuardedTextEmitter(guard)
+    claim_gate = _ClaimGatedTextEmitter(deps.claim_evidence)
 
     async def _stream():
         async with agent.iter(
@@ -707,10 +766,14 @@ async def _run_guarded_attempt(
                                 text_chunks,
                                 attempt_id=deps.attempt_id,
                                 guarded_text=guarded_text,
+                                claim_gate=claim_gate,
                             )
                             if guard.reason:
                                 return None
-                    tail = guarded_text.finish_model_response()
+                    guarded_tail = guarded_text.finish_model_response()
+                    visible_tail = claim_gate.feed(guarded_tail)
+                    claim_tail = claim_gate.finish_model_response()
+                    tail = f"{visible_tail}{claim_tail}"
                     if tail:
                         text_chunks.append(tail)
                         await queue.put(

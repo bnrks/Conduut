@@ -459,6 +459,165 @@ def _validate_google_sheets_node(node: Mapping[str, Any], label: str) -> list[st
     return []
 
 
+def _node_type_version_at_least(node: Mapping[str, Any], minimum: float) -> bool:
+    value = node.get("typeVersion")
+    return isinstance(value, int | float) and not isinstance(value, bool) and value >= minimum
+
+
+def _validate_if_node(node: Mapping[str, Any], label: str) -> list[str]:
+    if node.get("type") != "n8n-nodes-base.if" or not _node_type_version_at_least(node, 2):
+        return []
+    return _validate_conditions_node(node, label, node_kind="IF")
+
+
+def _validate_filter_node(node: Mapping[str, Any], label: str) -> list[str]:
+    if node.get("type") != "n8n-nodes-base.filter" or not _node_type_version_at_least(node, 2):
+        return []
+    return _validate_conditions_node(node, label, node_kind="Filter")
+
+
+_UNARY_CONDITION_OPERATIONS = {
+    "empty",
+    "exists",
+    "false",
+    "isempty",
+    "isfalse",
+    "isnotempty",
+    "istrue",
+    "notempty",
+    "notexists",
+    "true",
+}
+
+
+def _is_missing_condition_operand(rule: Mapping[str, Any], name: str) -> bool:
+    if name not in rule or rule.get(name) is None:
+        return True
+    value = rule.get(name)
+    return isinstance(value, str) and not value.strip() and name == "leftValue"
+
+
+def _validate_conditions_node(node: Mapping[str, Any], label: str, *, node_kind: str) -> list[str]:
+    prefix = f"{node_kind} node '{label}'"
+
+    parameters = node.get("parameters")
+    if not isinstance(parameters, Mapping):
+        return [f"{prefix} parameters must be an object"]
+
+    conditions = parameters.get("conditions")
+    if conditions is None:
+        return [
+            f"{prefix} typeVersion 2+ must put at least one rule under "
+            f"parameters.conditions.conditions. A conditionless {node_kind} cannot safely "
+            "filter items."
+        ]
+
+    if not isinstance(conditions, Mapping):
+        return [
+            f"{prefix} typeVersion 2+ requires parameters.conditions to be an object with a "
+            "conditions list."
+        ]
+
+    rules = conditions.get("conditions")
+    if rules is None:
+        return [
+            f"{prefix} typeVersion 2+ must use parameters.conditions.conditions "
+            "as a non-empty list of rule objects."
+        ]
+
+    if not isinstance(rules, list):
+        return [f"{prefix} typeVersion 2+ requires parameters.conditions.conditions to be a list."]
+    if not rules:
+        return [
+            f"{prefix} typeVersion 2+ requires at least one condition rule; an empty conditions "
+            "list would not safely filter items."
+        ]
+
+    errors: list[str] = []
+    for index, rule in enumerate(rules, start=1):
+        item_label = f"{prefix} rule {index}"
+        if not isinstance(rule, Mapping):
+            errors.append(f"{item_label} must be an object.")
+            continue
+        operator = rule.get("operator")
+        if isinstance(operator, str):
+            errors.append(
+                f"{item_label} uses operator={operator!r}. For {node_kind} typeVersion 2+, "
+                'operator must be an object like {"type": "string", "operation": "equals"}, '
+                "not a string."
+            )
+            continue
+        if operator is None:
+            errors.append(
+                f"{item_label} is missing operator. For {node_kind} typeVersion 2+, each rule "
+                'needs an operator object like {"type": "string", "operation": "equals"}.'
+            )
+            continue
+        if not isinstance(operator, Mapping):
+            errors.append(
+                f"{item_label} operator must be an object with non-empty 'type' and "
+                "'operation' fields."
+            )
+            continue
+        operator_type = str(operator.get("type") or "").strip()
+        operator_name = str(operator.get("operation") or "").strip()
+        if not operator_type or not operator_name:
+            errors.append(
+                f"{item_label} operator must include non-empty 'type' and 'operation' values, "
+                'for example {"type": "string", "operation": "equals"}.'
+            )
+            continue
+        if _is_missing_condition_operand(rule, "leftValue"):
+            errors.append(f"{item_label} must include a non-empty leftValue expression or literal.")
+        if (
+            operator_name.lower() not in _UNARY_CONDITION_OPERATIONS
+            and _is_missing_condition_operand(rule, "rightValue")
+        ):
+            errors.append(
+                f"{item_label} operation={operator_name!r} requires rightValue. "
+                "Only unary operations such as isEmpty/isNotEmpty may omit it."
+            )
+    return errors
+
+
+_CODE_LANGUAGES = {"javaScript", "python", "pythonNative"}
+
+
+def _validate_code_node(node: Mapping[str, Any], label: str) -> list[str]:
+    if node.get("type") != "n8n-nodes-base.code" or not _node_type_version_at_least(node, 2):
+        return []
+
+    parameters = node.get("parameters")
+    if not isinstance(parameters, Mapping):
+        return [f"Code node '{label}' parameters must be an object"]
+
+    errors: list[str] = []
+    raw_language = parameters.get("language")
+    language = str(raw_language).strip() if isinstance(raw_language, str) else ""
+
+    if raw_language is not None:
+        if not language:
+            errors.append(
+                f"Code node '{label}' language must be one of "
+                "'javaScript', 'python', or 'pythonNative' when provided."
+            )
+        elif language not in _CODE_LANGUAGES:
+            errors.append(
+                f"Code node '{label}' language={language!r} is invalid. Use the exact n8n "
+                "value 'javaScript' for JavaScript, or 'python' / 'pythonNative' for Python."
+            )
+
+    uses_javascript = raw_language is None or language == "javaScript"
+    js_code = parameters.get("jsCode")
+    if uses_javascript and (not isinstance(js_code, str) or not js_code.strip()):
+        errors.append(
+            f"Code node '{label}' must provide non-empty parameters.jsCode when language is "
+            "'javaScript' (or omitted, because n8n defaults to JavaScript)."
+        )
+
+    return errors
+
+
 def _normalize_gmail_node(data: dict[str, Any]) -> None:
     if data.get("type") != "n8n-nodes-base.gmail":
         return
@@ -753,6 +912,9 @@ def validate_workflow_payload(
             errors.append(f"Node '{label}' parameters must be an object")
 
         errors.extend(_validate_set_node(node, label))
+        errors.extend(_validate_if_node(node, label))
+        errors.extend(_validate_filter_node(node, label))
+        errors.extend(_validate_code_node(node, label))
         errors.extend(_validate_schedule_trigger_node(node, label))
         errors.extend(_validate_gmail_node(node, label))
         errors.extend(_validate_google_sheets_node(node, label))

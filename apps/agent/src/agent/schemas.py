@@ -265,6 +265,44 @@ ClaimableOutcome = Literal[
     "no_action",
     "none",
 ]
+OracleContextSource = Literal["exact", "embedded", "current", "missing"]
+
+
+class Postcondition(BaseModel):
+    code: str
+    description: str
+    status: Literal["verified", "failed", "pending", "unknown", "not_applicable"] = "unknown"
+    nodeName: str | None = None
+    details: str | None = None
+
+
+class OracleContract(BaseModel):
+    fingerprint: str | None = None
+    contextSource: OracleContextSource = "missing"
+    nodeContractHashes: dict[str, str] = Field(default_factory=dict)
+    contractCoverage: Literal["full", "partial", "none"] = "none"
+    actionNodes: list[str] = Field(default_factory=list)
+    writebackNodes: list[str] = Field(default_factory=list)
+    mutationNodes: list[str] = Field(default_factory=list)
+    expectedEffects: dict[str, str] = Field(default_factory=dict)
+    identityFields: dict[str, list[str]] = Field(default_factory=dict)
+    cardinalityRelations: list[str] = Field(default_factory=list)
+    expectedPostconditions: list[Postcondition] = Field(default_factory=list)
+    claimScope: list[str] = Field(default_factory=list)
+
+
+class ProbeEvidence(BaseModel):
+    nodeName: str
+    kind: str
+    covered: bool = False
+    target: str | None = None
+    subject: str | None = None
+    columns: list[str] = Field(default_factory=list)
+    matchingColumns: list[str] = Field(default_factory=list)
+    itemCount: int | None = None
+    rowEmpty: bool | None = None
+    identityMissing: bool | None = None
+    identityEmpty: bool | None = None
 
 
 class WorkflowRunDataHint(BaseModel):
@@ -301,6 +339,10 @@ class WorkflowRunAssessment(BaseModel):
     """Conservative business-outcome assessment layered over raw n8n status."""
 
     transportStatusCode: int | None = None
+    workflowFingerprint: str | None = None
+    oracle: OracleContract | None = None
+    postconditions: list[Postcondition] = Field(default_factory=list)
+    exactContextVerified: bool = False
     configuredMutationNodes: list[str] = Field(default_factory=list)
     executedMutationNodes: list[str] = Field(default_factory=list)
     successfulMutationNodes: list[str] = Field(default_factory=list)
@@ -317,6 +359,24 @@ class WorkflowRunAssessment(BaseModel):
     duplicateRisk: bool = False
     warnings: list[WorkflowAssessmentWarning] = Field(default_factory=list)
     evidence: list[ActionEvidence] = Field(default_factory=list)
+
+
+class ExecutionEvidenceEnvelope(BaseModel):
+    source: Literal["workflow_run", "execution_inspect"]
+    workflowId: str
+    executionId: str | None = None
+    workflowFingerprint: str | None = None
+    oracleContractHash: str | None = None
+    evidenceHash: str | None = None
+    observedCounts: dict[str, int] = Field(default_factory=dict)
+    verifiedEffects: list[str] = Field(default_factory=list)
+    ruleCodes: list[str] = Field(default_factory=list)
+    claimStates: list[str] = Field(default_factory=list)
+    functionalStatus: FunctionalStatus = "unknown"
+    claimableOutcome: ClaimableOutcome = "none"
+    assessment: WorkflowRunAssessment = Field(default_factory=WorkflowRunAssessment)
+    assessorVersion: str = "assurance-v2"
+    createdAt: str | None = None
 
 
 class WorkflowRunResultData(BaseModel):
@@ -412,7 +472,6 @@ class AgentDeps:
     # Current-turn evidence that bounds what the final natural-language response
     # may claim. Kept PII-free: outcome, workflow id and execution id only.
     claim_evidence: list[dict[str, Any]] = field(default_factory=list)
-    claim_validation_failures: int = 0
     # True once any replay-unsafe tool starts its external mutation. Kept under
     # the legacy field name for compatibility with existing tests/callers.
     real_action_executed: bool = False

@@ -92,4 +92,99 @@ node-specific ornek dondurur. `n8n-nodes-base.set` / Edit Fields node'u icin
 Set node'da alan eklemek icin `mode/manual/options` tek basina yeterli degil,
 field listesi `assignments.assignments` altinda olmalidir.
 
+IF/Filter/Code node'lari da node-specific contract tasir. `if` ve `filter`
+semalarinin `type=filter` parametresi ham `nodes.json` icinde nested rule
+semasini aciklamadigi icin `get_node_schema`, dolu
+`conditions.conditions`, `combinator`, filter options ve
+`operator={type, operation}` iceren canonical bir `exampleNode` dondurur.
+`code` node'unda ise `jsCode`, `displayOptions.language` arkasinda kaldigi icin
+genel kondanse extractor tarafindan elenebilir; node-specific guidance bunu
+`keyParameters` ve ornege geri ekler. JavaScript'in exact enum degeri
+`javaScript`'tir; `javascript` gecersizdir. Tek-yollu satir elemede agent'a
+`Filter`, gercek iki branch gerektiginde `IF`, ancak kosul node'lari yetersizse
+`Code` kullanmasi onerilir.
+
 Ilgili notlar: [[agent-service]], [[chat-workflow-generation]].
+
+## Workflow/Node Cards V2 (2026-07-23)
+
+[[adr-0020-workflow-node-cards-assurance-v2]] ile registry klasik tek-schema
+lookup'undan iki asamali card retrieval'a genisletildi:
+
+- `cards.py` raw community workflow'u modele tasimadan isim/ozet/intent,
+  kontrollu keyword, service/capability, topology/node role, credential type,
+  identity/idempotency, side-effect/risk, cardinality/rerun invariant ve
+  compatibility metadata'si cikarir. Code govdesi, embedded prompt, pinned data,
+  credential id/name ve workflow JSON tool sonucuna girmez; prompt-injection
+  benzeri community aciklamalari temizlenir.
+- `loader.py` node contract'ini exact
+  `type + typeVersion + resource + operation` baglaminda uretir. Ayni node
+  icindeki birden fazla operation selector'i resource `displayOptions`'ina gore
+  birlestirilir. Bu duzeltme Gmail v2.1 `message.send` contract'inin yanlislikla
+  ilk draft selector'iyle kaybolmasini onler. Dynamic UI `hide` kosulu
+  (`sheetName` bos gibi) statik operation parametresini silmez.
+- `get_node_contract` ambiguous istekte ilk schema'yi secmez;
+  `availableResources`/`availableOperations` dondurur. Contract; required/
+  optional nested paths, enum/default, credential, input/output cardinality,
+  branch/lineage, side-effect/retry/identity, dynamic resolver, valid/invalid
+  ornek, pitfall ve validator rule ID'lerini tasir.
+- `fts.py` local SQLite FTS5 indexidir. Workflow search compact sonuc ve
+  service/capability/risk metadata filter'i verir; detail ayri lookup'tur.
+- `scripts/build_cards.py` mevcut `nodes.json + templates.json` uzerinden
+  `workflow_cards.jsonl`, operation-card `node_cards.jsonl`,
+  `retrieval.sqlite`, `registry_manifest.json` uretir. Manifest artifact ve
+  node-schema SHA-256 hash'leri ile opsiyonel n8n version'ini tasir.
+- `fetch_templates.py` resume edilebilir. Untrusted raw snapshot
+  `packages/n8n-registry/generated/raw/` altinda kalir; agent Docker data
+  yuzeyine alinmaz.
+
+### Community corpus refresh ve runtime readiness (2026-07-23)
+
+Community ingestion artik uc kullanim seklini destekler:
+
+```powershell
+# Hedefli corpus parcasi
+python packages/n8n-registry/scripts/fetch_templates.py --all --query "cold email outreach Gmail Google Sheets status" --resume
+
+# Ilk N listing
+python packages/n8n-registry/scripts/fetch_templates.py --limit 500 --resume
+
+# Tum Community corpus'unu kaldigi yerden indir
+python packages/n8n-registry/scripts/fetch_templates.py --all --resume
+
+# Sanitize card'lari ve FTS index'i mevcut n8n surumune gore yeniden uret
+python packages/n8n-registry/scripts/build_cards.py --n8n-version 1.121.3
+```
+
+`--all` Community API'nin `totalWorkflows` degerini izler; `--query` API'nin
+server-side `search` filtresini kullanir. Detail endpoint'i 400/404 veren
+template ID'leri bos/yaniltici card'a donusturulmez, manifest `failedIds`
+alanina yazilir. Resume sirasinda eski sifir-node card'lar atomik olarak
+temizlenip yeniden denenir.
+
+Community detail response'undaki dis `workflow` nesnesi node katalog ozeti,
+icteki `workflow.workflow` ise native n8n JSON'udur. Extractor native katmani
+acar; aksi halde card node count dolu gorunurken `nodeTypes`, services ve
+topology bos kalir. Bazi Community template'leri parametreleri bosaltilmis
+native JSON dondurur. Bu durumda exact operation uydurulmaz; node adi + node
+type uzerinden inferred action/write-back role, capability, side-effect ve risk
+uretilir. Exact parametre otoritesi yine Node Card'dir.
+
+`build_cards.py` checked-in sanitize seed corpus ile raw snapshot'i ID bazinda
+birlestirir; raw kayit daha guncelse seed'i override eder. Boylece incremental
+raw snapshot eski seed card'lari dusurmez.
+
+2026-07-23 ilk hazir corpus snapshot'i Community tarafindaki 10.908 listing'in
+hepsini degil, hedefli H1 aramasi ile ilk 500 listing'i kapsar: 497 gecerli
+Workflow Card, 6 failed detail ve 0 sifir-node card. Current n8n `1.121.3`
+schema refresh'i 7.727 operation-aware Node Card uretmistir. H1 sorgusunda
+template `4214` (`Cold Email Outreach with Gmail and Google Sheets Status
+Tracking`) FTS sonucunda birinci gelir; card 6 node, 5 edge,
+`send_email/read_sheet/update_sheet_rows/scheduled_run`, action ve write-back
+rolleri ile `high` risk tasir. Corpus generated/ignored artifact'tir; buyutme
+offline ve incremental yapilir, raw snapshot agent/model yuzeyine acilmaz.
+
+Agent tool sirasi artik `search_workflow_cards(limit=10)`, en fazla uc
+`get_workflow_card`, sonra exact `get_node_contract` ve native JSON
+create/update'tir. Eski `find_workflow_template` model yuzeyinden kalkti;
+registry compatibility alias'i sanitize card dondurur.

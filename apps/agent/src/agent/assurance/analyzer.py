@@ -17,6 +17,7 @@ from src.agent.schemas import WorkflowNode
 
 _UNQUALIFIED_JSON_DOT = re.compile(r"\$json\s*(?:\.|\?\.)\s*([A-Za-z_][A-Za-z0-9_]*)")
 _UNQUALIFIED_JSON_BRACKET = re.compile(r"\$json\s*\[\s*['\"]([^'\"]+)['\"]\s*\]")
+_FIRST_REFERENCE = re.compile(r"\$\(\s*['\"]([^'\"]+)['\"]\s*\)\.first\(\)\.json\b")
 _TRIGGER_TYPES = {
     "n8n-nodes-base.manualTrigger",
     "n8n-nodes-base.scheduleTrigger",
@@ -48,6 +49,13 @@ def _unqualified_json_fields(value: Any) -> set[str]:
         fields.update(_UNQUALIFIED_JSON_DOT.findall(text))
         fields.update(_UNQUALIFIED_JSON_BRACKET.findall(text))
     return fields
+
+
+def _node_references(value: Any, pattern: re.Pattern[str]) -> set[str]:
+    refs: set[str] = set()
+    for text in _iter_strings(value):
+        refs.update(match.strip() for match in pattern.findall(text) if match.strip())
+    return refs
 
 
 def _main_targets(connections: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
@@ -206,6 +214,48 @@ def _gmail_dataflow_findings(
                         ),
                     )
                 )
+    return findings
+
+
+def _side_effect_first_reference_findings(
+    nodes_by_name: Mapping[str, Mapping[str, Any]], adjacency: Mapping[str, tuple[str, ...]]
+) -> list[AssuranceFinding]:
+    findings: list[AssuranceFinding] = []
+    for name, node in nodes_by_name.items():
+        contract = output_contract(node)
+        if contract is None or not contract.side_effect:
+            continue
+
+        parameters = node.get("parameters") or {}
+        first_refs = _node_references(parameters, _FIRST_REFERENCE)
+        if not first_refs:
+            continue
+
+        direct_predecessors = set(_predecessors(adjacency).get(name, ()))
+        related_sources = sorted(
+            source
+            for source in first_refs
+            if source in nodes_by_name
+            and source in direct_predecessors
+            and not _is_trigger(nodes_by_name[source])
+        )
+        if not related_sources:
+            continue
+
+        findings.append(
+            AssuranceFinding(
+                code="side_effect_direct_first_reference",
+                severity=FindingSeverity.ERROR,
+                node_name=name,
+                related_nodes=tuple(related_sources),
+                message=(
+                    f"Side-effect node '{name}' reads its direct predecessor through "
+                    f"{', '.join(f'$({source!r}).first().json' for source in related_sources)}. "
+                    "This can reuse the first record's data for every item. Read the direct "
+                    "predecessor through the current item ($json...) instead."
+                ),
+            )
+        )
     return findings
 
 
@@ -487,6 +537,7 @@ def analyze_workflow_semantics(
         *_graph_findings(nodes_by_name, adjacency),
         *_if_findings(nodes_by_name),
         *_gmail_dataflow_findings(nodes_by_name, adjacency),
+        *_side_effect_first_reference_findings(nodes_by_name, adjacency),
         *_sheets_matching_findings(nodes_by_name, adjacency),
         *_choreography_findings(nodes_by_name, adjacency),
         *_contract_coverage_findings(nodes_by_name, adjacency),

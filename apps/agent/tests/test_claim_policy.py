@@ -131,7 +131,6 @@ def test_activation_does_not_authorize_future_sheet_write_claim():
 def test_waiting_for_approval_does_not_retry_or_overclaim():
     deps = SimpleNamespace(
         claim_evidence=[],
-        claim_validation_failures=0,
         awaiting_user_input=True,
         awaiting_user_input_summary=(
             "Önizleme hazır. Henüz gerçek bir gönderim veya güncelleme yapılmadı."
@@ -145,13 +144,11 @@ def test_waiting_for_approval_does_not_retry_or_overclaim():
 
     assert "Önizleme hazır" in result
     assert "Henüz gerçek bir gönderim" in result
-    assert deps.claim_validation_failures == 0
 
 
 def test_generic_clarification_does_not_use_preview_approval_language():
     deps = SimpleNamespace(
         claim_evidence=[],
-        claim_validation_failures=0,
         awaiting_user_input=True,
         awaiting_user_input_summary=None,
     )
@@ -164,3 +161,19 @@ def test_generic_clarification_does_not_use_preview_approval_language():
     assert "kullanıcı girdisi bekliyor" in result
     assert "Önizleme hazır" not in result
     assert "onay seçeneklerini" not in result
+
+
+def test_unsupported_final_claim_is_replaced_without_internal_model_retry():
+    deps = SimpleNamespace(
+        claim_evidence=[],
+        awaiting_user_input=False,
+        awaiting_user_input_summary=None,
+    )
+
+    result = _validate_evidence_gated_output(
+        deps,
+        "Workflow başarıyla çalıştı ve tüm satırlar güncellendi.",
+    )
+
+    assert result == safe_evidence_summary([])
+    assert "Haklısınız" not in result

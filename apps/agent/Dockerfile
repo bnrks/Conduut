@@ -14,10 +14,10 @@ RUN pip install --no-cache-dir -e .
 # Uygulama kaynak kodunu kopyala
 COPY apps/agent/src/ ./src/
 
-# Registry verilerini kopyala. nodes.json + credentials.json gitignored ve
-# container-specific: build ÖNCESİ scripts/fetch_nodes.py + fetch_credentials.py
-# çalıştırılmazsa node registry / credential katalogu boş gelir (ADR-0015).
-# templates.json repoda tracked.
+# Registry verilerini kopyala. nodes.json + credentials.json ile card/index
+# artifact'leri gitignored ve build öncesi refresh edilir:
+# fetch_nodes.py + fetch_credentials.py + build_cards.py (ADR-0015/ADR-0020).
+# Enforce modunda manifest/index eksik veya schema hash'i uyumsuzsa startup fail eder.
 COPY packages/n8n-registry/data/ ./data/
 
 EXPOSE 8000

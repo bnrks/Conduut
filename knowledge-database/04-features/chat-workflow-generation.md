@@ -103,6 +103,14 @@ connection referanslarini node `name` formatina normalize eder; model `1`/`2`
 veya `node1`/`node2` gibi id/sira alias'lari uretirse bunlar n8n'e yazilmadan
 once ilgili node adlarina cevrilir.
 
+Filtreleme native JSON yolunda node-specific contract ile korunur. Tek-yollu
+satir elemede `n8n-nodes-base.filter`, iki gercek branch gerektiginde
+`n8n-nodes-base.if` tercih edilir; ikisi de v2+ icin dolu
+`conditions.conditions` ve object operator ister. Model Code'a kacarsa v2
+JavaScript kontrati exact `language="javaScript"` ve dolu `jsCode` gerektirir.
+Registry bu nested ornekleri `get_node_schema` ile verir, validator hatali
+sekilleri n8n side effect'inden once `ModelRetry` ile reddeder.
+
 `update_workflow` parameter-only editlerde mevcut operasyonel state'i korur:
 connections bos/atlanmissa var olan graf kullanilir; retained node ID'leri ve
 credential baglari model payload'iyla degistirilemez. Topology degisikligi tam
@@ -311,6 +319,12 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
   run approval'a ozel preview ozeti kullanilir. Normal eksik alan/credential
   sorulari preview/onay metniyle karistirilmaz ve genel bekleme ozeti alir.
   Final `done` event'inden sonra tek structured approval paneli gosterilir.
+- Output claim validator hicbir akista dahili `ModelRetry` metnini modele geri
+  vermez. Kaniti asan run/send/update cumlesi sentence-buffered stream gate'te
+  yayinlanmadan deterministic evidence summary ile degistirilir; final validator
+  da ayni ozeti terminal sonuc yapar. Bu nedenle modelin validator elestirisine
+  `Haklisiniz` diye cevap verdigi ara tur kullaniciya stream edilmez veya
+  assistant mesaji olarak saklanmaz.
 - Sandbox V2 en cok iki model repair denemesi yapar. Known-side-effect harness
   hatasi veya biten repair butcesi `needs_attention` ve terminal user-input
   siniri uretir; ayni turda update/run dongusune devam edilmez.
@@ -412,3 +426,23 @@ provider'lariyla yapilir. Mevcut SSE event sozlesmesi korunur:
 `token`, `tool_call`, `attachment`, `done`, `error`.
 
 Ilgili notlar: [[web-app]], [[agent-service]], [[dashboard]].
+
+## Lookup-first Card Akisi ve Claim Gate V2 (2026-07-23)
+
+[[adr-0020-workflow-node-cards-assurance-v2]] sonrasinda non-trivial workflow
+uretim sirasi zorunlu olarak:
+
+`search_workflow_cards(limit=10) -> get_workflow_card(max 3) ->
+search_n8n_nodes/get_node_schema -> get_node_contract(exact) ->
+create_workflow/update_workflow`
+
+Agent community card'ini kopyalamaz; topology, invariant ve risk fikri olarak
+kullanir. Gmail, Google Sheets, Filter, IF, Code, Set/Edit Fields ve Merge icin
+exact typeVersion/resource/operation contract'i okunur. Secilen card ID/hash ve
+node contract hash'leri workflow metadata `resources.lookup` alanina yazilir.
+
+Create/update native n8n JSON imzasini korur. Repair hala safety net'tir;
+correctness otoritesi dynamic header contract, static/dataflow validation ve
+typed Oracle'dir. Gercek run sonucunda streamed/final metin yalniz evidence
+scope'u kadar claim kurabilir. Partial side effect yeni bir otomatik run
+baslatmaz; reconciliation preview + kullanici onayi gerekir.

@@ -40,9 +40,16 @@ async def preview_workflow_run(
         "ready": result.passed and not result.skipped,
         "status": result.status,
         "coverage": result.coverage,
+        "oracle": result.oracle.model_dump(exclude_none=True) if result.oracle else None,
+        "probe_evidence": [item.model_dump(exclude_none=True) for item in result.probe_evidence],
         "eligible_count": result.eligible_count,
         "action_count": result.action_count,
         "writeback_count": result.writeback_count,
+        "projected_second_run": {
+            "eligible_count": result.projected_second_run_eligible_count,
+            "action_count": result.projected_second_run_action_count,
+            "writeback_count": result.projected_second_run_writeback_count,
+        },
         "actions": result.preview_actions,
         "findings": result.findings,
     }
@@ -143,6 +150,10 @@ async def preview_workflow_batch(
                 "ready": False,
                 "status": "needs_attention",
                 "coverage": coverage,
+                "oracle": result.oracle.model_dump(exclude_none=True) if result.oracle else None,
+                "probe_evidence": [
+                    item.model_dump(exclude_none=True) for item in result.probe_evidence
+                ],
                 "eligible_count": eligible_count,
                 "action_count": action_count,
                 "writeback_count": writeback_count,
@@ -156,6 +167,8 @@ async def preview_workflow_batch(
         "ready": True,
         "status": status,
         "coverage": coverage,
+        "oracle": None,
+        "probe_evidence": [],
         "eligible_count": eligible_count,
         "action_count": action_count,
         "writeback_count": writeback_count,

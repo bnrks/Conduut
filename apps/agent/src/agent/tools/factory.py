@@ -25,7 +25,10 @@ from src.agent.schemas import (
     WorkflowPreviewData,
     dump_workflow_nodes,
 )
-from src.agent.tools.build_pipeline import _validated_runtime_workflow
+from src.agent.tools.build_pipeline import (
+    _validated_runtime_workflow,
+    _validated_runtime_workflow_with_dynamic_contracts,
+)
 from src.agent.tools.common import (
     _credential_suggestion_instruction,
     _missing_credentials_instruction,
@@ -38,6 +41,11 @@ from src.agent.tools.credentials import (
     attach_credential_payload,
     list_credentials_payload,
     prepare_api_credential_payload,
+)
+from src.agent.tools.dynamic_contracts import (
+    merge_lookup_resources,
+    summarize_node_contract_selection,
+    summarize_workflow_card,
 )
 from src.agent.tools.output_schema import save_workflow_output_metadata
 from src.agent.tools.prompt import SYSTEM_PROMPT
@@ -54,7 +62,18 @@ from src.agent.tools.runtime_inputs import (
 from src.agent.tools.workflow_runner import execution_retry_guard, run_workflow_with_input
 from src.config import settings
 from src.platforms.actions import run_platform_action_payload
-from src.registry import registry
+from src.registry import (
+    get_node_contract as registry_get_node_contract,
+)
+from src.registry import (
+    get_workflow_card as registry_get_workflow_card,
+)
+from src.registry import (
+    registry,
+)
+from src.registry import (
+    search_workflow_cards as registry_search_workflow_cards,
+)
 
 log = structlog.get_logger()
 
@@ -361,6 +380,71 @@ def _normalized_user_input_request(
     )
 
 
+def _lookup_state_bucket(deps: AgentDeps, attr_name: str) -> list[dict[str, Any]]:
+    bucket = getattr(deps, attr_name, None)
+    if isinstance(bucket, list):
+        return bucket
+    bucket = []
+    setattr(deps, attr_name, bucket)
+    return bucket
+
+
+def _remember_lookup_entry(deps: AgentDeps, attr_name: str, entry: dict[str, Any]) -> None:
+    if not entry:
+        return
+    bucket = _lookup_state_bucket(deps, attr_name)
+    identity = (
+        str(entry.get("card_id") or entry.get("contract_id") or entry.get("node_name") or ""),
+        str(entry.get("hash") or ""),
+    )
+    for existing in bucket:
+        existing_identity = (
+            str(
+                existing.get("card_id")
+                or existing.get("contract_id")
+                or existing.get("node_name")
+                or ""
+            ),
+            str(existing.get("hash") or ""),
+        )
+        if existing_identity == identity:
+            return
+    bucket.append(entry)
+
+
+async def _save_workflow_lookup_metadata(
+    deps: AgentDeps,
+    workflow_id: str,
+    lookup_patch: dict[str, Any] | None,
+) -> None:
+    card_entries = list(_lookup_state_bucket(deps, "_workflow_card_selections"))
+    contract_entries = list(_lookup_state_bucket(deps, "_workflow_contract_selections"))
+    patch_lookup = lookup_patch.get("lookup") if isinstance(lookup_patch, dict) else None
+    if isinstance(patch_lookup, dict):
+        contract_entries.extend(
+            item for item in (patch_lookup.get("node_contracts") or []) if isinstance(item, dict)
+        )
+    merged_patch = {
+        "lookup": {
+            "version": 1,
+            "workflow_cards": card_entries,
+            "node_contracts": contract_entries,
+        }
+    }
+    metadata = await store.get_workflow_metadata(deps.user_id, workflow_id)
+    if metadata is None:
+        return
+    resources = merge_lookup_resources(metadata.resources, merged_patch)
+    if resources == metadata.resources:
+        return
+    await store.save_workflow_metadata(
+        deps.user_id,
+        workflow_id,
+        input_schema=metadata.input_schema,
+        resources=resources,
+    )
+
+
 def base_instructions() -> str:
     """System prompt, platform profile, and authoritative runtime configuration."""
 
@@ -378,27 +462,26 @@ def base_instructions() -> str:
 
 
 def _validate_evidence_gated_output(deps: AgentDeps, output: str) -> str:
-    """Bound success language without re-entering the agent loop while waiting."""
+    """Replace unsupported claims without exposing an internal correction turn."""
 
     if not claim_exceeds_evidence(output, deps.claim_evidence):
         return output
     log.warning(
         "agent_claim_exceeds_evidence",
         evidence_outcomes=[item.get("outcome") for item in deps.claim_evidence],
-        attempt=deps.claim_validation_failures + 1,
+        resolution="deterministic_replacement",
         awaiting_user_input=deps.awaiting_user_input,
     )
     if deps.awaiting_user_input:
         # The persisted attachment is the single source of truth. Retrying the
         # model can issue unrelated tools and make one approval look like two.
         return deps.awaiting_user_input_summary or _AWAITING_INPUT_SUMMARY
-    if deps.claim_validation_failures == 0:
-        deps.claim_validation_failures += 1
-        raise ModelRetry(
-            "Your response claims a workflow ran, sent, or updated external data beyond the "
-            "available tool evidence. Inspect/execute the exact workflow and report only the "
-            "claimable_outcome returned by the tool."
-        )
+    # A ModelRetry is deliberately not used here. Pydantic AI exposes validator
+    # retry feedback to the model as another request; models can mistake that
+    # internal critic for a user correction ("Haklısınız..."), while the first
+    # draft may already have streamed. The sentence stream gate and this final
+    # validator share the same deterministic policy, so the safe evidence
+    # summary is both the visible and persisted terminal answer.
     return safe_evidence_summary(deps.claim_evidence)
 
 
@@ -410,8 +493,8 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         deps_type=AgentDeps,
         output_type=str,
         instructions=base_instructions(),
-        # Headroom: validation ModelRetry + the bounded sandbox test ModelRetry
-        # (real bound: workflow_test_attempts, max 2) must not trip this limit.
+        # Headroom for bounded sandbox/build ModelRetry loops. Final claim
+        # validation is deterministic and does not re-enter the model.
         retries=4,
         tool_timeout=60.0,
     )
@@ -463,16 +546,91 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         return schema
 
     @agent.tool
-    async def find_workflow_template(
-        ctx: RunContext[AgentDeps], description: str
+    async def search_workflow_cards(
+        ctx: RunContext[AgentDeps],
+        query: str,
+        limit: int = 10,
+        services: list[str] | None = None,
+        capabilities: list[str] | None = None,
+        risk_level: str | None = None,
     ) -> dict[str, Any]:
-        """Find existing n8n workflow templates similar to the user's request."""
+        """Search curated workflow cards for reusable topology and invariants."""
 
-        await ctx.deps.emit_tool_call("find_workflow_template")
-        results = registry.find_templates(description)
+        await ctx.deps.emit_tool_call("search_workflow_cards")
+        safe_limit = max(1, min(limit, 10))
+        results = registry_search_workflow_cards(
+            query,
+            limit=safe_limit,
+            services=services,
+            capabilities=capabilities,
+            risk_level=risk_level,
+        )
         if not results:
-            return {"templates": [], "hint": "No matching templates found. Build from scratch."}
-        return {"templates": results}
+            return {"cards": [], "hint": "No matching workflow cards found. Build from scratch."}
+        return {"cards": results, "limit": safe_limit}
+
+    @agent.tool
+    async def get_workflow_card(ctx: RunContext[AgentDeps], card_id: str) -> dict[str, Any]:
+        """Get one curated workflow card with its topology, constraints, and invariants."""
+
+        await ctx.deps.emit_tool_call("get_workflow_card")
+        selected_cards = _lookup_state_bucket(ctx.deps, "_workflow_card_selections")
+        selected_ids = {str(item.get("card_id") or "") for item in selected_cards}
+        if str(card_id) not in selected_ids and len(selected_ids) >= 3:
+            return {
+                "error": (
+                    "Workflow-card detail budget exhausted. Select and adapt from the "
+                    "three cards already inspected."
+                ),
+                "selectedCardIds": sorted(selected_ids),
+            }
+        card = registry_get_workflow_card(card_id)
+        if not card:
+            return {"error": f"Workflow card '{card_id}' was not found."}
+        _remember_lookup_entry(
+            ctx.deps,
+            "_workflow_card_selections",
+            summarize_workflow_card(card),
+        )
+        return card
+
+    @agent.tool
+    async def get_node_contract(
+        ctx: RunContext[AgentDeps],
+        node_type: str,
+        type_version: int | float | None = None,
+        resource: str | None = None,
+        operation: str | None = None,
+    ) -> dict[str, Any]:
+        """Get a resource/operation-specific node contract when generic schema is insufficient."""
+
+        await ctx.deps.emit_tool_call("get_node_contract")
+        contract = registry_get_node_contract(
+            node_type,
+            type_version=type_version,
+            resource=resource,
+            operation=operation,
+        )
+        if not contract:
+            return {
+                "error": (
+                    f"No dynamic contract found for '{node_type}'"
+                    f" resource={resource or '-'} operation={operation or '-'}."
+                )
+            }
+        _remember_lookup_entry(
+            ctx.deps,
+            "_workflow_contract_selections",
+            summarize_node_contract_selection(
+                node_name=node_type,
+                node_type=node_type,
+                type_version=type_version,
+                resource=resource,
+                operation=operation,
+                contract=contract,
+            ),
+        )
+        return contract
 
     @agent.tool
     async def run_platform_action(
@@ -616,16 +774,21 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
 
         try:
             existing = await _dedup_existing_workflow(existing_id)
+            requested_connections = connections or None
             (
                 validated_nodes,
                 validated_connections,
                 runtime_schema,
-                requested_connections,
-            ) = _validated_create_or_dedup_workflow(
+                lookup_patch,
+            ) = await _validated_runtime_workflow_with_dynamic_contracts(
+                ctx.deps.user_id,
                 nodes,
-                connections,
+                requested_connections,
                 input_schema,
-                existing,
+                fallback_connections=(
+                    existing.get("connections", {}) if existing is not None else None
+                ),
+                infer_missing_connections=requested_connections is not None or existing is None,
             )
             node_dicts = dump_workflow_nodes(validated_nodes)
             if existing_id and existing is not None:
@@ -675,6 +838,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             input_schema_payload=_input_schema_payload(runtime_schema),
             output_schema=output_schema,
         )
+        await _save_workflow_lookup_metadata(ctx.deps, workflow.id, lookup_patch)
 
         await ctx.deps.emit_attachment(
             WorkflowPreviewAttachment(
@@ -742,7 +906,13 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
 
         requested_connections = connections or None
         existing_connections = existing_workflow.get("connections")
-        validated_nodes, validated_connections, runtime_schema = _validated_runtime_workflow(
+        (
+            validated_nodes,
+            validated_connections,
+            runtime_schema,
+            lookup_patch,
+        ) = await _validated_runtime_workflow_with_dynamic_contracts(
+            ctx.deps.user_id,
             nodes,
             requested_connections,
             input_schema,
@@ -774,6 +944,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             input_schema_payload=_input_schema_payload(runtime_schema),
             output_schema=output_schema,
         )
+        await _save_workflow_lookup_metadata(ctx.deps, workflow.id, lookup_patch)
 
         await ctx.deps.emit_attachment(
             WorkflowPreviewAttachment(

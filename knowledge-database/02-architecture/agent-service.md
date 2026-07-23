@@ -760,8 +760,12 @@ ortak assurance katmani eklendi:
   `request_user_input` ile kullanici onayi bekler; sonraki turda yalniz gercek
   tek-kullanimlik token ile execution'a gecebilir.
 - AgentDeps evidence ledger'i create/sandbox/run/inspect kanitini claim
-  seviyesinde tutar. Output validator kaniti asan basari iddiasini once retry
-  eder, tekrarinda deterministic safe summary kullanir. `action_verified`,
+  seviyesinde tutar. Output validator kaniti asan basari iddiasinda modele
+  `ModelRetry` gondermez; cumle stream gate ile ayni deterministic policy'yi
+  kullanarak dogrudan safe summary dondurur. Boylece dahili validator
+  elestirisinin model tarafindan kullanici duzeltmesi gibi yorumlanmasi
+  (`Haklisiniz...`) ve reddedilen ara taslagin stream/persist edilmesi engellenir.
+  `action_verified`,
   partial contract coverage altinda node-specific runtime effect'i ayri tutar:
   Gmail send sonucu non-empty message `id` ve `SENT` etiketi tasiyorsa agent
   "mail gonderildi" diyebilir, fakat `run_verified` olmadan "tum workflow
@@ -808,6 +812,23 @@ ortak assurance katmani eklendi:
   tasir. Gmail probe ayrica `emailType` kaydeder; formatted digest/newsletter
   niyetinde text/ham Markdown ile rendered HTML uyusmazligi judge tarafindan
   reddedilir.
+- IF v2+ node'lari n8n'e yazilmadan once canonical condition shape'e zorlanir:
+  dolu `conditions.conditions` listesi ve her rule icin object
+  `operator={type, operation}` gerekir; legacy/string operator ModelRetry ile
+  reddedilir. Static assurance ayrica side-effect parametrelerinde dogrudan
+  non-trigger predecessor icin `.first()` referansini blocking finding yapar;
+  direct predecessor current item olarak `$json` ile okunmalidir. Sandbox,
+  basit string `equals` IF'lerde branch
+  output'unu predicate ile uzlastirir; celiski real side-effect onayini kapatir.
+- Ayni fail-closed condition shape kontrolu `n8n-nodes-base.filter` v2+ icin de
+  uygulanir. Tek-yollu satir elemede system prompt `Filter` node'unu IF/Code'a
+  tercih eder. Code v2 `language` verilirse yalniz `javaScript|python|pythonNative`
+  kabul edilir; JavaScript default'unda `jsCode` dolu olmak zorundadir. Boylece
+  `language="javascript"` nedeniyle n8n runtime'inda `Parameter: jsCode` ile
+  patlayan workflow n8n'e yazilmadan `ModelRetry` alir.
+  Condition rule'lari ayrica dolu `leftValue` ister; binary operator'larda
+  `rightValue` zorunludur, `isEmpty/isNotEmpty` gibi unary operator'lar bu sag
+  operand zorunlulugundan muaftir.
 
 Rollout `CONDUUT_WORKFLOW_ASSURANCE_MODE` ile `observe|hybrid|enforce` olarak
 yonetilir; varsayilan `hybrid`'dir. Dashboard single/batch sonucu raw n8n
@@ -815,3 +836,48 @@ status yerine functional status ile renklendirir ve execution evidence'ini
 Runs sayfasina baglar. n8n request debug loglari workflow/runtime payload
 degerlerini yazmaz; yalniz payload key'leri, node type/count, connection count
 ve row count gibi PII-safe teknik sekil ozeti tutulur.
+
+## Assurance V2 ve Card Readiness (2026-07-23)
+
+[[adr-0020-workflow-node-cards-assurance-v2]] su runtime sinirlarini ekler:
+
+- Startup `workflow_cards.jsonl`, `node_cards.jsonl`, `retrieval.sqlite` ve
+  `registry_manifest.json` hash/version uyumunu kontrol eder.
+  `CONDUUT_WORKFLOW_CARD_RETRIEVAL_MODE=auto` production'da enforce, dev'de
+  observe olur. Enforce eksik/uyumsuz artifact'te fail eder; observe legacy
+  registry'ye warning ile duser. `/health` card readiness durumunu gosterir.
+- Registry data path'i deployment baglamina gore cozulur: Docker image'inda
+  `/app/data` (`apps/agent/data`), repo icinden local calismada ise
+  `packages/n8n-registry/data` kullanilir. Boylece local agent generated
+  card/index corpus'unu yanlislikla bos `apps/agent/data` altinda aramaz.
+  Health/readiness detayi secilen `dataDir` yolunu da raporlar.
+- Compose n8n default image'i ve agent'in bekledigi schema surumu ayni
+  `CONDUUT_N8N_VERSION` (default `1.121.3`) degerine pinlidir. Docker agent
+  runtime'inda provider factory'nin Groq adapter import'u icin `groq`
+  dependency'si image'a acikca kurulur; registry startup'i provider import
+  hatasi nedeniyle atlanmaz.
+- Build pipeline dynamic contract resolution'dan sonra final validation yapar.
+  Managed Sheets header okunamazsa veya `columns.value/matchingColumns` live
+  header ile uyusmazsa write workflow n8n'e yazilmaz. Exact Gmail/Sheets
+  side-effect contract'i yoksa fail-closed olur.
+- `OracleContract` fingerprint, node contract hash, action/write-back rolleri,
+  expected effect, identity, cardinality, typed postcondition, coverage ve
+  claim scope'u tek yerde tasir. Sandbox preview ve execution assessment bu
+  contract'i kullanir.
+- Sandbox ledger'i typed `ProbeEvidence`'dir. Full contract-covered yolda LLM
+  judge success otoritesi degildir. Basit Filter/IF status-loop projected ikinci
+  turda `0/0/0` kanitlamalidir.
+- Execution `workflowData` snapshot'i olmadan whole-run verified uretemez.
+  Gmail receipt her output item icin sayilir. Sheets write-back bounded
+  `read_range` ile identity/deger bazinda tekrar okunur; bu gecmeden en fazla
+  effect-scoped `action_verified` olur. Write node kolon degeri dinamik n8n
+  expression'i ise (ornegin `={{ $('IF').item.json.record_id }}`) remote
+  karsilastirmadaki beklenen deger immutable write-node execution output'undan
+  alinir; expression metni literal kimlik olarak aranmaz. Duz string sabitler
+  (`Evet` gibi) yine configured postcondition olarak korunur.
+- Firestore `execution_evidence` kaydi `executionId + evidenceHash` document
+  anahtariyla append-only ve dedupe'dir. Raw execution/PII saklanmaz; bounded
+  assessment, counts, effect/rule/claim state ve contract hash'i saklanir.
+- Partial gercek side effect ilk kosuda auto-retry/compensation'i durdurur ve
+  reconciliation icin acik onay ister. Runner cümle bazli stream claim gate ile
+  kanitsiz basari cümlesini token yayinlanmadan degistirir.

@@ -17,7 +17,9 @@ TOOL_REPLAY_SAFETY: dict[str, ReplaySafety] = {
     # Registry and n8n reads.
     "search_n8n_nodes": ReplaySafety.READ_ONLY,
     "get_node_schema": ReplaySafety.READ_ONLY,
-    "find_workflow_template": ReplaySafety.READ_ONLY,
+    "search_workflow_cards": ReplaySafety.READ_ONLY,
+    "get_workflow_card": ReplaySafety.READ_ONLY,
+    "get_node_contract": ReplaySafety.READ_ONLY,
     "list_workflows": ReplaySafety.READ_ONLY,
     "get_workflow": ReplaySafety.READ_ONLY,
     "list_executions": ReplaySafety.READ_ONLY,

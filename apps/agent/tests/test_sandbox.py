@@ -599,7 +599,173 @@ async def test_evaluate_sandbox_run_allows_real_business_output(monkeypatch):
     assert result.passed is True
     assert result.status == "passed"
     assert result.action_count == 1
-    assert judge_called["called"] is True
+    assert judge_called["called"] is False
+
+
+@pytest.mark.asyncio
+async def test_evaluate_sandbox_run_blocks_simple_if_branch_contradiction(monkeypatch):
+    detail = {
+        "id": "exec-if-1",
+        "status": "success",
+        "finished": True,
+        "workflowId": "clone-1",
+        "data": {
+            "resultData": {
+                "runData": {
+                    "Filter": [
+                        {
+                            "data": {
+                                "main": [
+                                    [{"json": {"status": "sent", "email": "person@example.com"}}],
+                                    [],
+                                ]
+                            }
+                        }
+                    ],
+                    "Send": [
+                        {
+                            "data": {
+                                "main": [
+                                    [
+                                        {
+                                            "json": {
+                                                "__conduut_probe": "gmail_send",
+                                                "__conduut_probe_target": "person@example.com",
+                                                "__conduut_probe_subject": "Daily digest",
+                                                "__conduut_probe_message": "Hello there",
+                                            }
+                                        }
+                                    ]
+                                ]
+                            }
+                        }
+                    ],
+                }
+            }
+        },
+    }
+    clone_workflow = {
+        "nodes": [
+            {
+                "name": "Filter",
+                "type": "n8n-nodes-base.if",
+                "parameters": {
+                    "conditions": {
+                        "conditions": [
+                            {
+                                "leftValue": "={{ $json.status }}",
+                                "operator": {"type": "string", "operation": "equals"},
+                                "rightValue": "pending",
+                            }
+                        ]
+                    }
+                },
+            },
+            {"name": "Send", "type": "n8n-nodes-base.gmail", "parameters": {"operation": "send"}},
+        ],
+        "connections": {"Filter": {"main": [[{"node": "Send", "type": "main", "index": 0}]]}},
+    }
+    probes = [
+        sandbox.ActionProbe(
+            name="Send",
+            kind="gmail_send",
+            covered=True,
+            original_type="n8n-nodes-base.gmail",
+        )
+    ]
+    judge_called = {"called": False}
+
+    async def fake_judge(_intent, _records):
+        judge_called["called"] = True
+        return JudgeVerdict(ok=True)
+
+    monkeypatch.setattr(sandbox, "_run_judge", fake_judge)
+    result = await _evaluate_sandbox_run(detail, clone_workflow, probes, "Send digest")
+
+    assert result.passed is False
+    assert any("contradicts its simple equals predicate" in finding for finding in result.findings)
+    assert judge_called["called"] is False
+
+
+def test_projected_status_loop_rerun_requires_writeback_to_flip_filter_value():
+    workflow = {
+        "nodes": [
+            {
+                "name": "Filter",
+                "type": "n8n-nodes-base.filter",
+                "parameters": {
+                    "conditions": {
+                        "conditions": [
+                            {
+                                "leftValue": "={{ $json.status }}",
+                                "operator": {"type": "string", "operation": "equals"},
+                                "rightValue": "Hayır",
+                            }
+                        ]
+                    }
+                },
+            }
+        ]
+    }
+    records = [
+        {"kind": "gmail_send", "node": "Send"},
+        {
+            "kind": "sheets_update",
+            "node": "Update Status",
+            "values": {"email": "lead@example.com", "status": "Evet"},
+        },
+    ]
+
+    detected, verified = sandbox._projected_status_loop_rerun(
+        workflow,
+        records,
+        action_count=1,
+        writeback_count=1,
+    )
+
+    assert detected is True
+    assert verified is True
+
+    records[1]["values"]["status"] = "Hayır"
+    detected, verified = sandbox._projected_status_loop_rerun(
+        workflow,
+        records,
+        action_count=1,
+        writeback_count=1,
+    )
+    assert detected is True
+    assert verified is False
+
+
+def test_simple_if_predicate_audit_skips_dynamic_right_value():
+    workflow = {
+        "nodes": [
+            {
+                "name": "Filter",
+                "type": "n8n-nodes-base.if",
+                "parameters": {
+                    "conditions": {
+                        "conditions": [
+                            {
+                                "leftValue": "={{ $json.status }}",
+                                "operator": {"type": "string", "operation": "equals"},
+                                "rightValue": "={{ $('Config').first().json.status }}",
+                            }
+                        ]
+                    }
+                },
+            }
+        ]
+    }
+    detail = {
+        "data": {
+            "resultData": {
+                "runData": {"Filter": [{"data": {"main": [[{"json": {"status": "pending"}}], []]}}]}
+            }
+        }
+    }
+
+    assert sandbox._simple_if_predicate_findings(detail, workflow) == []
 
 
 def test_sheets_append_probe_records_a_nonempty_row():

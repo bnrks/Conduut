@@ -18,9 +18,9 @@ import structlog
 from pydantic import BaseModel
 
 from src import n8n_client
-from src.agent.assurance import workflow_fingerprint
+from src.agent.assurance import build_oracle_contract, workflow_fingerprint
 from src.agent.sandbox_nodes import ActionProbe, replace_action_nodes_with_probes
-from src.agent.schemas import WorkflowInputField
+from src.agent.schemas import OracleContract, Postcondition, ProbeEvidence, WorkflowInputField
 from src.agent.tools.common import _preview_value
 from src.agent.tools.constants import _MANUAL_TRIGGER_TYPE, _WEBHOOK_TRIGGER_TYPE
 from src.agent.tools.execution import _summarize_execution
@@ -88,6 +88,28 @@ _STRONG_PLACEHOLDER_LINE = re.compile(
 _UNRESOLVED_TEMPLATE_INTERPOLATION = re.compile(r"\{\{[^{}]+\}\}")
 _RAW_N8N_EXPRESSION = re.compile(
     r"^\s*=?\s*(?:\$json(?:\b|[.\[])|\$\([^)]+\)(?:\.|\b|\[)).*$", re.IGNORECASE
+)
+_SIMPLE_JSON_FIELD_EXPR = re.compile(
+    r"""
+    ^\s*
+    (?:
+        =\s*\{\{\s*(?P<braced>\$json(?:\s*(?:\.|\?\.)\s*[A-Za-z_][A-Za-z0-9_]*|\s*\[\s*['"][^'"]+['"]\s*\]))\s*\}\}|
+        (?P<raw>\$json(?:\s*(?:\.|\?\.)\s*[A-Za-z_][A-Za-z0-9_]*|\s*\[\s*['"][^'"]+['"]\s*\]))
+    )
+    \s*$
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_JSON_FIELD_SUFFIX = re.compile(
+    r"""
+    ^\$json
+    (?:
+        \s*(?:\.|\?\.)\s*(?P<dot>[A-Za-z_][A-Za-z0-9_]*)|
+        \s*\[\s*['"](?P<bracket>[^'"]+)['"]\s*\]
+    )
+    $
+    """,
+    re.IGNORECASE | re.VERBOSE,
 )
 
 
@@ -178,6 +200,29 @@ def _node_output_items(run_data: dict[str, Any], node_name: str) -> list[Any]:
     return items
 
 
+def _node_output_items_for_index(
+    run_data: dict[str, Any], node_name: str, output_index: int
+) -> list[Any]:
+    runs = run_data.get(node_name)
+    if not isinstance(runs, list) or not runs:
+        return []
+    latest = runs[-1] if isinstance(runs[-1], dict) else {}
+    data = latest.get("data") if isinstance(latest, dict) else None
+    main = data.get("main") if isinstance(data, dict) else None
+    if not isinstance(main, list) or output_index >= len(main):
+        return []
+    output = main[output_index]
+    if not isinstance(output, list):
+        return []
+    items: list[Any] = []
+    for item in output:
+        if isinstance(item, dict) and "json" in item:
+            items.append(item.get("json"))
+        else:
+            items.append(item)
+    return items
+
+
 def _iter_main_groups(outputs: Any):
     main = outputs.get("main") if isinstance(outputs, dict) else None
     if isinstance(main, list):
@@ -252,6 +297,11 @@ def _probe_records(detail: dict[str, Any], probes: list[ActionProbe]) -> list[di
                         index += 1
                     record["matching_columns"] = columns
                     record["matching_values"] = values
+                    record["values"] = {
+                        str(key): value
+                        for key, value in item.items()
+                        if not str(key).startswith("__conduut_probe")
+                    }
                 elif payload == "sheets_append":
                     raw_columns = item.get("__conduut_probe_columns")
                     try:
@@ -338,6 +388,43 @@ def _probe_findings(records: list[dict[str, Any]], probes: list[ActionProbe]) ->
             f"({action_count} action, {writeback_count} write-back)."
         )
     return findings
+
+
+def _probe_evidence(
+    records: list[dict[str, Any]], probes: list[ActionProbe]
+) -> list[ProbeEvidence]:
+    evidence: list[ProbeEvidence] = []
+    probe_lookup = {probe.name: probe for probe in probes}
+    for record in records:
+        node_name = str(record.get("node") or "")
+        probe = probe_lookup.get(node_name)
+        kind = str(record.get("kind") or "")
+        values = record.get("values") if isinstance(record.get("values"), dict) else {}
+        matching_values = (
+            record.get("matching_values") if isinstance(record.get("matching_values"), dict) else {}
+        )
+        evidence.append(
+            ProbeEvidence(
+                nodeName=node_name,
+                kind=kind,
+                covered=probe.covered if probe else bool(record.get("covered")),
+                target=_mask_target(record.get("target")) if kind == "gmail_send" else None,
+                subject=str(record.get("subject") or "")[:160] if kind == "gmail_send" else None,
+                columns=list(record.get("columns") or []),
+                matchingColumns=list(record.get("matching_columns") or []),
+                itemCount=1,
+                rowEmpty=_items_are_empty([values]) if kind == "sheets_append" else None,
+                identityMissing=(
+                    not bool(record.get("matching_columns")) if kind == "sheets_update" else None
+                ),
+                identityEmpty=(
+                    any(not _non_blank(value) for value in matching_values.values())
+                    if kind == "sheets_update" and matching_values
+                    else None
+                ),
+            )
+        )
+    return evidence
 
 
 def _looks_like_placeholder_business_output(value: Any) -> bool:
@@ -567,6 +654,145 @@ def _preview_actions(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return preview
 
 
+def _simple_field_reference(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    match = _SIMPLE_JSON_FIELD_EXPR.match(value.strip())
+    if match is None:
+        return None
+    expression = (match.group("braced") or match.group("raw") or "").strip()
+    suffix = _JSON_FIELD_SUFFIX.match(expression)
+    if suffix is None:
+        return None
+    return (suffix.group("dot") or suffix.group("bracket") or "").strip() or None
+
+
+def _simple_if_equals_rule(node: dict[str, Any]) -> tuple[str, str, bool] | None:
+    if str(node.get("type") or "") not in {
+        "n8n-nodes-base.if",
+        "n8n-nodes-base.filter",
+    }:
+        return None
+    parameters = node.get("parameters")
+    conditions = parameters.get("conditions") if isinstance(parameters, dict) else None
+    rules = conditions.get("conditions") if isinstance(conditions, dict) else None
+    if not isinstance(rules, list) or len(rules) != 1:
+        return None
+    rule = rules[0]
+    if not isinstance(rule, dict):
+        return None
+    operator = rule.get("operator")
+    if not isinstance(operator, dict):
+        return None
+    if (
+        str(operator.get("type") or "").strip().lower() != "string"
+        or str(operator.get("operation") or "").strip().lower() != "equals"
+    ):
+        return None
+    field = _simple_field_reference(rule.get("leftValue"))
+    if not field:
+        return None
+    expected = rule.get("rightValue")
+    if not isinstance(expected, str):
+        return None
+    if "{{" in expected or _RAW_N8N_EXPRESSION.fullmatch(expected):
+        return None
+    options = conditions.get("options") if isinstance(conditions.get("options"), dict) else {}
+    case_sensitive = options.get("caseSensitive") is not False
+    return field, expected, case_sensitive
+
+
+def _string_value_matches(actual: Any, expected: str, *, case_sensitive: bool) -> bool | None:
+    if actual is None:
+        return False
+    if not isinstance(actual, str):
+        return None
+    left = actual
+    right = expected
+    if not case_sensitive:
+        left = left.casefold()
+        right = right.casefold()
+    return left == right
+
+
+def _simple_if_predicate_findings(
+    detail: dict[str, Any], clone_workflow: dict[str, Any]
+) -> list[str]:
+    run_data = (((detail.get("data") or {}).get("resultData") or {}).get("runData")) or {}
+    findings: list[str] = []
+    for node in clone_workflow.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        rule = _simple_if_equals_rule(node)
+        if rule is None:
+            continue
+        field, expected, case_sensitive = rule
+        node_name = str(node.get("name") or "")
+        true_items = _node_output_items_for_index(run_data, node_name, 0)
+        false_items = _node_output_items_for_index(run_data, node_name, 1)
+        true_results = [
+            _string_value_matches(item.get(field), expected, case_sensitive=case_sensitive)
+            for item in true_items
+            if isinstance(item, dict)
+        ]
+        false_results = [
+            _string_value_matches(item.get(field), expected, case_sensitive=case_sensitive)
+            for item in false_items
+            if isinstance(item, dict)
+        ]
+        true_contradiction = any(result is False for result in true_results)
+        false_contradiction = any(result is True for result in false_results)
+        if true_contradiction or false_contradiction:
+            findings.append(
+                f"IF node '{node_name}' produced branch output that contradicts its simple "
+                f"equals predicate on $json.{field}."
+            )
+    return findings
+
+
+def _projected_status_loop_rerun(
+    clone_workflow: dict[str, Any],
+    records: list[dict[str, Any]],
+    *,
+    action_count: int,
+    writeback_count: int,
+) -> tuple[bool, bool]:
+    """Return (status_loop_detected, projected_no_action_verified)."""
+
+    rules = [
+        rule
+        for node in clone_workflow.get("nodes") or []
+        if isinstance(node, dict)
+        for rule in [_simple_if_equals_rule(node)]
+        if rule is not None
+    ]
+    writebacks = [record for record in records if record.get("kind") == "sheets_update"]
+    if not rules or not writebacks:
+        return False, False
+    relevant = False
+    for field_name, expected, case_sensitive in rules:
+        changed_values: list[Any] = []
+        for record in writebacks:
+            values = record.get("values")
+            if isinstance(values, dict) and field_name in values:
+                changed_values.append(values.get(field_name))
+        if not changed_values:
+            continue
+        relevant = True
+        if any(
+            _string_value_matches(value, expected, case_sensitive=case_sensitive) is not False
+            for value in changed_values
+        ):
+            return True, False
+    verified = (
+        relevant
+        and action_count > 0
+        and action_count == writeback_count
+        and len(writebacks) == writeback_count
+    )
+    return relevant, verified
+
+
 def _check_empty_outputs(
     detail: dict[str, Any], clone_workflow: dict[str, Any], neutralized: list[str]
 ) -> list[str]:
@@ -679,6 +905,8 @@ class SandboxTestResult:
     skipped: bool = False
     status: str = "needs_attention"
     coverage: str = "none"
+    oracle: OracleContract | None = None
+    probe_evidence: list[ProbeEvidence] = field(default_factory=list)
     findings: list[str] = field(default_factory=list)
     failed_node: str | None = None
     empty_fields: list[str] = field(default_factory=list)
@@ -687,6 +915,9 @@ class SandboxTestResult:
     eligible_count: int | None = None
     action_count: int | None = None
     writeback_count: int | None = None
+    projected_second_run_eligible_count: int | None = None
+    projected_second_run_action_count: int | None = None
+    projected_second_run_writeback_count: int | None = None
     preview_actions: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -729,12 +960,14 @@ def _log_sandbox_result(workflow: dict[str, Any], result: SandboxTestResult) -> 
 async def _evaluate_sandbox_run(
     detail: dict[str, Any], clone_workflow: dict[str, Any], probes: list[ActionProbe], intent: str
 ) -> SandboxTestResult:
+    oracle = build_oracle_contract(clone_workflow, context_source="exact")
     summary = _summarize_execution(detail, workflow=clone_workflow)
     if summary.status in {"error", "failed"} or summary.error:
         return SandboxTestResult(
             passed=False,
             status="needs_attention",
             coverage="full" if all(probe.covered for probe in probes) else "partial",
+            oracle=oracle,
             findings=[summary.error or "Workflow execution failed."],
             failed_node=summary.failedNode,
             execution_id=summary.executionId,
@@ -747,6 +980,7 @@ async def _evaluate_sandbox_run(
             passed=False,
             status="needs_attention",
             coverage="full" if all(probe.covered for probe in probes) else "partial",
+            oracle=oracle,
             findings=empty,
             empty_fields=empty,
             execution_id=summary.executionId,
@@ -758,24 +992,56 @@ async def _evaluate_sandbox_run(
     # and no upstream was flagged empty above, so the data path works: pass.
     if not probes:
         return SandboxTestResult(
-            passed=True, status="passed", coverage="full", execution_id=summary.executionId
+            passed=True,
+            status="passed",
+            coverage="full",
+            oracle=oracle,
+            execution_id=summary.executionId,
         )
 
     records = _probe_records(detail, probes)
+    probe_evidence = _probe_evidence(records, probes)
     deterministic_findings = [
         *_probe_findings(records, probes),
         *_identity_preflight_findings(detail, clone_workflow, records, probes),
+        *_simple_if_predicate_findings(detail, clone_workflow),
         *_upstream_semantic_findings(detail, clone_workflow, probes),
     ]
     action_count = sum(1 for item in records if item.get("kind") in {"gmail_send", "sheets_append"})
     writeback_count = sum(1 for item in records if item.get("kind") == "sheets_update")
     eligible_count = max(action_count, writeback_count)
+    status_loop, projected_no_action = _projected_status_loop_rerun(
+        clone_workflow,
+        records,
+        action_count=action_count,
+        writeback_count=writeback_count,
+    )
+    if status_loop:
+        oracle = oracle.model_copy(
+            update={
+                "expectedPostconditions": [
+                    *oracle.expectedPostconditions,
+                    Postcondition(
+                        code="rerun_no_action",
+                        description="Projected second run produces no action or write-back",
+                        status="verified" if projected_no_action else "failed",
+                    ),
+                ]
+            }
+        )
+        if not projected_no_action:
+            deterministic_findings.append(
+                "Projected second-run idempotency failed: the write-back does not make "
+                "the filter predicate ineligible."
+            )
     coverage = "full" if all(probe.covered for probe in probes) else "partial"
     if deterministic_findings:
         return SandboxTestResult(
             passed=False,
             status="needs_attention",
             coverage=coverage,
+            oracle=oracle,
+            probe_evidence=probe_evidence,
             findings=deterministic_findings,
             execution_id=summary.executionId,
             eligible_count=eligible_count,
@@ -788,6 +1054,8 @@ async def _evaluate_sandbox_run(
             passed=True,
             status="no_action",
             coverage="full",
+            oracle=oracle,
+            probe_evidence=[],
             execution_id=summary.executionId,
             eligible_count=0,
             action_count=0,
@@ -799,22 +1067,9 @@ async def _evaluate_sandbox_run(
             passed=True,
             status="partial_coverage",
             coverage="partial",
+            oracle=oracle,
+            probe_evidence=probe_evidence,
             findings=["Some action nodes do not yet have deterministic sandbox contracts."],
-            execution_id=summary.executionId,
-            eligible_count=eligible_count,
-            action_count=action_count,
-            writeback_count=writeback_count,
-            preview_actions=_preview_actions(records),
-        )
-
-    verdict = await _run_judge(intent, records[:6])
-    if not verdict.ok:
-        return SandboxTestResult(
-            passed=False,
-            status="needs_attention",
-            coverage=coverage,
-            findings=[verdict.issue or "The result may not match the request."],
-            judge_issue=verdict.issue or None,
             execution_id=summary.executionId,
             eligible_count=eligible_count,
             action_count=action_count,
@@ -826,10 +1081,15 @@ async def _evaluate_sandbox_run(
         passed=True,
         status="passed",
         coverage=coverage,
+        oracle=oracle,
+        probe_evidence=probe_evidence,
         execution_id=summary.executionId,
         eligible_count=eligible_count,
         action_count=action_count,
         writeback_count=writeback_count,
+        projected_second_run_eligible_count=0 if projected_no_action else None,
+        projected_second_run_action_count=0 if projected_no_action else None,
+        projected_second_run_writeback_count=0 if projected_no_action else None,
         preview_actions=_preview_actions(records),
     )
 

@@ -73,3 +73,23 @@ def test_partial_functional_result_counts_as_execution_failure():
 
     assert stop is not None
     assert stop["success"] is False
+
+
+def test_partial_side_effect_stops_on_first_run_and_requires_reconciliation():
+    result = WorkflowRunResultData(
+        workflowId="w1",
+        status="success",
+        summary="partial",
+        functionalStatus="partial",
+        claimableOutcome="none",
+        assessment={"actionCount": 2, "writebackCount": 0, "duplicateRisk": True},
+    )
+    failures: dict[str, int] = {}
+
+    stop = execution_retry_guard(failures, "w1", result)
+
+    assert stop is not None
+    assert stop["stop_retrying"] is True
+    assert stop["reconciliation_required"] is True
+    assert stop["requires_user_approval"] is True
+    assert failures["w1"] == 1

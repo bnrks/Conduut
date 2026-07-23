@@ -8,4 +8,7 @@ client = TestClient(app)
 def test_health():
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "service": "agent"}
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["service"] == "agent"
+    assert payload["workflowCardRegistry"]["mode"] in {"observe", "hybrid", "enforce"}

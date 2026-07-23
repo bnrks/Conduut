@@ -1,5 +1,7 @@
 """Validation, repair, and runtime-input pipeline tests."""
 
+from typing import Any
+
 import pytest
 from pydantic_ai import ModelRetry
 
@@ -17,6 +19,8 @@ from src.agent.tools import (
     _workflow_with_conduut_webhook_trigger,
     _workflow_with_post_webhook_trigger,
 )
+from src.agent.tools.build_pipeline import _validated_runtime_workflow_with_dynamic_contracts
+from src.agent.tools.dynamic_contracts import merge_lookup_resources
 from src.agent.tools.factory import (
     _dedup_existing_workflow,
     _normalized_user_input_request,
@@ -165,7 +169,7 @@ def test_runtime_pipeline_repairs_compact_broken_ai_workflow(monkeypatch):
                 # webhook. bug 4: subject has {{ }} but no leading '='.
                 "sendTo": "={{ $json.body.email }}",
                 "subject": "Proposal for {{ $json.body.company }}",
-                "message": "={{ $('AI Agent').first().json.output }}",
+                "message": "={{ $json.output }}",
                 "emailType": "text",
             },
         ),
@@ -206,8 +210,8 @@ def test_runtime_pipeline_repairs_compact_broken_ai_workflow(monkeypatch):
     assert gmail.parameters["sendTo"] == "={{ $('Webhook').first().json.body.email }}"
     assert gmail.parameters["subject"].startswith("=")
     assert "$('Webhook').first().json.body.company" in gmail.parameters["subject"]
-    # The already-correct agent-output reference is left intact.
-    assert gmail.parameters["message"] == "={{ $('AI Agent').first().json.output }}"
+    # The already-correct direct-predecessor item reference is left intact.
+    assert gmail.parameters["message"] == "={{ $json.output }}"
 
     # Boilerplate filled.
     for node in validated_nodes:
@@ -509,6 +513,165 @@ def test_validated_runtime_workflow_applies_gmail_inputs_before_validation(monke
     assert gmail["parameters"]["sendTo"] == "={{$json.body.to}}"
     assert gmail["parameters"]["subject"] == "={{$json.body.subject}}"
     assert gmail["parameters"]["message"] == "={{$json.body.message}}"
+
+
+async def test_validated_runtime_workflow_with_dynamic_contracts_resolves_google_sheets_headers(
+    monkeypatch,
+):
+    schemas = {
+        "n8n-nodes-base.manualTrigger": {
+            "type": "n8n-nodes-base.manualTrigger",
+            "typeVersion": 1,
+            "isTrigger": True,
+        },
+        "n8n-nodes-base.googleSheets": {
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.7,
+            "isTrigger": False,
+        },
+    }
+    monkeypatch.setattr(
+        "src.agent.validation.default_registry.get_node_schema",
+        lambda node_type: schemas.get(node_type),
+    )
+    monkeypatch.setattr(
+        "src.agent.tools.dynamic_contracts.get_node_contract",
+        lambda *args, **kwargs: {"id": "gsheet-append-v1", "parameters": {"options": {}}},
+    )
+
+    async def fake_read_range(self, *, spreadsheet_id: str, range: str) -> dict[str, Any]:
+        assert spreadsheet_id == "sheet-doc-1"
+        assert range == "Leads!1:1"
+        return {"values": [["Email Address", "Status"]]}
+
+    monkeypatch.setattr(
+        "src.agent.tools.dynamic_contracts.SheetsClient.read_range",
+        fake_read_range,
+    )
+
+    nodes = [
+        WorkflowNode(name="Trigger", type="n8n-nodes-base.manualTrigger", parameters={}),
+        WorkflowNode(
+            name="Append Row",
+            type="n8n-nodes-base.googleSheets",
+            parameters={
+                "resource": "sheet",
+                "operation": "append",
+                "documentId": {"__rl": True, "mode": "id", "value": "sheet-doc-1"},
+                "sheetName": {"__rl": True, "mode": "name", "value": "Leads"},
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "matchingColumns": ["email_address"],
+                    "value": {
+                        "email_address": "={{ $json.email }}",
+                        "status": "pending",
+                    },
+                },
+            },
+        ),
+    ]
+
+    (
+        validated_nodes,
+        _connections,
+        _schema,
+        lookup_patch,
+    ) = await _validated_runtime_workflow_with_dynamic_contracts(
+        "user-1",
+        nodes,
+        {"Trigger": {"main": [[{"node": "Append Row", "type": "main", "index": 0}]]}},
+    )
+
+    sheets = next(node for node in validated_nodes if node.name == "Append Row")
+    columns = sheets.parameters["columns"]
+    assert columns["matchingColumns"] == ["Email Address"]
+    assert columns["value"]["Email Address"] == "={{ $json.email }}"
+    assert columns["value"]["Status"] == "pending"
+    assert [item["id"] for item in columns["schema"]] == ["Email Address", "Status"]
+    assert lookup_patch["lookup"]["node_contracts"][0]["contract_id"] == "gsheet-append-v1"
+
+
+async def test_dynamic_sheets_contract_blocks_unknown_live_header(monkeypatch):
+    monkeypatch.setattr(
+        "src.agent.tools.dynamic_contracts.get_node_contract",
+        lambda *args, **kwargs: {"contractKey": "gsheet-update-v1"},
+    )
+
+    async def fake_read_range(self, *, spreadsheet_id: str, range: str) -> dict[str, Any]:
+        return {"values": [["Email", "Status"]]}
+
+    monkeypatch.setattr(
+        "src.agent.tools.dynamic_contracts.SheetsClient.read_range",
+        fake_read_range,
+    )
+    nodes = [
+        WorkflowNode(name="Trigger", type="n8n-nodes-base.manualTrigger", parameters={}),
+        WorkflowNode(
+            name="Update Row",
+            type="n8n-nodes-base.googleSheets",
+            parameters={
+                "resource": "sheet",
+                "operation": "update",
+                "documentId": {"__rl": True, "mode": "id", "value": "sheet-doc-1"},
+                "sheetName": {"__rl": True, "mode": "name", "value": "Leads"},
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "matchingColumns": ["missing_identity"],
+                    "value": {"Status": "Evet"},
+                },
+            },
+        ),
+    ]
+
+    with pytest.raises(ModelRetry, match="do not exist in the live sheet header"):
+        await _validated_runtime_workflow_with_dynamic_contracts(
+            "user-1",
+            nodes,
+            {"Trigger": {"main": [[{"node": "Update Row", "type": "main", "index": 0}]]}},
+        )
+
+
+async def test_dynamic_side_effect_contract_fails_closed_when_unsupported(monkeypatch):
+    monkeypatch.setattr(
+        "src.agent.tools.dynamic_contracts.get_node_contract",
+        lambda *args, **kwargs: None,
+    )
+    nodes = [
+        WorkflowNode(name="Trigger", type="n8n-nodes-base.manualTrigger", parameters={}),
+        WorkflowNode(
+            name="Send Mail",
+            type="n8n-nodes-base.gmail",
+            parameters={"resource": "message", "operation": "send"},
+        ),
+    ]
+
+    with pytest.raises(ModelRetry, match="requires an exact supported node contract"):
+        await _validated_runtime_workflow_with_dynamic_contracts(
+            "user-1",
+            nodes,
+            {"Trigger": {"main": [[{"node": "Send Mail", "type": "main", "index": 0}]]}},
+        )
+
+
+def test_merge_lookup_resources_deduplicates_entries():
+    resources = merge_lookup_resources(
+        {
+            "lookup": {
+                "version": 1,
+                "workflow_cards": [{"card_id": "lead-outreach", "hash": "abc"}],
+            }
+        },
+        {
+            "lookup": {
+                "version": 1,
+                "workflow_cards": [{"card_id": "lead-outreach", "hash": "abc"}],
+                "node_contracts": [{"contract_id": "gmail-send", "hash": "def"}],
+            }
+        },
+    )
+
+    assert resources["lookup"]["workflow_cards"] == [{"card_id": "lead-outreach", "hash": "abc"}]
+    assert resources["lookup"]["node_contracts"] == [{"contract_id": "gmail-send", "hash": "def"}]
 
 
 def test_validated_workflow_input_reports_missing_required_fields():

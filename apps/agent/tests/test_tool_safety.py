@@ -7,7 +7,9 @@ from src.agent.tool_safety import (
 PUBLIC_AGENT_TOOLS = {
     "search_n8n_nodes",
     "get_node_schema",
-    "find_workflow_template",
+    "search_workflow_cards",
+    "get_workflow_card",
+    "get_node_contract",
     "run_platform_action",
     "request_user_input",
     "list_workflows",

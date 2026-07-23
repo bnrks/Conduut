@@ -3,6 +3,18 @@ import pytest
 from src import executions, n8n_client
 
 
+@pytest.fixture(autouse=True)
+def _stub_execution_context_and_store(monkeypatch):
+    async def fake_get_workflow(_workflow_id: str):
+        return {}
+
+    async def fake_save_execution_evidence(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(executions.n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(executions.store, "save_execution_evidence", fake_save_execution_evidence)
+
+
 @pytest.mark.asyncio
 async def test_list_runs_returns_stable_page_with_names_and_duration(monkeypatch):
     async def fake_page(**kwargs):
@@ -164,6 +176,89 @@ async def test_inspect_run_preserves_agent_only_output_preview(monkeypatch):
     assert result.status == "success"
     assert result.outputs[0]["nodeName"] == "Transform"
     assert result.outputs[0]["items"][0]["result"] == "agent evidence"
+
+
+@pytest.mark.asyncio
+async def test_inspect_run_uses_embedded_workflow_context_and_persists_evidence(monkeypatch):
+    captured: list[dict] = []
+
+    async def fake_detail(_execution_id: str):
+        return {
+            "id": "exec_h1",
+            "workflowId": "wf_h1",
+            "status": "success",
+            "workflowData": {
+                "id": "wf_h1",
+                "name": "H1",
+                "nodes": [
+                    {
+                        "name": "Send Email",
+                        "type": "n8n-nodes-base.gmail",
+                        "parameters": {"resource": "message", "operation": "send"},
+                    },
+                    {
+                        "name": "Update Status",
+                        "type": "n8n-nodes-base.googleSheets",
+                        "parameters": {
+                            "resource": "sheet",
+                            "operation": "update",
+                            "columns": {
+                                "mappingMode": "defineBelow",
+                                "matchingColumns": ["record_id"],
+                                "value": {"record_id": "={{ $json.record_id }}"},
+                            },
+                        },
+                    },
+                ],
+                "connections": {
+                    "Send Email": {
+                        "main": [[{"node": "Update Status", "type": "main", "index": 0}]]
+                    }
+                },
+            },
+            "data": {
+                "resultData": {
+                    "runData": {
+                        "Send Email": [
+                            {
+                                "executionStatus": "success",
+                                "data": {
+                                    "main": [
+                                        [
+                                            {"json": {"id": "m1", "labelIds": ["SENT"]}},
+                                            {"json": {"id": "m2", "labelIds": ["SENT"]}},
+                                        ]
+                                    ]
+                                },
+                            }
+                        ],
+                        "Update Status": [{"executionStatus": "success", "data": {"main": []}}],
+                    }
+                }
+            },
+        }
+
+    async def fake_save_execution_evidence(_user_id: str, envelope):
+        captured.append(envelope.model_dump(exclude_none=True))
+        return envelope
+
+    monkeypatch.setattr(executions.n8n_client, "get_execution_detail", fake_detail)
+    monkeypatch.setattr(executions.store, "save_execution_evidence", fake_save_execution_evidence)
+
+    result = await executions.inspect_run("user_1", "exec_h1")
+
+    assert result.functionalStatus == "partial"
+    assert result.claimableOutcome == "none"
+    assert result.assessment.exactContextVerified is True
+    assert result.assessment.oracle is not None
+    assert result.assessment.oracle.contextSource == "embedded"
+    assert any(
+        item.code == "successful_action_writeback" and item.status == "failed"
+        for item in result.assessment.postconditions
+    )
+    assert captured[0]["source"] == "execution_inspect"
+    assert captured[0]["functionalStatus"] == "partial"
+    assert "outputs" not in captured[0]
 
 
 @pytest.mark.asyncio

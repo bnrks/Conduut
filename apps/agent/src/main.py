@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import settings
 from src.logging_config import bind_log_context, clear_log_context, configure_logging
-from src.registry import initialize_registry
+from src.registry import initialize_registry, registry_card_status
 from src.routes import artifacts as artifacts_router
 from src.routes import chat, conversations
 from src.routes import connections as connections_router
@@ -89,4 +89,8 @@ app.include_router(workflows_router.router, prefix="/api")
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "agent"}
+    return {
+        "status": "ok",
+        "service": "agent",
+        "workflowCardRegistry": registry_card_status,
+    }

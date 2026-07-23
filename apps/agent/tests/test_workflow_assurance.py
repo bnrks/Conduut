@@ -81,8 +81,16 @@ def test_trigger_back_edge_and_main_cycle_are_blocking():
 def test_if_with_multiple_conditions_requires_explicit_combinator():
     conditions = {
         "conditions": [
-            {"leftValue": "={{ $json.status }}", "rightValue": "pending"},
-            {"leftValue": "={{ $json.sent }}", "rightValue": "no"},
+            {
+                "leftValue": "={{ $json.status }}",
+                "operator": {"type": "string", "operation": "equals"},
+                "rightValue": "pending",
+            },
+            {
+                "leftValue": "={{ $json.sent }}",
+                "operator": {"type": "string", "operation": "equals"},
+                "rightValue": "no",
+            },
         ]
     }
     missing = analyze_workflow_semantics(
@@ -116,6 +124,115 @@ def test_explicit_upstream_reference_survives_non_passthrough_gmail_boundary():
 
     assert "gmail_output_field_unavailable" not in _codes(report)
     assert "sheets_matching_key_not_live" not in _codes(report)
+
+
+def test_multi_item_ai_to_gmail_first_reference_is_blocked():
+    gmail = _node(
+        "Send Email",
+        "n8n-nodes-base.gmail",
+        {
+            "resource": "message",
+            "operation": "send",
+            "sendTo": "={{ $json.email }}",
+            "subject": "Reminder",
+            "message": "={{ $('AI Agent').first().json.output }}",
+        },
+    )
+    report = analyze_workflow_semantics(
+        [
+            _node("Webhook", "n8n-nodes-base.webhook"),
+            _node("Read Rows", "n8n-nodes-base.googleSheets", {"operation": "read"}),
+            _node("Filter", "n8n-nodes-base.if"),
+            _node("AI Agent", "@n8n/n8n-nodes-langchain.agent"),
+            gmail,
+        ],
+        _connections(
+            ("Webhook", "Read Rows"),
+            ("Read Rows", "Filter"),
+            ("Filter", "AI Agent"),
+            ("AI Agent", "Send Email"),
+        ),
+    )
+
+    assert "side_effect_direct_first_reference" in _codes(report)
+
+
+def test_all_first_references_on_side_effect_are_blocked():
+    gmail = _node(
+        "Send Email",
+        "n8n-nodes-base.gmail",
+        {
+            "resource": "message",
+            "operation": "send",
+            "sendTo": "={{ $('AI Agent').first().json.email }}",
+            "subject": "Reminder",
+            "message": "={{ $('AI Agent').first().json.output }}",
+        },
+    )
+    report = analyze_workflow_semantics(
+        [
+            _node("Webhook", "n8n-nodes-base.webhook"),
+            _node("Read Rows", "n8n-nodes-base.googleSheets", {"operation": "read"}),
+            _node("AI Agent", "@n8n/n8n-nodes-langchain.agent"),
+            gmail,
+        ],
+        _connections(
+            ("Webhook", "Read Rows"),
+            ("Read Rows", "AI Agent"),
+            ("AI Agent", "Send Email"),
+        ),
+    )
+
+    assert "side_effect_direct_first_reference" in _codes(report)
+
+
+def test_single_item_webhook_first_reference_is_not_flagged():
+    gmail = _node(
+        "Send Email",
+        "n8n-nodes-base.gmail",
+        {
+            "resource": "message",
+            "operation": "send",
+            "sendTo": "person@example.com",
+            "subject": "Reminder",
+            "message": "={{ $('Webhook').first().json.body.message }}",
+        },
+    )
+    report = analyze_workflow_semantics(
+        [_node("Webhook", "n8n-nodes-base.webhook"), gmail],
+        _connections(("Webhook", "Send Email")),
+    )
+
+    assert "side_effect_direct_first_reference" not in _codes(report)
+
+
+def test_non_direct_singleton_first_reference_is_not_blocked():
+    gmail = _node(
+        "Send Email",
+        "n8n-nodes-base.gmail",
+        {
+            "resource": "message",
+            "operation": "send",
+            "sendTo": "={{ $json.email }}",
+            "subject": "={{ $('Load Config').first().json.subject }}",
+            "message": "={{ $json.message }}",
+        },
+    )
+    report = analyze_workflow_semantics(
+        [
+            _node("Webhook", "n8n-nodes-base.webhook"),
+            _node("Load Config", "n8n-nodes-base.set"),
+            _node("Prepare Rows", "n8n-nodes-base.code"),
+            gmail,
+        ],
+        _connections(
+            ("Webhook", "Load Config"),
+            ("Load Config", "Prepare Rows"),
+            ("Prepare Rows", "Send Email"),
+        ),
+    )
+
+    assert "side_effect_direct_first_reference" not in _codes(report)
 
 
 def test_sheets_matching_key_presence_and_shadow_liveness_are_reported():
@@ -240,13 +357,33 @@ def _pipeline_if_nodes() -> list[WorkflowNode]:
             parameters={
                 "conditions": {
                     "conditions": [
-                        {"leftValue": "={{ $json.status }}", "rightValue": "pending"},
-                        {"leftValue": "={{ $json.sent }}", "rightValue": "no"},
+                        {
+                            "leftValue": "={{ $json.status }}",
+                            "operator": {"type": "string", "operation": "equals"},
+                            "rightValue": "pending",
+                        },
+                        {
+                            "leftValue": "={{ $json.sent }}",
+                            "operator": {"type": "string", "operation": "equals"},
+                            "rightValue": "no",
+                        },
                     ]
                 }
             },
         ),
     ]
+
+
+def test_build_pipeline_retries_before_n8n_on_string_if_operator():
+    nodes = _pipeline_if_nodes()
+    nodes[1].parameters["conditions"]["conditions"][0]["operator"] = "equals"
+
+    with pytest.raises(ModelRetry, match="operator must be an object"):
+        _validated_runtime_workflow(
+            nodes,
+            _connections(("Webhook", "IF")),
+            input_schema=[],
+        )
 
 
 def test_build_pipeline_retries_on_semantic_assurance_error(monkeypatch):

@@ -524,11 +524,12 @@ async def test_runner_streams_tokens_thinking_and_preserves_sse_contract(monkeyp
     thinking_text = "".join(d["text"] for e, d in events if e == "thinking")
     token_text = "".join(d["text"] for e, d in events if e == "token")
     assert thinking_text == "planning steps"
-    assert token_text == "Workflow created."
+    expected_visible_text = runner.safe_evidence_summary([])
+    assert token_text == expected_visible_text
 
-    # Persist edilen içerik akan görünür metin; düşünce KAYDEDİLMEZ.
+    # Persist edilen içerik claim gate sonrası akan görünür metin; düşünce KAYDEDİLMEZ.
     assert saved["args"][2] == "assistant"
-    assert saved["args"][3] == "Workflow created."
+    assert saved["args"][3] == expected_visible_text
     assert "planning" not in saved["args"][3]
     assert saved["kwargs"]["attachments"][0]["type"] == "workflow_preview"
 

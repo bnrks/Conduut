@@ -10,6 +10,7 @@ from src.agent.assurance.models import (
     AssuranceReport,
     FindingSeverity,
 )
+from src.agent.assurance.oracle import build_oracle_contract
 
 __all__ = [
     "AssuranceFinding",
@@ -19,6 +20,7 @@ __all__ = [
     "NodeContract",
     "OutputShape",
     "analyze_workflow_semantics",
+    "build_oracle_contract",
     "inject_schedule_identity_guards",
     "output_contract",
     "workflow_fingerprint",

@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     # Workflow assurance rollout: observe logs findings, hybrid enforces only
     # deterministic rules, enforce also blocks incomplete contract coverage.
     workflow_assurance_mode: str = "hybrid"
+    # Card retrieval readiness: auto=enforce in production, observe elsewhere.
+    workflow_card_retrieval_mode: str = "auto"
     # Fixed, cheap Gemini model used for decoupled web-search research
     # (API auth discovery). Provider-independent of the conversational tier.
     research_model: str = "gemini-2.5-flash"
@@ -50,6 +52,7 @@ class Settings(BaseSettings):
     # n8n
     n8n_url: str = "http://localhost:6180"
     n8n_api_key: str = ""
+    n8n_version: str = ""
     # User-facing schedule times are stored in this workflow timezone. Keeping
     # it explicit prevents n8n's America/New_York default from silently shifting
     # schedules when the model writes the user's local clock time.

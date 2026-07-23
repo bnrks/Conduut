@@ -12,6 +12,9 @@ from pydantic_ai import ModelRetry
 from src.agent.assurance import analyze_workflow_semantics, inject_schedule_identity_guards
 from src.agent.repair import repair_workflow
 from src.agent.schemas import WorkflowInputField, WorkflowNode, dump_workflow_nodes
+from src.agent.tools.dynamic_contracts import (
+    resolve_dynamic_node_contracts,
+)
 from src.agent.tools.runtime_inputs import (
     _apply_runtime_inputs_to_nodes,
     _infer_runtime_input_schema,
@@ -49,15 +52,61 @@ def _validated_runtime_workflow(
     fallback_connections: dict[str, Any] | None = None,
     infer_missing_connections: bool = True,
 ) -> tuple[list[WorkflowNode], dict[str, Any], list[WorkflowInputField]]:
+    node_dicts, normalized_connections, runtime_schema = _prepared_runtime_workflow(
+        nodes,
+        connections,
+        input_schema,
+        fallback_connections=fallback_connections,
+        infer_missing_connections=infer_missing_connections,
+    )
+    normalized_nodes, normalized_connections = _finalize_runtime_workflow(
+        node_dicts, normalized_connections
+    )
+    return normalized_nodes, normalized_connections, runtime_schema
+
+
+async def _validated_runtime_workflow_with_dynamic_contracts(
+    user_id: str,
+    nodes: list[WorkflowNode],
+    connections: dict[str, Any] | None,
+    input_schema: list[WorkflowInputField] | None = None,
+    *,
+    fallback_connections: dict[str, Any] | None = None,
+    infer_missing_connections: bool = True,
+) -> tuple[list[WorkflowNode], dict[str, Any], list[WorkflowInputField], dict[str, Any]]:
+    node_dicts, normalized_connections, runtime_schema = _prepared_runtime_workflow(
+        nodes,
+        connections,
+        input_schema,
+        fallback_connections=fallback_connections,
+        infer_missing_connections=infer_missing_connections,
+    )
+    resolution = await resolve_dynamic_node_contracts(user_id, node_dicts)
+    normalized_nodes, normalized_connections = _finalize_runtime_workflow(
+        node_dicts, normalized_connections
+    )
+    return (
+        normalized_nodes,
+        normalized_connections,
+        runtime_schema,
+        resolution.as_resources_patch(),
+    )
+
+
+def _prepared_runtime_workflow(
+    nodes: list[WorkflowNode],
+    connections: dict[str, Any] | None,
+    input_schema: list[WorkflowInputField] | None = None,
+    *,
+    fallback_connections: dict[str, Any] | None = None,
+    infer_missing_connections: bool = True,
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[WorkflowInputField]]:
     normalized_nodes = normalize_workflow_nodes(nodes)
     node_dicts = dump_workflow_nodes(normalized_nodes)
     runtime_schema = _normalized_input_schema(input_schema)
     if input_schema is None and not runtime_schema:
         runtime_schema = _infer_runtime_input_schema(node_dicts)
 
-    # Canonicalize connection shape/aliases, then deterministically repair the
-    # compact JSON the model wrote (boilerplate, linear wiring, AI sub-node
-    # ports, runtime-input expressions) before applying runtime inputs.
     source_connections = connections if connections is not None else fallback_connections
     normalized_connections = normalize_workflow_connections(
         source_connections or {}, normalized_nodes
@@ -73,6 +122,13 @@ def _validated_runtime_workflow(
     node_dicts, normalized_connections = inject_schedule_identity_guards(
         node_dicts, normalized_connections
     )
+    return node_dicts, normalized_connections, runtime_schema
+
+
+def _finalize_runtime_workflow(
+    node_dicts: list[dict[str, Any]],
+    normalized_connections: dict[str, Any],
+) -> tuple[list[WorkflowNode], dict[str, Any]]:
     normalized_nodes = [WorkflowNode.model_validate(node) for node in node_dicts]
     normalized_connections = normalize_workflow_connections(
         normalized_connections, normalized_nodes
@@ -81,7 +137,7 @@ def _validated_runtime_workflow(
     _normalize_webhook_response_modes(normalized_nodes, normalized_connections)
     _raise_workflow_validation_errors(normalized_nodes, normalized_connections)
     _raise_workflow_assurance_errors(normalized_nodes, normalized_connections)
-    return normalized_nodes, normalized_connections, runtime_schema
+    return normalized_nodes, normalized_connections
 
 
 def _raise_workflow_validation_errors(

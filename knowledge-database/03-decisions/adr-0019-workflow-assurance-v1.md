@@ -116,6 +116,32 @@ Assurance zinciri su sirayla calisir:
     iddiasına izin vermez. Bu sınırın canlı kaynağı M3'tür:
     [[scenario-m3-webhook-http-sheets]].
 
+15. IF v2+ koşulları side effect öncesinde fail-closed doğrulanır.
+    `parameters.conditions.conditions` dolu bir rule listesi olmalı ve her
+    rule `operator={type, operation}` nesnesi taşımalıdır. n8n'in sessizce
+    kabul edip yanlış branch'e yönlendirebildiği `operator="equals"` gibi string
+    şekiller build pipeline'da `ModelRetry` ile reddedilir.
+16. Çoklu-item akışlarında action parametrelerinin item lineage'i korunur.
+    Side-effect node'u item-scoped (`$json` / `$('Node').item`) alanlarla aynı
+    anda doğrudan non-trigger predecessor için `$('Node').first()` kullanırsa static
+    assurance bunu blocking `side_effect_direct_first_reference` finding'i sayar.
+    Böylece farklı AI çıktılarının bütün alıcılarda ilk item ile ezilmesi gerçek
+    gönderimden önce durur; singleton trigger referansları kapsam dışında kalır.
+17. Sandbox, güvenle çözülebilen tek-rule string `equals` IF koşullarında gerçek
+    branch output'unu predicate ile karşılaştırır. True branch'te eşleşmeyen veya
+    false branch'te eşleşen item görülürse side-effect preview/onay aşamasına
+    geçmeden `needs_attention` üretir. Karmaşık veya tip semantiği belirsiz
+    predicate'ler yanlış pozitif üretmemek için bu dar runtime audit'in dışındadır.
+18. Native JSON filtrelemesi agent-facing schema ve build validation'da birlikte
+    fail-closed korunur. Tek-yollu elemede `Filter` tercih edilir ve Filter v2+
+    IF ile ayni non-empty rule/operator-object kontratini tasir. Code v2'ye
+    fallback edilirse exact `language="javaScript"` ile dolu `jsCode` gerekir;
+    `javascript` gibi n8n UI display condition'ini bozan enum degerleri workflow
+    yazilmadan reddedilir. Registry IF/Filter icin canonical nested condition,
+    Code icin contextual extractor'dan dusen `jsCode` ornegini acikca dondurur.
+    Condition rule'unda `leftValue`, binary operator'larda ayrica `rightValue`
+    gerekir; unary empty/existence/boolean operator'lari sag operandsiz kalabilir.
+
 ## Rollout
 
 `CONDUUT_WORKFLOW_ASSURANCE_MODE=observe|hybrid|enforce` kullanilir; varsayilan
@@ -133,6 +159,10 @@ assessment ve kanittan yuksek claim korumasi kalir.
 - Contract katalogu ilk etapta IF, Code, Set/Edit Fields, Merge, Gmail Send ve
   Google Sheets read/update/append ailelerine odaklanir. Diger node'lar coverage'i
   `partial` yapar.
+- Runtime IF predicate audit'i V1'de yalnız tek-rule, doğrudan `$json` string
+  `equals` koşullarını kapsar; karmaşık expression, çoklu rule ve diğer operator
+  aileleri static shape validation ile korunur fakat branch semantiği replay
+  edilmez.
 
 ## Ilgili kod ve testler
 
@@ -149,3 +179,13 @@ assessment ve kanittan yuksek claim korumasi kalir.
 
 M1 fonksiyonel oracle'i ve tekrar kosusu icin bkz.
 [[scenario-m1-sheets-filter-email]].
+
+## V2 ile genisleme (2026-07-23)
+
+Bu ADR'nin static/sandbox/execution/claim zinciri korunur; correctness
+otoritesi typed shared `OracleContract`, operation-aware Node Card hash'leri,
+immutable execution evidence, Sheets read-after-write ve sentence-buffered
+stream claim gate ile genisletilmistir. Full contract-covered sandbox yolunda
+LLM judge basari karari vermez. Partial side effect sonrasi ilk real run'dan
+itibaren auto-retry kapanir. Ayrintili karar:
+[[adr-0020-workflow-node-cards-assurance-v2]].

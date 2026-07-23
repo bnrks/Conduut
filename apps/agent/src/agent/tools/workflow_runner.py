@@ -17,8 +17,9 @@ from src.agent.schemas import (
 )
 from src.agent.tools.common import _response_full, _response_preview
 from src.agent.tools.constants import _MANUAL_TRIGGER_TYPE, _WEBHOOK_TRIGGER_TYPE
-from src.agent.tools.execution import _summarize_execution
+from src.agent.tools.execution import _summarize_execution, execution_evidence_envelope
 from src.agent.tools.output_schema import _normalized_output_schema
+from src.agent.tools.read_after_write import verify_sheets_read_after_write
 from src.agent.tools.readiness import (
     analyze_workflow_readiness_payload,
     attach_unambiguous_reuse_candidates,
@@ -72,6 +73,29 @@ def execution_retry_guard(
 
     count = failures.get(workflow_id, 0) + 1
     failures[workflow_id] = count
+    partial_side_effect = bool(
+        int(result.assessment.actionCount or 0) > 0
+        and result.functionalStatus in {"partial", "needs_attention", "failed"}
+    )
+    if partial_side_effect:
+        return {
+            "success": False,
+            "workflow_id": workflow_id,
+            "status": result.status,
+            "functionalStatus": result.functionalStatus,
+            "assessment": result.assessment.model_dump(exclude_none=True),
+            "claimableOutcome": result.claimableOutcome,
+            "error": result.error,
+            "stop_retrying": True,
+            "reconciliation_required": True,
+            "requires_user_approval": True,
+            "instruction": (
+                "A real side effect already occurred, but the full workflow contract was not "
+                "verified. Do NOT call execute_workflow again, do NOT compensate directly, "
+                "and do NOT rebuild then retry automatically. Present the execution evidence "
+                "and ask for explicit approval of a reconciliation preview."
+            ),
+        }
     if count < _MAX_EXECUTION_FAILURES:
         return None
 
@@ -121,6 +145,7 @@ async def run_workflow_with_input(
         path=path,
         input_payload=validated_input,
         metadata=metadata,
+        user_id=user_id,
     )
     log.info(
         "workflow_run_finished",
@@ -223,6 +248,7 @@ async def iter_workflow_batch_with_input(
                 path=path,
                 input_payload=validated_input,
                 metadata=metadata,
+                user_id=user_id,
             )
         except Exception as exc:
             failed += 1
@@ -349,6 +375,7 @@ async def _run_prepared_webhook_workflow(
     path: str,
     input_payload: dict[str, Any],
     metadata: store.WorkflowMetadata | None,
+    user_id: str,
 ) -> WorkflowRunResultData:
     workflow_id = str(workflow.get("id") or "")
     webhook_response = await n8n_client.call_webhook(str(path), input_payload)
@@ -360,6 +387,7 @@ async def _run_prepared_webhook_workflow(
             response=response,
             full_response=full_response,
             metadata=metadata,
+            user_id=user_id,
         )
         if execution_result is not None:
             log.warning(
@@ -398,6 +426,7 @@ async def _run_prepared_webhook_workflow(
         response=response,
         full_response=full_response,
         metadata=metadata,
+        user_id=user_id,
     )
     if execution_result is None:
         log.info("workflow_run_triggered_without_execution_detail", workflow_id=workflow_id)
@@ -431,6 +460,7 @@ async def _latest_workflow_execution_result(
     response: Any,
     full_response: dict[str, Any] | None = None,
     metadata: store.WorkflowMetadata | None,
+    user_id: str,
 ) -> WorkflowRunResultData | None:
     workflow_id = str(workflow.get("id") or "")
     executions = await n8n_client.list_executions(workflow_id=workflow_id, limit=1)
@@ -448,6 +478,12 @@ async def _latest_workflow_execution_result(
         workflow=workflow,
         output_schema=output_schema,
     )
+    result = await verify_sheets_read_after_write(
+        user_id,
+        workflow=workflow,
+        execution=detail,
+        result=result,
+    )
     result.artifacts = [
         *build_gmail_workflow_artifacts(
             workflow_id=workflow_id,
@@ -461,6 +497,19 @@ async def _latest_workflow_execution_result(
             metadata=metadata,
         ),
     ]
+    try:
+        await store.save_execution_evidence(
+            user_id,
+            execution_evidence_envelope(result, source="workflow_run"),
+        )
+    except Exception as exc:
+        log.warning(
+            "execution_evidence_persist_error",
+            execution_id=result.executionId,
+            workflow_id=workflow_id,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
     return result
 
 

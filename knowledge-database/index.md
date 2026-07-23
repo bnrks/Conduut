@@ -116,6 +116,9 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
 - [[adr-0019-workflow-assurance-v1]] - Native n8n JSON uzerinde static semantic
   guard, Sandbox V2 probe'lari, functional execution assessment, preview token
   ve evidence-gated agent claim zinciri.
+- [[adr-0020-workflow-node-cards-assurance-v2]] - Sanitized community
+  Workflow Card + operation-aware Node Card retrieval, shared typed Oracle,
+  immutable execution evidence, read-after-write ve stream claim gate karari.
 
 ## Kaynak Dokumanlar
 

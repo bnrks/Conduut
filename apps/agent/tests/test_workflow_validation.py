@@ -1,5 +1,7 @@
 from typing import Any
 
+import pytest
+
 from src.agent.validation import (
     normalize_workflow_connections,
     normalize_workflow_nodes,
@@ -39,6 +41,21 @@ SCHEMAS = {
     "n8n-nodes-base.gmail": {
         "type": "n8n-nodes-base.gmail",
         "typeVersion": 2.1,
+        "isTrigger": False,
+    },
+    "n8n-nodes-base.if": {
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "isTrigger": False,
+    },
+    "n8n-nodes-base.filter": {
+        "type": "n8n-nodes-base.filter",
+        "typeVersion": 2.1,
+        "isTrigger": False,
+    },
+    "n8n-nodes-base.code": {
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
         "isTrigger": False,
     },
     "n8n-nodes-base.googleSheets": {
@@ -435,6 +452,39 @@ def _sheets_node(parameters: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _if_node(parameters: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": "if",
+        "name": "Filter",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [625, 300],
+        "parameters": parameters,
+    }
+
+
+def _filter_node(parameters: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": "filter",
+        "name": "Filter Rows",
+        "type": "n8n-nodes-base.filter",
+        "typeVersion": 2.1,
+        "position": [625, 300],
+        "parameters": parameters,
+    }
+
+
+def _code_node(parameters: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": "code",
+        "name": "Filter Code",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [625, 300],
+        "parameters": parameters,
+    }
+
+
 def test_google_sheets_update_missing_columns_fails_validation():
     # The pre-v4 shape (dataMode/values, no columns) passes structural checks but
     # n8n v4 ignores it -> the "mark as sent" write silently does nothing.
@@ -458,6 +508,272 @@ def test_google_sheets_update_missing_columns_fails_validation():
     assert "matchingColumns" in joined
     # The legacy keys are named so the model knows to drop them.
     assert "dataMode" in joined
+
+
+def test_if_v2_string_operator_fails_validation_before_n8n():
+    nodes = valid_nodes()
+    nodes.append(
+        _if_node(
+            {
+                "conditions": {
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.status }}",
+                            "operator": "equals",
+                            "rightValue": "pending",
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+    errors = validate_workflow_payload(
+        nodes,
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("operator='equals'" in error or 'operator="equals"' in error for error in errors)
+    assert any("operator must be an object" in error for error in errors)
+
+
+def test_if_v2_operator_object_passes_validation():
+    nodes = valid_nodes()
+    nodes.append(
+        _if_node(
+            {
+                "conditions": {
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.status }}",
+                            "operator": {"type": "string", "operation": "equals"},
+                            "rightValue": "pending",
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+    errors = validate_workflow_payload(
+        nodes,
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert errors == []
+
+
+def test_if_v2_empty_conditions_fail_validation():
+    nodes = valid_nodes()
+    nodes.append(_if_node({"conditions": {"conditions": []}}))
+
+    errors = validate_workflow_payload(
+        nodes,
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("requires at least one condition rule" in error for error in errors)
+
+
+def test_if_v2_empty_parameters_fail_validation():
+    nodes = valid_nodes()
+    nodes.append(_if_node({}))
+
+    errors = validate_workflow_payload(
+        nodes,
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("conditionless IF cannot safely filter items" in error for error in errors)
+
+
+def test_filter_v2_string_operator_fails_validation_before_n8n():
+    nodes = valid_nodes()
+    nodes.append(
+        _filter_node(
+            {
+                "conditions": {
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.status }}",
+                            "operator": "equals",
+                            "rightValue": "pending",
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+    errors = validate_workflow_payload(
+        nodes,
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("Filter Rows" in error and "operator='equals'" in error for error in errors)
+
+
+def test_filter_v2_operator_object_passes_validation():
+    nodes = valid_nodes()
+    nodes.append(
+        _filter_node(
+            {
+                "conditions": {
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.status }}",
+                            "operator": {"type": "string", "operation": "equals"},
+                            "rightValue": "pending",
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+    errors = validate_workflow_payload(
+        nodes,
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert errors == []
+
+
+@pytest.mark.parametrize("factory", [_if_node, _filter_node])
+def test_condition_node_v2_missing_left_operand_fails_validation(factory):
+    nodes = valid_nodes()
+    nodes.append(
+        factory(
+            {
+                "conditions": {
+                    "conditions": [
+                        {
+                            "operator": {"type": "string", "operation": "equals"},
+                            "rightValue": "pending",
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+    errors = validate_workflow_payload(
+        nodes,
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("non-empty leftValue" in error for error in errors)
+
+
+@pytest.mark.parametrize("factory", [_if_node, _filter_node])
+def test_condition_node_v2_binary_operator_missing_right_operand_fails_validation(factory):
+    nodes = valid_nodes()
+    nodes.append(
+        factory(
+            {
+                "conditions": {
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.status }}",
+                            "operator": {"type": "string", "operation": "equals"},
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+    errors = validate_workflow_payload(
+        nodes,
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("requires rightValue" in error for error in errors)
+
+
+@pytest.mark.parametrize("factory", [_if_node, _filter_node])
+def test_condition_node_v2_unary_operator_may_omit_right_operand(factory):
+    nodes = valid_nodes()
+    nodes.append(
+        factory(
+            {
+                "conditions": {
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.status }}",
+                            "operator": {"type": "string", "operation": "isNotEmpty"},
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+    errors = validate_workflow_payload(
+        nodes,
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert errors == []
+
+
+def test_code_v2_lowercase_javascript_language_fails_validation():
+    nodes = valid_nodes()
+    nodes.append(
+        _code_node(
+            {
+                "mode": "runOnceForAllItems",
+                "language": "javascript",
+                "jsCode": "return $input.all();",
+            }
+        )
+    )
+
+    errors = validate_workflow_payload(
+        nodes,
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any(
+        "language='javascript'" in error or 'language="javascript"' in error for error in errors
+    )
+    assert any("exact n8n value 'javaScript'" in error for error in errors)
+
+
+def test_code_v2_javascript_requires_non_empty_jscode():
+    nodes = valid_nodes()
+    nodes.append(_code_node({"mode": "runOnceForAllItems", "language": "javaScript", "jsCode": ""}))
+
+    errors = validate_workflow_payload(
+        nodes,
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("parameters.jsCode" in error for error in errors)
+
+
+def test_code_v2_omitted_language_with_jscode_passes_validation():
+    nodes = valid_nodes()
+    nodes.append(_code_node({"mode": "runOnceForAllItems", "jsCode": "return $input.all();"}))
+
+    errors = validate_workflow_payload(
+        nodes,
+        {},
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert errors == []
 
 
 def test_google_sheets_update_with_columns_passes_validation():

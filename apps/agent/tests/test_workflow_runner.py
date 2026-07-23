@@ -6,12 +6,25 @@ import httpx
 import pytest
 
 from src import store
+from src.agent.assurance.models import AssurancePlan, AssuranceReport
 from src.agent.tools import (
     _summarize_execution,
     iter_workflow_batch_with_input,
     run_workflow_batch_with_input,
     run_workflow_with_input,
 )
+from src.agent.tools.read_after_write import _literal_or_output, verify_sheets_read_after_write
+
+
+@pytest.fixture(autouse=True)
+def _stub_execution_evidence_store(monkeypatch):
+    async def fake_save_execution_evidence(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "src.agent.tools.workflow_runner.store.save_execution_evidence",
+        fake_save_execution_evidence,
+    )
 
 
 @pytest.mark.asyncio
@@ -827,6 +840,10 @@ def test_summarize_execution_verifies_successful_mutation_evidence():
         item.kind == "effect_verified" and item.verifier == "gmail_message_sent"
         for item in result.assessment.evidence
     )
+    assert result.assessment.oracle is not None
+    assert result.assessment.oracle.contextSource == "exact"
+    assert result.assessment.postconditions[0].code == "exact_execution_context"
+    assert result.assessment.postconditions[0].status == "verified"
 
 
 def test_summarize_execution_allows_action_verified_for_partial_contract_coverage():
@@ -915,6 +932,58 @@ def test_summarize_execution_requires_sent_label_for_gmail_action_verified():
     assert not any(item.kind == "effect_verified" for item in result.assessment.evidence)
 
 
+def test_summarize_execution_requires_receipt_for_each_gmail_output_item():
+    workflow = {
+        "nodes": [
+            {"name": "Custom", "type": "n8n-nodes-community.custom", "parameters": {}},
+            {
+                "name": "Send Email",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"resource": "message", "operation": "send"},
+            },
+        ],
+        "connections": {"Custom": {"main": [[{"node": "Send Email", "type": "main", "index": 0}]]}},
+    }
+    result = _summarize_execution(
+        {
+            "id": "partial-gmail-receipts",
+            "workflowId": "wf_1",
+            "status": "success",
+            "data": {
+                "resultData": {
+                    "runData": {
+                        "Send Email": [
+                            {
+                                "executionStatus": "success",
+                                "data": {
+                                    "main": [
+                                        [
+                                            {"json": {"id": "m1", "labelIds": ["SENT"]}},
+                                            {"json": {"id": "", "labelIds": ["SENT"]}},
+                                        ]
+                                    ]
+                                },
+                            }
+                        ]
+                    }
+                }
+            },
+        },
+        response={"statusCode": 200, "body": {"id": "m1"}},
+        workflow=workflow,
+    )
+
+    effect_items = [item for item in result.assessment.evidence if item.kind == "effect_verified"]
+    assert result.functionalStatus == "needs_attention"
+    assert result.claimableOutcome == "none"
+    assert effect_items[0].outputItemCount == 1
+    assert effect_items[0].effectVerified is False
+    assert any(
+        item.code == "action_provider_receipt" and item.status == "failed"
+        for item in result.assessment.postconditions
+    )
+
+
 def test_summarize_execution_blocking_assurance_keeps_claimable_outcome_none():
     workflow = {
         "nodes": [
@@ -977,6 +1046,219 @@ def test_summarize_execution_blocking_assurance_keeps_claimable_outcome_none():
     assert any(warning.severity == "error" for warning in result.assessment.warnings)
 
 
+def test_summarize_execution_with_writeback_stays_action_verified_without_remote_verifier(
+    monkeypatch,
+):
+    workflow = {
+        "nodes": [
+            {
+                "name": "Send Email",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"resource": "message", "operation": "send"},
+            },
+            {
+                "name": "Update Status",
+                "type": "n8n-nodes-base.googleSheets",
+                "parameters": {
+                    "resource": "sheet",
+                    "operation": "update",
+                    "columns": {
+                        "mappingMode": "defineBelow",
+                        "matchingColumns": ["record_id"],
+                        "value": {"record_id": "={{ $json.record_id }}"},
+                    },
+                },
+            },
+        ],
+        "connections": {
+            "Send Email": {"main": [[{"node": "Update Status", "type": "main", "index": 0}]]}
+        },
+    }
+    monkeypatch.setattr(
+        "src.agent.tools.execution.analyze_workflow_semantics",
+        lambda *_args, **_kwargs: AssuranceReport(
+            fingerprint="fp-writeback",
+            plan=AssurancePlan(
+                fingerprint="fp-writeback",
+                node_roles={"Send Email": "action", "Update Status": "writeback"},
+                cardinality_relations=(
+                    "eligible_count == action_count",
+                    "action_count == writeback_count",
+                ),
+                identity_fields={"Update Status": ("record_id",)},
+                expected_postconditions=(
+                    "every action has a provider receipt",
+                    "every successful action has one write-back",
+                    "write-back identity is non-empty and unique",
+                ),
+            ),
+            findings=(),
+        ),
+    )
+    result = _summarize_execution(
+        {
+            "id": "writeback-unverified",
+            "workflowId": "wf_1",
+            "status": "success",
+            "data": {
+                "resultData": {
+                    "runData": {
+                        "Send Email": [
+                            {
+                                "executionStatus": "success",
+                                "data": {"main": [[{"json": {"id": "m1", "labelIds": ["SENT"]}}]]},
+                            }
+                        ],
+                        "Update Status": [
+                            {
+                                "executionStatus": "success",
+                                "data": {"main": [[{"json": {"updated": True}}]]},
+                            }
+                        ],
+                    }
+                }
+            },
+        },
+        response={"statusCode": 200, "body": {"id": "m1"}},
+        workflow=workflow,
+    )
+
+    assert result.functionalStatus == "needs_attention"
+    assert result.claimableOutcome == "action_verified"
+    assert result.assessment.postconditionsVerified is False
+    assert any(
+        item.code == "writeback_effect_verified" and item.status == "unknown"
+        for item in result.assessment.postconditions
+    )
+
+
+@pytest.mark.asyncio
+async def test_sheets_read_after_write_promotes_only_matching_remote_rows(monkeypatch):
+    workflow = {
+        "nodes": [
+            {
+                "name": "Send Email",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"resource": "message", "operation": "send"},
+            },
+            {
+                "name": "Update Status",
+                "type": "n8n-nodes-base.googleSheets",
+                "parameters": {
+                    "resource": "sheet",
+                    "operation": "update",
+                    "documentId": {"__rl": True, "mode": "id", "value": "doc-1"},
+                    "sheetName": {"__rl": True, "mode": "name", "value": "Leads"},
+                    "columns": {
+                        "mappingMode": "defineBelow",
+                        "matchingColumns": ["record_id"],
+                        "value": {
+                            "record_id": "={{ $('IF').item.json.record_id }}",
+                            "status": "Evet",
+                        },
+                    },
+                },
+            },
+        ],
+        "connections": {
+            "Send Email": {"main": [[{"node": "Update Status", "type": "main", "index": 0}]]}
+        },
+    }
+    monkeypatch.setattr(
+        "src.agent.tools.execution.analyze_workflow_semantics",
+        lambda *_args, **_kwargs: AssuranceReport(
+            fingerprint="fp-writeback",
+            plan=AssurancePlan(
+                fingerprint="fp-writeback",
+                node_roles={"Send Email": "action", "Update Status": "writeback"},
+                cardinality_relations=("action_count == writeback_count",),
+                identity_fields={"Update Status": ("record_id",)},
+                expected_postconditions=(
+                    "every action has a provider receipt",
+                    "every successful action has one write-back",
+                    "write-back identity is non-empty and unique",
+                ),
+            ),
+            findings=(),
+        ),
+    )
+    execution = {
+        "id": "writeback-verified",
+        "workflowId": "wf_1",
+        "status": "success",
+        "data": {
+            "resultData": {
+                "runData": {
+                    "Send Email": [
+                        {
+                            "executionStatus": "success",
+                            "data": {"main": [[{"json": {"id": "m1", "labelIds": ["SENT"]}}]]},
+                        }
+                    ],
+                    "Update Status": [
+                        {
+                            "executionStatus": "success",
+                            "data": {
+                                "main": [
+                                    [
+                                        {
+                                            "json": {
+                                                "record_id": "lead-1",
+                                                "status": "Evet",
+                                            }
+                                        }
+                                    ]
+                                ]
+                            },
+                        }
+                    ],
+                }
+            }
+        },
+    }
+    result = _summarize_execution(execution, workflow=workflow)
+    assert result.claimableOutcome == "action_verified"
+
+    async def fake_read_range(self, *, spreadsheet_id: str, range: str):
+        assert spreadsheet_id == "doc-1"
+        assert range == "Leads!A1:ZZ500"
+        return {"values": [["record_id", "status"], ["lead-1", "Evet"]]}
+
+    monkeypatch.setattr(
+        "src.agent.tools.read_after_write.SheetsClient.read_range",
+        fake_read_range,
+    )
+
+    verified = await verify_sheets_read_after_write(
+        "user-1",
+        workflow=workflow,
+        execution=execution,
+        result=result,
+    )
+
+    assert verified.functionalStatus == "verified"
+    assert verified.claimableOutcome == "run_verified"
+    assert verified.assessment.postconditionsVerified is True
+    assert any(
+        item.verifier == "sheets_read_after_write" and item.effectVerified
+        for item in verified.assessment.evidence
+    )
+
+
+def test_read_after_write_resolves_expressions_but_preserves_configured_literals():
+    output = {"record_id": "lead-1", "status": "Hayır"}
+
+    assert (
+        _literal_or_output(
+            "={{ $('IF').item.json.record_id }}",
+            target="record_id",
+            output=output,
+        )
+        == "lead-1"
+    )
+    assert _literal_or_output("Evet", target="status", output=output) == "Evet"
+
+
 def test_summarize_execution_with_mutation_but_no_run_data_is_unknown():
     workflow = {
         "nodes": [
@@ -996,3 +1278,36 @@ def test_summarize_execution_with_mutation_but_no_run_data_is_unknown():
 
     assert result.functionalStatus == "unknown"
     assert result.claimableOutcome == "none"
+
+
+def test_summarize_execution_without_exact_context_cannot_be_verified():
+    result = _summarize_execution(
+        {
+            "id": "contextless",
+            "workflowId": "wf_1",
+            "status": "success",
+            "data": {
+                "resultData": {
+                    "runData": {
+                        "Send Email": [
+                            {
+                                "executionStatus": "success",
+                                "data": {"main": [[{"json": {"id": "m1", "labelIds": ["SENT"]}}]]},
+                            }
+                        ]
+                    }
+                }
+            },
+        },
+        response={"statusCode": 200, "body": {"id": "m1"}},
+    )
+
+    assert result.functionalStatus == "needs_attention"
+    assert result.claimableOutcome == "none"
+    assert result.assessment.exactContextVerified is False
+    assert result.assessment.oracle is not None
+    assert result.assessment.oracle.contextSource == "missing"
+    assert any(
+        item.code == "exact_execution_context" and item.status == "failed"
+        for item in result.assessment.postconditions
+    )

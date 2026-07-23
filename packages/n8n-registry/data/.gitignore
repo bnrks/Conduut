@@ -1,4 +1,6 @@
-# nodes.json is large (~14MB) and container-specific — generate with scripts/fetch_nodes.py
 nodes.json
-# credentials.json is generated from n8n — generate with scripts/fetch_credentials.py (ADR-0015)
 credentials.json
+workflow_cards.jsonl
+node_cards.jsonl
+registry_manifest.json
+retrieval.sqlite

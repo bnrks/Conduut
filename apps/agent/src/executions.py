@@ -13,9 +13,10 @@ from datetime import datetime
 import structlog
 from pydantic import BaseModel, Field
 
-from src import n8n_client
+from src import n8n_client, store
 from src.agent.schemas import WorkflowRunResultData
-from src.agent.tools.execution import _summarize_execution
+from src.agent.tools.execution import _summarize_execution, execution_evidence_envelope
+from src.agent.tools.read_after_write import verify_sheets_read_after_write
 
 log = structlog.get_logger()
 
@@ -115,6 +116,30 @@ async def _workflow_names() -> dict[str, str]:
     return {workflow.id: workflow.name for workflow in workflows}
 
 
+async def _execution_workflow_context(
+    raw: dict[str, object],
+    *,
+    workflow_id: str,
+) -> tuple[dict[str, object] | None, str]:
+    workflow_data = raw.get("workflowData")
+    if isinstance(workflow_data, dict) and isinstance(workflow_data.get("nodes"), list):
+        return workflow_data, "embedded"
+    if workflow_id:
+        try:
+            workflow = await n8n_client.get_workflow(workflow_id)
+        except n8n_client.N8nApiError as exc:
+            log.warning(
+                "execution_workflow_context_unavailable",
+                workflow_id=workflow_id,
+                status_code=exc.status_code,
+                error=exc.message,
+            )
+            return None, "missing"
+        if isinstance(workflow, dict):
+            return workflow, "current"
+    return None, "missing"
+
+
 async def list_runs(
     user_id: str,
     *,
@@ -185,7 +210,15 @@ async def get_run(user_id: str, execution_id: str) -> RunDetail:
     if not workflow_name:
         workflow_name = (await _workflow_names()).get(workflow_id)
 
-    summary = _summarize_execution(raw)
+    workflow_context, context_source = await _execution_workflow_context(
+        raw,
+        workflow_id=workflow_id,
+    )
+    summary = _summarize_execution(
+        raw,
+        workflow=workflow_context,
+        workflow_context_source=context_source,
+    )
     status = _normalized_status(raw.get("status") or summary.status)
     summary_text = summary.summary
     if status == "running":
@@ -230,4 +263,38 @@ async def inspect_run(user_id: str, execution_id: str) -> WorkflowRunResultData:
         if exc.status_code == 404:
             raise ExecutionNotFoundError(execution_id) from exc
         raise
-    return _summarize_execution(raw)
+    workflow_data = raw.get("workflowData")
+    workflow_id = str(
+        raw.get("workflowId")
+        or (workflow_data.get("id") if isinstance(workflow_data, dict) else "")
+        or ""
+    )
+    workflow_context, context_source = await _execution_workflow_context(
+        raw,
+        workflow_id=workflow_id,
+    )
+    result = _summarize_execution(
+        raw,
+        workflow=workflow_context,
+        workflow_context_source=context_source,
+    )
+    result = await verify_sheets_read_after_write(
+        user_id,
+        workflow=workflow_context,
+        execution=raw,
+        result=result,
+    )
+    try:
+        await store.save_execution_evidence(
+            user_id,
+            execution_evidence_envelope(result, source="execution_inspect"),
+        )
+    except Exception as exc:
+        log.warning(
+            "execution_evidence_persist_error",
+            execution_id=execution_id,
+            workflow_id=workflow_id,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+    return result

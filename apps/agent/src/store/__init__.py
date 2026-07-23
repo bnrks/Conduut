@@ -66,6 +66,7 @@ from .credentials import (
     save_custom_credential,
     save_draft_credential,
 )
+from .execution_evidence import save_execution_evidence
 from .usage import (
     AgentUsageEvent,
     _usage_event_document_id,
@@ -142,6 +143,8 @@ __all__ = [
     "list_custom_credentials",
     "save_custom_credential",
     "save_draft_credential",
+    # execution evidence
+    "save_execution_evidence",
     # workflow_metadata
     "delete_workflow_metadata",
     "get_all_workflow_metadata",
