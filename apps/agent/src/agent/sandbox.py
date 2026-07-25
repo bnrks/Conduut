@@ -19,7 +19,11 @@ from pydantic import BaseModel
 
 from src import n8n_client
 from src.agent.assurance import build_oracle_contract, workflow_fingerprint
-from src.agent.sandbox_nodes import ActionProbe, replace_action_nodes_with_probes
+from src.agent.sandbox_nodes import (
+    ActionProbe,
+    is_side_effect_node,
+    replace_action_nodes_with_probes,
+)
 from src.agent.schemas import OracleContract, Postcondition, ProbeEvidence, WorkflowInputField
 from src.agent.tools.common import _preview_value
 from src.agent.tools.constants import _MANUAL_TRIGGER_TYPE, _WEBHOOK_TRIGGER_TYPE
@@ -110,6 +114,10 @@ _JSON_FIELD_SUFFIX = re.compile(
     $
     """,
     re.IGNORECASE | re.VERBOSE,
+)
+_STATUS_CODE_EXPR = re.compile(
+    r"\$json(?:\s*(?:\.|\?\.)\s*statusCode|\s*\[\s*['\"]statusCode['\"]\s*\])",
+    re.IGNORECASE,
 )
 
 
@@ -223,12 +231,245 @@ def _node_output_items_for_index(
     return items
 
 
+def _node_output_items_for_index_all_runs(
+    run_data: dict[str, Any], node_name: str, output_index: int
+) -> list[Any]:
+    runs = run_data.get(node_name)
+    if not isinstance(runs, list) or not runs:
+        return []
+    items: list[Any] = []
+    for run in runs:
+        data = run.get("data") if isinstance(run, dict) else None
+        main = data.get("main") if isinstance(data, dict) else None
+        if not isinstance(main, list) or output_index >= len(main):
+            continue
+        output = main[output_index]
+        if not isinstance(output, list):
+            continue
+        for item in output:
+            if isinstance(item, dict) and "json" in item:
+                items.append(item.get("json"))
+            else:
+                items.append(item)
+    return items
+
+
 def _iter_main_groups(outputs: Any):
     main = outputs.get("main") if isinstance(outputs, dict) else None
     if isinstance(main, list):
         for group in main:
             if isinstance(group, list):
                 yield group
+
+
+def _main_edges(connections: dict[str, Any]) -> list[tuple[str, int, str]]:
+    edges: list[tuple[str, int, str]] = []
+    for source, outputs in (connections or {}).items():
+        main = outputs.get("main") if isinstance(outputs, dict) else None
+        if not isinstance(main, list):
+            continue
+        for output_index, group in enumerate(main):
+            if not isinstance(group, list):
+                continue
+            for entry in group:
+                if not isinstance(entry, dict) or not entry.get("node"):
+                    continue
+                if str(entry.get("type") or "main") != "main":
+                    continue
+                edges.append((str(source), output_index, str(entry["node"])))
+    return edges
+
+
+def _can_reach(adjacency: dict[str, set[str]], source: str, target: str) -> bool:
+    pending = [source]
+    seen: set[str] = set()
+    while pending:
+        current = pending.pop()
+        if current == target:
+            return True
+        if current in seen:
+            continue
+        seen.add(current)
+        pending.extend(adjacency.get(current, set()) - seen)
+    return False
+
+
+def _descendants_from(
+    start_nodes: set[str] | list[str] | tuple[str, ...],
+    adjacency: dict[str, set[str]],
+    *,
+    stop_at: str | None = None,
+) -> set[str]:
+    descendants: set[str] = set()
+    pending = list(start_nodes)
+    while pending:
+        current = pending.pop()
+        if current in descendants:
+            continue
+        descendants.add(current)
+        if stop_at is not None and current == stop_at:
+            continue
+        pending.extend(adjacency.get(current, set()) - descendants)
+    return descendants
+
+
+def _nearest_control_boundary_count(
+    detail: dict[str, Any], clone_workflow: dict[str, Any], target_name: str
+) -> int | None:
+    """Return items on the nearest Filter/IF/Loop output feeding an action path."""
+
+    run_data = (((detail.get("data") or {}).get("resultData") or {}).get("runData")) or {}
+    nodes_by_name = {
+        str(node.get("name")): node
+        for node in clone_workflow.get("nodes") or []
+        if isinstance(node, dict) and node.get("name")
+    }
+    reverse: dict[str, list[tuple[str, int]]] = {}
+    for source, output_index, target in _main_edges(clone_workflow.get("connections") or {}):
+        reverse.setdefault(target, []).append((source, output_index))
+
+    pending: list[tuple[str, int]] = [(target_name, 0)]
+    seen_distance: dict[str, int] = {}
+    candidates: list[tuple[int, int]] = []
+    while pending:
+        current, distance = pending.pop(0)
+        previous = seen_distance.get(current)
+        if previous is not None and previous <= distance:
+            continue
+        seen_distance[current] = distance
+        for source, output_index in reverse.get(current, []):
+            node = nodes_by_name.get(source, {})
+            if node.get("type") in {
+                "n8n-nodes-base.filter",
+                "n8n-nodes-base.if",
+                "n8n-nodes-base.splitInBatches",
+            }:
+                count = len(_node_output_items_for_index_all_runs(run_data, source, output_index))
+                candidates.append((distance + 1, count))
+            pending.append((source, distance + 1))
+
+    if not candidates:
+        return None
+    nearest = min(distance for distance, _count in candidates)
+    return sum(count for distance, count in candidates if distance == nearest)
+
+
+def _unreached_action_findings(
+    detail: dict[str, Any],
+    clone_workflow: dict[str, Any],
+    records: list[dict[str, Any]],
+    probes: list[ActionProbe],
+) -> list[str]:
+    """Reject a zero-record action when its nearest eligibility boundary had items."""
+
+    recorded_nodes = {str(record.get("node") or "") for record in records}
+    findings: list[str] = []
+    for probe in probes:
+        if not probe.covered or probe.name in recorded_nodes:
+            continue
+        eligible_count = _nearest_control_boundary_count(detail, clone_workflow, probe.name)
+        if eligible_count is None or eligible_count == 0:
+            continue
+        findings.append(
+            f"The action path to '{probe.name}' was not reached even though its nearest "
+            f"eligibility boundary emitted {eligible_count} item(s)."
+        )
+    return findings
+
+
+def _split_in_batches_findings(
+    detail: dict[str, Any], clone_workflow: dict[str, Any], probes: list[ActionProbe]
+) -> list[str]:
+    """Validate Loop Over Items runtime routing and its required feedback edge."""
+
+    run_data = (((detail.get("data") or {}).get("resultData") or {}).get("runData")) or {}
+    edges = _main_edges(clone_workflow.get("connections") or {})
+    adjacency: dict[str, set[str]] = {}
+    for source, _output_index, target in edges:
+        adjacency.setdefault(source, set()).add(target)
+    probe_names = {probe.name for probe in probes}
+    findings: list[str] = []
+
+    for node in clone_workflow.get("nodes") or []:
+        if not isinstance(node, dict) or node.get("type") != "n8n-nodes-base.splitInBatches":
+            continue
+        name = str(node.get("name") or "")
+        try:
+            version = float(node.get("typeVersion") or 1)
+        except (TypeError, ValueError):
+            version = 1
+        if version >= 3:
+            done_index, loop_index = 0, 1
+        elif version >= 2:
+            done_index, loop_index = 1, 0
+        else:
+            # v1 exposes only one main output and cannot be audited with v2/v3 semantics.
+            continue
+
+        output_targets: dict[int, list[str]] = {}
+        for source, output_index, target in edges:
+            if source == name:
+                output_targets.setdefault(output_index, []).append(target)
+        done_targets = output_targets.get(done_index, [])
+        loop_targets = output_targets.get(loop_index, [])
+        loop_items = _node_output_items_for_index_all_runs(run_data, name, loop_index)
+        branch_adjacency = {
+            source: {target for target in targets if target != name}
+            for source, targets in adjacency.items()
+        }
+
+        def descendants(targets: list[str]) -> set[str]:
+            found: set[str] = set()
+            pending = list(targets)
+            while pending:
+                current = pending.pop()
+                if current in found:
+                    continue
+                found.add(current)
+                pending.extend(branch_adjacency.get(current, ()))
+            return found
+
+        loop_descendants = descendants(loop_targets)
+        done_descendants = descendants(done_targets)
+        feedback_sources = {
+            source for source, _output_index, target in edges if target == name and source != name
+        }
+        shared_feedback_sources = sorted(feedback_sources & loop_descendants & done_descendants)
+        valid_feedback_sources = feedback_sources & loop_descendants - done_descendants
+
+        def reaches_probe(targets: list[str]) -> bool:
+            return any(
+                _can_reach(adjacency, target, probe_name)
+                for target in targets
+                for probe_name in probe_names
+            )
+
+        done_drives_action = reaches_probe(done_targets)
+        loop_drives_action = reaches_probe(loop_targets)
+        if done_drives_action and not loop_drives_action:
+            findings.append(
+                f"Loop Over Items node '{name}' routes its action body from the 'done' "
+                f"output (index {done_index}) instead of the 'loop' output "
+                f"(index {loop_index})."
+            )
+        if loop_items and not loop_targets:
+            findings.append(
+                f"Loop Over Items node '{name}' emitted {len(loop_items)} item(s) on its "
+                f"'loop' output (index {loop_index}), but that output has no downstream path."
+            )
+        if shared_feedback_sources:
+            findings.append(
+                f"Loop Over Items node '{name}' returns through "
+                f"{', '.join(repr(source) for source in shared_feedback_sources)}, which is "
+                "reachable from both the 'loop' and 'done' outputs. Keep the feedback path "
+                "exclusive to the loop body."
+            )
+        if loop_drives_action and not valid_feedback_sources:
+            findings.append(
+                f"Loop Over Items node '{name}' has no feedback path from its loop body "
+                "back to the same node, so only the first batch can be processed."
+            )
+    return findings
 
 
 def _upstream_source_names(connections: dict[str, Any], target_name: str) -> list[str]:
@@ -667,6 +908,150 @@ def _simple_field_reference(value: Any) -> str | None:
     return (suffix.group("dot") or suffix.group("bracket") or "").strip() or None
 
 
+def _rule_references_status_code(rule: dict[str, Any]) -> bool:
+    left_value = rule.get("leftValue")
+    return isinstance(left_value, str) and bool(_STATUS_CODE_EXPR.search(left_value))
+
+
+def _node_references_status_code(node: dict[str, Any]) -> bool:
+    if str(node.get("type") or "") not in {
+        "n8n-nodes-base.if",
+        "n8n-nodes-base.filter",
+    }:
+        return False
+    parameters = node.get("parameters")
+    conditions = parameters.get("conditions") if isinstance(parameters, dict) else None
+    rules = conditions.get("conditions") if isinstance(conditions, dict) else None
+    return isinstance(rules, list) and any(
+        isinstance(rule, dict) and _rule_references_status_code(rule) for rule in rules
+    )
+
+
+def _bool_parameter(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return isinstance(value, str) and value.strip().lower() == "true"
+
+
+def _nested_mapping(value: dict[str, Any], *keys: str) -> dict[str, Any]:
+    current: Any = value
+    for key in keys:
+        if not isinstance(current, dict):
+            return {}
+        current = current.get(key)
+    return current if isinstance(current, dict) else {}
+
+
+def _http_request_response_guards(node: dict[str, Any]) -> tuple[bool, bool, bool]:
+    parameters = node.get("parameters")
+    if not isinstance(parameters, dict):
+        return False, False, False
+    response_options = _nested_mapping(parameters, "options", "response", "response")
+    full_response = _bool_parameter(response_options.get("fullResponse"))
+    never_error = _bool_parameter(response_options.get("neverError"))
+    continue_regular_output = str(node.get("onError") or "").strip()
+    return full_response, never_error, continue_regular_output == "continueRegularOutput"
+
+
+def _node_has_side_effect(node: dict[str, Any]) -> bool:
+    return is_side_effect_node(node)
+
+
+def _http_status_condition_findings(
+    detail: dict[str, Any], clone_workflow: dict[str, Any]
+) -> list[str]:
+    run_data = (((detail.get("data") or {}).get("resultData") or {}).get("runData")) or {}
+    nodes_by_name = {
+        str(node.get("name")): node
+        for node in clone_workflow.get("nodes") or []
+        if isinstance(node, dict) and node.get("name")
+    }
+    reverse: dict[str, set[str]] = {}
+    for source, _output_index, target in _main_edges(clone_workflow.get("connections") or {}):
+        reverse.setdefault(target, set()).add(source)
+    adjacency: dict[str, set[str]] = {}
+    for source, _output_index, target in _main_edges(clone_workflow.get("connections") or {}):
+        adjacency.setdefault(source, set()).add(target)
+
+    findings: list[str] = []
+    seen: set[str] = set()
+    for node_name, node in nodes_by_name.items():
+        if not _node_references_status_code(node):
+            continue
+
+        pending = list(reverse.get(node_name, ()))
+        visited: set[str] = set()
+        http_sources: set[str] = set()
+        while pending:
+            source = pending.pop()
+            if source in visited:
+                continue
+            visited.add(source)
+            source_node = nodes_by_name.get(source, {})
+            if source_node.get("type") == "n8n-nodes-base.httpRequest":
+                http_sources.add(source)
+                continue
+            pending.extend(reverse.get(source, ()))
+
+        descendant_nodes = _descendants_from(
+            adjacency.get(node_name, ()),
+            adjacency,
+            stop_at=node_name,
+        )
+        drives_side_effect = any(
+            descendant != node_name and _node_has_side_effect(nodes_by_name.get(descendant, {}))
+            for descendant in descendant_nodes
+        )
+
+        for http_name in sorted(http_sources):
+            http_node = nodes_by_name.get(http_name, {})
+            full_response, never_error, continue_output = _http_request_response_guards(http_node)
+            if not full_response:
+                finding = (
+                    f"HTTP Request node '{http_name}' feeds condition node '{node_name}' via "
+                    "$json.statusCode, but parameters.options.response.response.fullResponse is "
+                    "false. Enable 'Include Response Headers and Status' so the branch reads the "
+                    "real HTTP status."
+                )
+                if finding not in seen:
+                    seen.add(finding)
+                    findings.append(finding)
+            if not never_error:
+                finding = (
+                    f"HTTP Request node '{http_name}' feeds condition node '{node_name}' via "
+                    "$json.statusCode, but parameters.options.response.response.neverError is "
+                    "false. Enable 'Never Error' so non-2xx HTTP responses still emit items for "
+                    "the downstream condition."
+                )
+                if finding not in seen:
+                    seen.add(finding)
+                    findings.append(finding)
+            if drives_side_effect and not continue_output:
+                finding = (
+                    f"HTTP Request node '{http_name}' feeds condition node '{node_name}', whose "
+                    "downstream path reaches a side-effect node, but node.onError is not "
+                    "'continueRegularOutput'. Enable top-level onError=continueRegularOutput so "
+                    "connection and timeout failures also reach the handler branch."
+                )
+                if finding not in seen:
+                    seen.add(finding)
+                    findings.append(finding)
+
+            source_items = [
+                item for item in _node_output_items(run_data, http_name) if isinstance(item, dict)
+            ]
+            if source_items and not any("statusCode" in item for item in source_items):
+                finding = (
+                    f"HTTP Request node '{http_name}' feeds condition node '{node_name}' via "
+                    "$json.statusCode, but the sandbox output had no statusCode field. The "
+                    "workflow is branching on a value that the HTTP node did not emit."
+                )
+                if finding not in seen:
+                    seen.add(finding)
+                    findings.append(finding)
+    return findings
+
+
 def _simple_if_equals_rule(node: dict[str, Any]) -> tuple[str, str, bool] | None:
     if str(node.get("type") or "") not in {
         "n8n-nodes-base.if",
@@ -1004,12 +1389,21 @@ async def _evaluate_sandbox_run(
     deterministic_findings = [
         *_probe_findings(records, probes),
         *_identity_preflight_findings(detail, clone_workflow, records, probes),
+        *_http_status_condition_findings(detail, clone_workflow),
         *_simple_if_predicate_findings(detail, clone_workflow),
         *_upstream_semantic_findings(detail, clone_workflow, probes),
+        *_unreached_action_findings(detail, clone_workflow, records, probes),
+        *_split_in_batches_findings(detail, clone_workflow, probes),
     ]
     action_count = sum(1 for item in records if item.get("kind") in {"gmail_send", "sheets_append"})
     writeback_count = sum(1 for item in records if item.get("kind") == "sheets_update")
-    eligible_count = max(action_count, writeback_count)
+    boundary_counts = [
+        count
+        for probe in probes
+        if (count := _nearest_control_boundary_count(detail, clone_workflow, probe.name))
+        is not None
+    ]
+    eligible_count = max([action_count, writeback_count, *boundary_counts])
     status_loop, projected_no_action = _projected_status_loop_rerun(
         clone_workflow,
         records,

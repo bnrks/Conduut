@@ -188,3 +188,22 @@ Agent tool sirasi artik `search_workflow_cards(limit=10)`, en fazla uc
 `get_workflow_card`, sonra exact `get_node_contract` ve native JSON
 create/update'tir. Eski `find_workflow_template` model yuzeyinden kalkti;
 registry compatibility alias'i sanitize card dondurur.
+
+### Port-aware Loop Over Items contract'i (2026-07-25)
+
+Node schema loader artik `outputs` ve `outputNames` alanlarini `NodeInfo`
+uzerinde korur. Node Card branch contract'i bu raw port bilgisinden turetilir;
+`splitInBatches` icin n8n surum semantigi aciktir:
+
+- typeVersion 3 ve ustunde `main[0]=done`, `main[1]=loop`;
+- typeVersion 2'de `main[0]=loop`, `main[1]=done`.
+
+Workflow Card topology edge'leri `outputIndex` yaninda sanitize
+`outputLabel` ve `inputIndex` tasir. Boylece model yalnız "iki output var"
+bilgisine degil, hangi kolun per-item body ve hangi kolun post-loop olduguna
+ulasir. H2 kaynak template `6083` card'inda loop body output 1'den cikar ve son
+per-item node tekrar Split In Batches'e doner.
+
+`build_cards.py --n8n-version 1.121.3` ile corpus yeniden uretildi: 497
+Workflow Card ve 7.727 operation-aware Node Card. Split v2/v3 port contract'i,
+sanitize topology ve feedback edge'i registry regresyon testleriyle korunur.

@@ -81,6 +81,8 @@ class NodeInfo:
     is_trigger: bool  # True for trigger nodes
     resources: list[str] = field(default_factory=list)  # ["message", "draft", ...]
     operations: dict[str, list[str]] = field(default_factory=dict)  # {"message": ["send", ...]}
+    output_types: list[str] = field(default_factory=list)  # ["main", "main", ...]
+    output_names: list[str] = field(default_factory=list)  # ["true", "false", ...]
     key_properties: list[dict] = field(default_factory=list)  # condensed top-level params
     contracts: list[NodeContract] = field(default_factory=list)
     card: NodeCard | None = None

@@ -63,6 +63,11 @@ SCHEMAS = {
         "typeVersion": 4.7,
         "isTrigger": False,
     },
+    "n8n-nodes-base.httpRequest": {
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "isTrigger": False,
+    },
 }
 
 
@@ -483,6 +488,74 @@ def _code_node(parameters: dict[str, Any]) -> dict[str, Any]:
         "position": [625, 300],
         "parameters": parameters,
     }
+
+
+def _split_in_batches_node(
+    type_version: float = 3,
+    name: str = "Loop Over Leads",
+) -> dict[str, Any]:
+    return {
+        "id": "split",
+        "name": name,
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": type_version,
+        "position": [625, 300],
+        "parameters": {"batchSize": 1, "options": {}},
+    }
+
+
+def _gmail_send_node(name: str = "Send Email") -> dict[str, Any]:
+    return {
+        "id": "gmail",
+        "name": name,
+        "type": "n8n-nodes-base.gmail",
+        "typeVersion": 2.1,
+        "position": [875, 300],
+        "parameters": {
+            "resource": "message",
+            "operation": "send",
+            "sendTo": "={{ $json.email }}",
+            "subject": "Hello",
+            "message": "Body",
+        },
+    }
+
+
+def _split_branch(groups: list[list[dict[str, Any]]]) -> dict[str, Any]:
+    return {"main": groups}
+
+
+def _http_request_node(
+    *,
+    name: str = "Check Website",
+    full_response: bool = False,
+    never_error: bool = False,
+    on_error: str | None = None,
+) -> dict[str, Any]:
+    parameters: dict[str, Any] = {
+        "method": "GET",
+        "url": "https://example.test/health",
+        "options": {
+            "response": {
+                "response": {
+                    "fullResponse": full_response,
+                    "neverError": never_error,
+                    "responseFormat": "json",
+                }
+            }
+        },
+    }
+    node: dict[str, Any] = {
+        "id": "http",
+        "name": name,
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [500, 300],
+        "parameters": parameters,
+    }
+    if on_error is not None:
+        node["onError"] = on_error
+    return node
 
 
 def test_google_sheets_update_missing_columns_fails_validation():
@@ -1119,6 +1192,483 @@ def test_gmail_send_missing_message_fails_validation():
     errors = validate_workflow_payload(nodes, {}, node_registry=FakeRegistry(SCHEMAS))  # type: ignore[arg-type]
 
     assert "Gmail node 'Gmail' send operation requires parameters.message" in errors
+
+
+def test_http_status_condition_requires_full_response():
+    nodes = [
+        valid_nodes()[0],
+        _http_request_node(never_error=True),
+        _if_node(
+            {
+                "conditions": {
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.statusCode }}",
+                            "operator": {"type": "number", "operation": "notEqual"},
+                            "rightValue": 200,
+                        }
+                    ]
+                }
+            }
+        ),
+    ]
+    connections = {
+        "Manual Trigger": {"main": [[{"node": "Check Website", "type": "main", "index": 0}]]},
+        "Check Website": {"main": [[{"node": "Filter", "type": "main", "index": 0}]]},
+    }
+
+    errors = validate_workflow_payload(
+        nodes,
+        connections,
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("fullResponse" in error and "Check Website" in error for error in errors)
+
+
+def test_http_status_condition_requires_never_error():
+    nodes = [
+        valid_nodes()[0],
+        _http_request_node(full_response=True),
+        _if_node(
+            {
+                "conditions": {
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.statusCode }}",
+                            "operator": {"type": "number", "operation": "notEqual"},
+                            "rightValue": 200,
+                        }
+                    ]
+                }
+            }
+        ),
+    ]
+    connections = {
+        "Manual Trigger": {"main": [[{"node": "Check Website", "type": "main", "index": 0}]]},
+        "Check Website": {"main": [[{"node": "Filter", "type": "main", "index": 0}]]},
+    }
+
+    errors = validate_workflow_payload(
+        nodes,
+        connections,
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("neverError" in error and "Check Website" in error for error in errors)
+
+
+def test_http_status_condition_requires_top_level_continue_regular_output_for_alert_path():
+    nodes = [
+        valid_nodes()[0],
+        _http_request_node(full_response=True, never_error=True),
+        _if_node(
+            {
+                "conditions": {
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.statusCode }}",
+                            "operator": {"type": "number", "operation": "notEqual"},
+                            "rightValue": 200,
+                        }
+                    ]
+                }
+            }
+        ),
+        _gmail_send_node(name="Send Alert"),
+    ]
+    connections = {
+        "Manual Trigger": {"main": [[{"node": "Check Website", "type": "main", "index": 0}]]},
+        "Check Website": {"main": [[{"node": "Filter", "type": "main", "index": 0}]]},
+        "Filter": {"main": [[{"node": "Send Alert", "type": "main", "index": 0}], []]},
+    }
+
+    errors = validate_workflow_payload(
+        nodes,
+        connections,
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("node.onError" in error and "Check Website" in error for error in errors)
+
+
+def test_http_status_alert_flow_rejects_parameter_level_on_error_alias():
+    http_node = _http_request_node(full_response=True, never_error=True)
+    http_node["parameters"]["onError"] = "continueRegularOutput"
+    nodes = [
+        valid_nodes()[0],
+        http_node,
+        _if_node(
+            {
+                "conditions": {
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.statusCode }}",
+                            "operator": {"type": "number", "operation": "notEqual"},
+                            "rightValue": 200,
+                        }
+                    ]
+                }
+            }
+        ),
+        _gmail_send_node(name="Send Alert"),
+    ]
+    connections = {
+        "Manual Trigger": {"main": [[{"node": "Check Website", "type": "main", "index": 0}]]},
+        "Check Website": {"main": [[{"node": "Filter", "type": "main", "index": 0}]]},
+        "Filter": {"main": [[{"node": "Send Alert", "type": "main", "index": 0}], []]},
+    }
+
+    errors = validate_workflow_payload(
+        nodes,
+        connections,
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("node.onError" in error and "Check Website" in error for error in errors)
+
+
+def test_http_status_alert_flow_accepts_current_response_shape_and_top_level_on_error():
+    nodes = [
+        valid_nodes()[0],
+        _http_request_node(
+            full_response=True,
+            never_error=True,
+            on_error="continueRegularOutput",
+        ),
+        _if_node(
+            {
+                "conditions": {
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.statusCode }}",
+                            "operator": {"type": "number", "operation": "notEqual"},
+                            "rightValue": 200,
+                        }
+                    ]
+                }
+            }
+        ),
+        _gmail_send_node(name="Send Alert"),
+    ]
+    connections = {
+        "Manual Trigger": {"main": [[{"node": "Check Website", "type": "main", "index": 0}]]},
+        "Check Website": {"main": [[{"node": "Filter", "type": "main", "index": 0}]]},
+        "Filter": {"main": [[{"node": "Send Alert", "type": "main", "index": 0}], []]},
+    }
+
+    errors = validate_workflow_payload(
+        nodes,
+        connections,
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert errors == []
+
+
+def test_http_status_condition_uses_nearest_http_source_only():
+    warmup = _http_request_node(name="Warmup")
+    warmup["id"] = "warmup"
+    check = _http_request_node(
+        full_response=True,
+        never_error=True,
+    )
+    nodes = [
+        valid_nodes()[0],
+        warmup,
+        check,
+        _if_node(
+            {
+                "conditions": {
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.statusCode }}",
+                            "operator": {"type": "number", "operation": "notEqual"},
+                            "rightValue": 200,
+                        }
+                    ]
+                }
+            }
+        ),
+    ]
+    connections = {
+        "Manual Trigger": {"main": [[{"node": "Warmup", "type": "main", "index": 0}]]},
+        "Warmup": {"main": [[{"node": "Check Website", "type": "main", "index": 0}]]},
+        "Check Website": {"main": [[{"node": "Filter", "type": "main", "index": 0}]]},
+    }
+
+    errors = validate_workflow_payload(
+        nodes,
+        connections,
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert not any("Warmup" in error for error in errors)
+    assert errors == []
+
+
+def test_http_status_alert_flow_requires_transport_policy_for_http_post_action():
+    nodes = [
+        valid_nodes()[0],
+        _http_request_node(full_response=True, never_error=True),
+        _if_node(
+            {
+                "conditions": {
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.statusCode }}",
+                            "operator": {"type": "number", "operation": "notEqual"},
+                            "rightValue": 200,
+                        }
+                    ]
+                }
+            }
+        ),
+        {
+            "id": "post-alert",
+            "name": "Post Alert",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.3,
+            "position": [875, 300],
+            "parameters": {
+                "method": "POST",
+                "url": "https://alerts.example.test/hook",
+                "options": {},
+            },
+        },
+    ]
+    connections = {
+        "Manual Trigger": {"main": [[{"node": "Check Website", "type": "main", "index": 0}]]},
+        "Check Website": {"main": [[{"node": "Filter", "type": "main", "index": 0}]]},
+        "Filter": {"main": [[{"node": "Post Alert", "type": "main", "index": 0}], []]},
+    }
+
+    errors = validate_workflow_payload(
+        nodes,
+        connections,
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("node.onError" in error and "Check Website" in error for error in errors)
+
+
+def test_split_in_batches_v3_done_port_body_fails_validation():
+    nodes = [
+        valid_nodes()[0],
+        _split_in_batches_node(type_version=3),
+        _gmail_send_node(),
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "update",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "sheetName": {"__rl": True, "mode": "name", "value": "Leads"},
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "matchingColumns": ["email"],
+                    "value": {"email": "lead@example.test", "status": "Contacted"},
+                },
+            }
+        ),
+    ]
+    connections = {
+        "Manual Trigger": {"main": [[{"node": "Loop Over Leads", "type": "main", "index": 0}]]},
+        "Loop Over Leads": _split_branch(
+            [[{"node": "Send Email", "type": "main", "index": 0}], []]
+        ),
+        "Send Email": {"main": [[{"node": "Update Siparis", "type": "main", "index": 0}]]},
+    }
+
+    errors = validate_workflow_payload(
+        nodes,
+        connections,
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("main output 0 ('done')" in error and "Loop Over Leads" in error for error in errors)
+
+
+def test_split_in_batches_v3_loop_branch_without_return_fails_validation():
+    nodes = [
+        valid_nodes()[0],
+        _split_in_batches_node(type_version=3),
+        _gmail_send_node(),
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "update",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "sheetName": {"__rl": True, "mode": "name", "value": "Leads"},
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "matchingColumns": ["email"],
+                    "value": {"email": "lead@example.test", "status": "Contacted"},
+                },
+            }
+        ),
+    ]
+    connections = {
+        "Manual Trigger": {"main": [[{"node": "Loop Over Leads", "type": "main", "index": 0}]]},
+        "Loop Over Leads": _split_branch(
+            [[], [{"node": "Send Email", "type": "main", "index": 0}]]
+        ),
+        "Send Email": {"main": [[{"node": "Update Siparis", "type": "main", "index": 0}]]},
+    }
+
+    errors = validate_workflow_payload(
+        nodes,
+        connections,
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any("nothing returns to 'Loop Over Leads'" in error for error in errors)
+
+
+def test_split_in_batches_shared_done_and_loop_return_fails_validation():
+    nodes = [
+        valid_nodes()[0],
+        _split_in_batches_node(type_version=3),
+        _gmail_send_node(),
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "update",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "sheetName": {"__rl": True, "mode": "name", "value": "Leads"},
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "matchingColumns": ["email"],
+                    "value": {"email": "lead@example.test", "status": "Contacted"},
+                },
+            }
+        ),
+        {
+            "id": "after-loop",
+            "name": "After Loop",
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [900, 150],
+            "parameters": {"mode": "manual", "assignments": {"assignments": []}},
+        },
+    ]
+    connections = {
+        "Manual Trigger": {"main": [[{"node": "Loop Over Leads", "type": "main", "index": 0}]]},
+        "Loop Over Leads": _split_branch(
+            [
+                [{"node": "After Loop", "type": "main", "index": 0}],
+                [{"node": "Send Email", "type": "main", "index": 0}],
+            ]
+        ),
+        "After Loop": {"main": [[{"node": "Update Siparis", "type": "main", "index": 0}]]},
+        "Send Email": {"main": [[{"node": "Update Siparis", "type": "main", "index": 0}]]},
+        "Update Siparis": {"main": [[{"node": "Loop Over Leads", "type": "main", "index": 0}]]},
+    }
+
+    errors = validate_workflow_payload(
+        nodes,
+        connections,
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert any(
+        "only that branch may return" in error and "'Update Siparis'" in error for error in errors
+    )
+
+
+def test_split_in_batches_version_aware_loop_topology_passes_validation():
+    base_nodes = [
+        valid_nodes()[0],
+        _filter_node(
+            {
+                "conditions": {
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.status }}",
+                            "operator": {"type": "string", "operation": "equals"},
+                            "rightValue": "New",
+                        }
+                    ]
+                }
+            }
+        ),
+        _gmail_send_node(),
+        _sheets_node(
+            {
+                "resource": "sheet",
+                "operation": "update",
+                "documentId": {"__rl": True, "mode": "id", "value": "1abc"},
+                "sheetName": {"__rl": True, "mode": "name", "value": "Leads"},
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "matchingColumns": ["email"],
+                    "value": {
+                        "email": "={{ $('Filter Rows').item.json.email }}",
+                        "status": "Contacted",
+                    },
+                },
+            }
+        ),
+        {
+            "id": "set-after",
+            "name": "After Loop",
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [1125, 150],
+            "parameters": {
+                "mode": "manual",
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "summary",
+                            "name": "summary",
+                            "type": "string",
+                            "value": "done",
+                        }
+                    ]
+                },
+                "options": {},
+            },
+        },
+    ]
+
+    nodes_v3 = [*base_nodes[:2], _split_in_batches_node(type_version=3), *base_nodes[2:]]
+    errors_v3 = validate_workflow_payload(
+        nodes_v3,
+        {
+            "Manual Trigger": {"main": [[{"node": "Filter Rows", "type": "main", "index": 0}]]},
+            "Filter Rows": {"main": [[{"node": "Loop Over Leads", "type": "main", "index": 0}]]},
+            "Loop Over Leads": _split_branch(
+                [
+                    [{"node": "After Loop", "type": "main", "index": 0}],
+                    [{"node": "Send Email", "type": "main", "index": 0}],
+                ]
+            ),
+            "Send Email": {"main": [[{"node": "Update Siparis", "type": "main", "index": 0}]]},
+            "Update Siparis": {"main": [[{"node": "Loop Over Leads", "type": "main", "index": 0}]]},
+        },
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    nodes_v2 = [*base_nodes[:2], _split_in_batches_node(type_version=2), *base_nodes[2:]]
+    errors_v2 = validate_workflow_payload(
+        nodes_v2,
+        {
+            "Manual Trigger": {"main": [[{"node": "Filter Rows", "type": "main", "index": 0}]]},
+            "Filter Rows": {"main": [[{"node": "Loop Over Leads", "type": "main", "index": 0}]]},
+            "Loop Over Leads": _split_branch(
+                [
+                    [{"node": "Send Email", "type": "main", "index": 0}],
+                    [{"node": "After Loop", "type": "main", "index": 0}],
+                ]
+            ),
+            "Send Email": {"main": [[{"node": "Update Siparis", "type": "main", "index": 0}]]},
+            "Update Siparis": {"main": [[{"node": "Loop Over Leads", "type": "main", "index": 0}]]},
+        },
+        node_registry=FakeRegistry(SCHEMAS),  # type: ignore[arg-type]
+    )
+
+    assert errors_v3 == []
+    assert errors_v2 == []
 
 
 def test_normalize_workflow_connections_resolves_node_ids_to_names():

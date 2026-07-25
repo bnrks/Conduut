@@ -74,6 +74,15 @@ write-back'i ve ikinci-run idempotency'sini kanitlamaz.
     reconciliation preview ve acik kullanici onayi gerekir. Final claim gate'e
     ek olarak runner cümle bazli stream buffer kullanir; kaniti asan cümle
     token olarak yayinlanmadan deterministic guvenli ozetle degisir.
+11. Branch-capable control node contract'i port-indexed olur. Split In Batches
+    v2/v3 loop ve done portlari Node Card'dan build validator, assurance ve
+    sandbox'a ayni semantik ile tasinir. Feedback yalniz loop koluna ozel
+    kaynaktan gelebilir; done ile paylasilan return node sanctioned cycle
+    sayilmaz.
+12. Credential readiness test readiness anlamina gelmez. Persisted sandbox
+    evidence policy-versioned olur; oracle kurali degistiginde eski
+    `passed/no_action` kaydi fingerprint ayni olsa da activation pretest'ini
+    atlayamaz.
 
 ## V1 Kapsami
 
@@ -98,6 +107,11 @@ embedding yoktur; SQLite FTS5 + metadata filter baseline'i kullanilir.
 - H1 sandbox'i `2/2/2`, identity/value esligi ve projected `0/0/0` kaniti
   istemelidir. Canli ilk/ikinci run kabulü ayrica acik kullanici onayi ister;
   kod/test implementasyonu canli H1'i kendiliginden "gecti" yapmaz.
+- H2 gibi Loop Over Items akisinda pozitif eligibility sonrasi action'a
+  ulasilmadiysa `no_action` olamaz. Done-port body, eksik feedback ve
+  done/loop-shared feedback hem statik hem sandbox katmaninda blocking olmalidir.
+- Readiness sonucu credential ve test eksenlerini ayri raporlamali; sandbox
+  evidence olmadan "her sey hazir" veya "test gecti" claim'i yayinlanmamalidir.
 
 ## Ilk corpus ve runtime devreye alma notu (2026-07-23)
 

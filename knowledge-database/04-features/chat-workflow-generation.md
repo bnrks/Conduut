@@ -328,6 +328,16 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
 - Sandbox V2 en cok iki model repair denemesi yapar. Known-side-effect harness
   hatasi veya biten repair butcesi `needs_attention` ve terminal user-input
   siniri uretir; ayni turda update/run dongusune devam edilmez.
+- Manual/Schedule gibi Conduut'un dogrudan baslatamadigi trigger'lar production
+  workflow'da degistirilmez; sandbox gecici clone icinde trigger'i webhook'a
+  cevirip ayni govdeyi surer. HTTP Request ciktisindaki `$json.statusCode` ile
+  IF/Filter yapan akislar artik `options.response.response.fullResponse=true`
+  ve `neverError=true` olmadan validation'dan gecmez. Kosulun downstream'i bir
+  side effect'e ulasiyorsa DNS/timeout gibi transport hatalarinin da karar
+  dalina ulasmasi icin top-level `onError=continueRegularOutput` zorunludur.
+  Sandbox HTTP node gercekte `statusCode` uretmedigi halde alarm probe'una
+  ulasan kosuyu fail-closed `needs_attention` sayar; eksik alanin
+  `undefined != 200` olarak yanlis alarm uretmesi artik `passed` olamaz.
 - Runtime-input side-effect run'da approval token input validation'dan sonra
   tuketilir; eksik alan veya input/fingerprint uyusmazligi tokeni silmez.
   Credential bekledigi icin build sirasinda sandbox edilmemis workflow'un ilk

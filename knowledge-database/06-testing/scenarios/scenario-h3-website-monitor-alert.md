@@ -33,9 +33,13 @@ Dallanma doğru dalı tetikliyorsa geçti.
 
 ## Sonuç geçmişi
 
-**Güncel durum (2026-07-13): TEST EDİLMEDİ.** Yeniden baseline turunda en baştan
-çalıştırılacak.
+**Güncel durum (2026-07-25): GEÇTİ ✅ (kullanıcı kabulü).** Sistemik guard
+sonrası yeni agent build doğru HTTP status/error kontratıyla üretildi. Kullanıcı
+n8n editöründen manuel çalıştırdı; sağlıklı-site dalı gerçek execution ile
+doğrulandı. Erişim-hatası dalı ayrıca canlı hata enjekte edilerek koşulmadı,
+ancak gerekli HTTP hata politikası ve alert wiring'i workflow JSON'unda mevcut.
 
 | Tarih | Geçti/Kaldı | Bulunan bug → kök-neden → katman → commit → kardeş-doğrulama |
 |-------|-------------|--------------------------------------------------------------|
-| — | — | — |
+| 2026-07-25 | KALDI ❌ | Workflow `Kme7UBPjfNX7CLsg`; sandbox `434` ilk IF schema hatasından sonra `435` geçti. Manual `436` sağlıklı sitede `statusCode` üretilmediği halde alert maili gönderdi; manual `437` erişilemeyen domainde `Check Website` `ENOTFOUND` ile durdu ve IF'e ulaşmadı. Kök neden: HTTP status-condition için `fullResponse` + `neverError` + transport `onError` kontratı yoktu ve sandbox eksik-status yanlış alarmını başarı saydı. Katman: genel `validation.py` dataflow guard + `sandbox.py` fail-closed runtime finding + regresyon testleri. Canlı tekrar ve kardeş M2 doğrulaması bekliyor; commit yok. |
+| 2026-07-25 | GEÇTİ ✅ | Yeni workflow `GdxzW5oBvhUgMSZ4` aktif, `settings.timezone=Europe/Istanbul`, Schedule her 8 saat. HTTP node `options.response.response.fullResponse=true`, `neverError=true`, top-level `onError=continueRegularOutput`; IF `statusCode != 200` true portu yalnız Gmail `Send Alert`'e bağlı. Kullanıcının n8n editöründen başlattığı manual execution `440` success: `Check Site` output'u `statusCode=200`, IF output sayıları true=`0`, false=`1`, `Send Alert` çalışmadı. Sağlıklı site için yanlış alarm yok; kullanıcı sonucu kabul etti. Erişim-hatası dalı bu kabul koşusunda ayrıca canlı enjekte edilmedi. |

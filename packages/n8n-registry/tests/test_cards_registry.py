@@ -69,6 +69,38 @@ def _gmail_raw() -> dict:
     }
 
 
+def _split_in_batches_raw(version: float = 3) -> dict:
+    raw: dict = {
+        "name": "n8n-nodes-base.splitInBatches",
+        "displayName": "Loop Over Items (Split in Batches)",
+        "description": "Split data into batches and iterate over each batch",
+        "version": version,
+        "properties": [
+            {
+                "displayName": "Batch Size",
+                "name": "batchSize",
+                "type": "number",
+                "default": 1,
+            }
+        ],
+        "outputs": ["main", "main"],
+    }
+    raw["outputNames"] = ["done", "loop"] if version >= 3 else ["loop", "done"]
+    return raw
+
+
+def _router_raw() -> dict:
+    return {
+        "name": "acme-nodes-base.router",
+        "displayName": "Router",
+        "description": "Route items to multiple explicit ports",
+        "version": 1,
+        "properties": [],
+        "outputs": ["main", "main", "main"],
+        "outputNames": ["success", "retry", "error"],
+    }
+
+
 def _workflow_record() -> dict:
     return {
         "id": 42,
@@ -143,6 +175,51 @@ def test_get_node_contract_rejects_wrong_type_version():
 
     assert "error" in result
     assert result["availableTypeVersions"] == [2]
+
+
+def test_get_node_contract_derives_branch_behavior_from_raw_output_names():
+    node = parse_nodes_json([_router_raw()])[0]
+    registry = NodeRegistry()
+    registry._nodes = [node]
+    registry._node_by_type = {node.type_name.lower(): node}
+
+    result = registry.get_node_contract("acme-nodes-base.router", type_version=1)
+
+    assert result["branchBehavior"] == {
+        "outputs": 3,
+        "ports": {"0": "success", "1": "retry", "2": "error"},
+        "routing": "port-conditioned",
+    }
+
+
+@pytest.mark.parametrize(
+    ("version", "expected_ports", "expected_loop_port", "expected_done_port"),
+    [
+        (3, {"0": "done", "1": "loop"}, "1", "0"),
+        (2, {"0": "loop", "1": "done"}, "0", "1"),
+    ],
+)
+def test_split_in_batches_contract_exposes_versioned_loop_ports(
+    version: float,
+    expected_ports: dict[str, str],
+    expected_loop_port: str,
+    expected_done_port: str,
+):
+    node = parse_nodes_json([_split_in_batches_raw(version)])[0]
+    registry = NodeRegistry()
+    registry._nodes = [node]
+    registry._node_by_type = {node.type_name.lower(): node}
+
+    result = registry.get_node_contract("splitInBatches", type_version=version)
+
+    assert result["branchBehavior"] == {
+        "outputs": 2,
+        "ports": expected_ports,
+        "routing": "loop port emits each batch; done port emits after the final batch",
+        "loopPort": expected_loop_port,
+        "donePort": expected_done_port,
+    }
+    assert any("post-loop steps" in pitfall for pitfall in result["knownPitfalls"])
 
 
 def test_workflow_card_and_legacy_template_output_do_not_leak_raw_workflow():
@@ -221,6 +298,68 @@ def test_workflow_card_unwraps_community_detail_envelope():
     ]
     assert card.risk_level == "high"
     assert card.topology["edgeCount"] == 1
+
+
+def test_workflow_card_topology_edges_expose_sanitized_port_indexes():
+    record = {
+        "id": 6083,
+        "name": "Lead Outreach Loop",
+        "description": "Loop through leads and send follow-ups.",
+        "workflow": {
+            "workflow": {
+                "nodes": [
+                    {
+                        "name": "Loop Over Items",
+                        "type": "n8n-nodes-base.splitInBatches",
+                        "typeVersion": 3,
+                        "parameters": {"batchSize": 1, "secret": "should-not-leak"},
+                    },
+                    {
+                        "name": "Send Email",
+                        "type": "n8n-nodes-base.gmail",
+                        "typeVersion": 2.1,
+                        "parameters": {"resource": "message", "operation": "send"},
+                    },
+                    {
+                        "name": "Mark Sent",
+                        "type": "n8n-nodes-base.googleSheets",
+                        "typeVersion": 4.5,
+                        "parameters": {},
+                    },
+                ],
+                "connections": {
+                    "Loop Over Items": {
+                        "main": [
+                            [{"node": "Mark Sent", "type": "main", "index": 0}],
+                            [{"node": "Send Email", "type": "main", "index": 0}],
+                        ]
+                    }
+                },
+            }
+        },
+    }
+
+    card = extract_workflow_card(record)
+
+    assert [role["role"] for role in card.node_roles] == ["control", "action", "writeback"]
+    assert card.topology["edgeCount"] == 2
+    assert card.topology["edges"] == [
+        {
+            "from": "Loop Over Items",
+            "to": "Mark Sent",
+            "outputIndex": 0,
+            "outputLabel": "done",
+            "inputIndex": 0,
+        },
+        {
+            "from": "Loop Over Items",
+            "to": "Send Email",
+            "outputIndex": 1,
+            "outputLabel": "loop",
+            "inputIndex": 0,
+        },
+    ]
+    assert "secret" not in json.dumps(card.topology)
 
 
 def test_card_search_index_builds_persistent_retrieval_sqlite(tmp_path: Path):

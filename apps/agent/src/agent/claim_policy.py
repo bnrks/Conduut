@@ -81,6 +81,20 @@ _NO_ACTION_PATTERNS = (
 _SANDBOX_PATTERNS = (
     re.compile(r"\bsandbox(?:\s+testi)?\s+(?:geçti|başarılı)\b", re.IGNORECASE),
     re.compile(r"\bsandbox(?:\s+test)?\s+passed\b", re.IGNORECASE),
+    re.compile(r"\btest(?:\s+run'?u)?\s+(?:geçti|başarılı)\b", re.IGNORECASE),
+    re.compile(r"\btest(?:\s+run)?\s+passed\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:hazır|ready)\b[^.\n]{0,80}\b(?:aktif(?:leş)?tir(?:meye)?|activate|run)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bher\s+şey\s+hazır\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:everything|all(?:\s+set)?)\s+(?:is\s+)?ready\b",
+        re.IGNORECASE,
+    ),
 )
 _CREATED_PATTERNS = (
     re.compile(r"\bworkflow\s+(?:oluşturuldu|hazırlandı|güncellendi)\b", re.IGNORECASE),

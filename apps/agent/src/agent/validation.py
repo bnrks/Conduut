@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from n8n_registry import NodeRegistry
 
+from src.agent.sandbox_nodes import is_side_effect_node
 from src.agent.schemas import WorkflowNode
 from src.registry import registry as default_registry
 
@@ -39,6 +40,10 @@ _PLACEHOLDER_EMAILS = {
     "test@example.com",
     "info@example.com",
 }
+_STATUS_CODE_EXPR = re.compile(
+    r"\$json(?:\s*(?:\.|\?\.)\s*statusCode|\s*\[\s*['\"]statusCode['\"]\s*\])",
+    re.IGNORECASE,
+)
 
 
 def _as_node_dict(node: WorkflowNode | Mapping[str, Any]) -> dict[str, Any]:
@@ -201,6 +206,316 @@ def _iter_connection_targets(value: Any):
             yield from _iter_connection_targets(nested)
 
 
+def _main_connection_groups(connection: Any) -> tuple[tuple[Mapping[str, Any], ...], ...]:
+    if not isinstance(connection, Mapping):
+        return ()
+
+    groups = connection.get("main")
+    if not isinstance(groups, list):
+        return ()
+
+    normalized: list[tuple[Mapping[str, Any], ...]] = []
+    for group in groups:
+        if isinstance(group, list):
+            normalized.append(
+                tuple(
+                    target
+                    for target in group
+                    if isinstance(target, Mapping)
+                    and target.get("node")
+                    and str(target.get("type") or "main") == "main"
+                )
+            )
+        elif (
+            isinstance(group, Mapping)
+            and group.get("node")
+            and str(group.get("type") or "main") == "main"
+        ):
+            normalized.append((group,))
+        else:
+            normalized.append(())
+    return tuple(normalized)
+
+
+def _main_adjacency(connections: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
+    adjacency: dict[str, list[str]] = {}
+    for source, value in connections.items():
+        targets: list[str] = []
+        for group in _main_connection_groups(value):
+            targets.extend(str(target["node"]) for target in group)
+        if targets:
+            adjacency[str(source)] = targets
+    return {source: tuple(targets) for source, targets in adjacency.items()}
+
+
+def _descendants_from(
+    start_nodes: Sequence[str],
+    adjacency: Mapping[str, tuple[str, ...]],
+    *,
+    stop_at: str | None = None,
+) -> set[str]:
+    descendants: set[str] = set()
+    pending = list(start_nodes)
+    while pending:
+        current = pending.pop()
+        if current in descendants:
+            continue
+        descendants.add(current)
+        if stop_at is not None and current == stop_at:
+            continue
+        pending.extend(adjacency.get(current, ()))
+    return descendants
+
+
+def _split_in_batches_ports(node: Mapping[str, Any]) -> tuple[int, int] | None:
+    if node.get("type") != _SPLIT_IN_BATCHES_TYPE:
+        return None
+
+    type_version = node.get("typeVersion")
+    if not isinstance(type_version, int | float) or isinstance(type_version, bool):
+        return None
+    if type_version >= 3:
+        return (1, 0)
+    if type_version >= 2:
+        return (0, 1)
+    return None
+
+
+def _split_output_label(output_index: int, branch_name: str) -> str:
+    return f"main output {output_index} ('{branch_name}')"
+
+
+def _node_has_side_effect(node: Mapping[str, Any] | None) -> bool:
+    if not isinstance(node, Mapping):
+        return False
+    return is_side_effect_node(dict(node))
+
+
+def _validate_split_in_batches_connections(
+    raw_nodes: Sequence[Mapping[str, Any]],
+    connections: Mapping[str, Any],
+) -> list[str]:
+    errors: list[str] = []
+    nodes_by_name = {
+        str(node.get("name")): node for node in raw_nodes if str(node.get("name") or "").strip()
+    }
+    adjacency = _main_adjacency(connections)
+    predecessors: dict[str, list[str]] = {}
+    for source, targets in adjacency.items():
+        for target in targets:
+            predecessors.setdefault(target, []).append(source)
+
+    for name, node in nodes_by_name.items():
+        ports = _split_in_batches_ports(node)
+        if ports is None:
+            continue
+
+        loop_output, done_output = ports
+        groups = _main_connection_groups(connections.get(name, {}))
+        loop_targets = (
+            [str(target["node"]) for target in groups[loop_output]]
+            if loop_output < len(groups)
+            else []
+        )
+        done_targets = (
+            [str(target["node"]) for target in groups[done_output]]
+            if done_output < len(groups)
+            else []
+        )
+        loop_descendants = _descendants_from(loop_targets, adjacency, stop_at=name)
+        done_descendants = _descendants_from(done_targets, adjacency, stop_at=name)
+        loopback_candidates = tuple(
+            source
+            for source in predecessors.get(name, [])
+            if source != name and (source in loop_descendants or source in done_descendants)
+        )
+        sanctioned_return_sources = tuple(
+            source
+            for source in loopback_candidates
+            if source in loop_descendants and source not in done_descendants
+        )
+        wrong_return_sources = tuple(
+            source
+            for source in loopback_candidates
+            if source not in loop_descendants or source in done_descendants
+        )
+        done_side_effects = sorted(
+            node_name
+            for node_name in done_descendants
+            if node_name != name and _node_has_side_effect(nodes_by_name.get(node_name))
+        )
+        loop_side_effects = sorted(
+            node_name
+            for node_name in loop_descendants
+            if node_name != name and _node_has_side_effect(nodes_by_name.get(node_name))
+        )
+
+        if wrong_return_sources:
+            wrong_label = (
+                _split_output_label(done_output, "done")
+                if any(source in done_descendants for source in wrong_return_sources)
+                else f"a non-loop branch of '{name}'"
+            )
+            errors.append(
+                f"Split In Batches node '{name}' loops back from {wrong_label} via "
+                f"{', '.join(repr(source) for source in wrong_return_sources)}. For "
+                f"typeVersion {node.get('typeVersion')}, the per-item body must leave "
+                f"{_split_output_label(loop_output, 'loop')} and only that branch may return "
+                f"to '{name}'."
+            )
+
+        if loop_descendants and not sanctioned_return_sources:
+            errors.append(
+                f"Split In Batches node '{name}' sends items into "
+                f"{_split_output_label(loop_output, 'loop')} but nothing returns to '{name}'. "
+                "Connect the last per-item node back to the Split In Batches node so the next "
+                "batch can run."
+            )
+
+        if done_side_effects and not loop_side_effects and not sanctioned_return_sources:
+            errors.append(
+                f"Split In Batches node '{name}' routes side-effect node(s) "
+                f"{', '.join(repr(node_name) for node_name in done_side_effects)} from "
+                f"{_split_output_label(done_output, 'done')}. That branch runs only after the "
+                "loop finishes. Move the per-item action/write-back body to "
+                f"{_split_output_label(loop_output, 'loop')} instead."
+            )
+
+    return errors
+
+
+def _main_predecessors(connections: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
+    predecessors: dict[str, list[str]] = {}
+    for source, targets in _main_adjacency(connections).items():
+        for target in targets:
+            predecessors.setdefault(target, []).append(source)
+    return {target: tuple(sources) for target, sources in predecessors.items()}
+
+
+def _rule_references_status_code(rule: Mapping[str, Any]) -> bool:
+    left_value = rule.get("leftValue")
+    return isinstance(left_value, str) and bool(_STATUS_CODE_EXPR.search(left_value))
+
+
+def _node_references_status_code(node: Mapping[str, Any]) -> bool:
+    if node.get("type") not in {"n8n-nodes-base.if", "n8n-nodes-base.filter"}:
+        return False
+    parameters = node.get("parameters")
+    conditions = parameters.get("conditions") if isinstance(parameters, Mapping) else None
+    rules = conditions.get("conditions") if isinstance(conditions, Mapping) else None
+    return isinstance(rules, list) and any(
+        isinstance(rule, Mapping) and _rule_references_status_code(rule) for rule in rules
+    )
+
+
+def _bool_parameter(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return isinstance(value, str) and value.strip().lower() == "true"
+
+
+def _nested_mapping(value: Mapping[str, Any], *keys: str) -> Mapping[str, Any]:
+    current: Any = value
+    for key in keys:
+        if not isinstance(current, Mapping):
+            return {}
+        current = current.get(key)
+    return current if isinstance(current, Mapping) else {}
+
+
+def _http_request_response_guards(node: Mapping[str, Any]) -> tuple[bool, bool, bool]:
+    parameters = node.get("parameters")
+    params = parameters if isinstance(parameters, Mapping) else {}
+    response_options = _nested_mapping(params, "options", "response", "response")
+    full_response = _bool_parameter(response_options.get("fullResponse"))
+    never_error = _bool_parameter(response_options.get("neverError"))
+    continue_regular_output = str(node.get("onError") or "").strip()
+    return full_response, never_error, continue_regular_output == "continueRegularOutput"
+
+
+def _validate_http_status_condition_flow(
+    raw_nodes: Sequence[Mapping[str, Any]],
+    connections: Mapping[str, Any],
+) -> list[str]:
+    nodes_by_name = {
+        str(node.get("name")): node for node in raw_nodes if str(node.get("name") or "").strip()
+    }
+    adjacency = _main_adjacency(connections)
+    predecessors = _main_predecessors(connections)
+    errors: list[str] = []
+    seen: set[str] = set()
+
+    for node_name, node in nodes_by_name.items():
+        if not _node_references_status_code(node):
+            continue
+
+        pending = list(predecessors.get(node_name, ()))
+        visited: set[str] = set()
+        http_sources: set[str] = set()
+        while pending:
+            source = pending.pop()
+            if source in visited:
+                continue
+            visited.add(source)
+            source_node = nodes_by_name.get(source)
+            if source_node is None:
+                continue
+            if source_node.get("type") == "n8n-nodes-base.httpRequest":
+                http_sources.add(source)
+                continue
+            pending.extend(predecessors.get(source, ()))
+
+        descendant_nodes = _descendants_from(
+            adjacency.get(node_name, ()),
+            adjacency,
+            stop_at=node_name,
+        )
+        drives_side_effect = any(
+            descendant != node_name and _node_has_side_effect(nodes_by_name.get(descendant))
+            for descendant in descendant_nodes
+        )
+
+        for http_name in sorted(http_sources):
+            full_response, never_error, continue_output = _http_request_response_guards(
+                nodes_by_name[http_name]
+            )
+
+            if not full_response:
+                error = (
+                    f"HTTP Request node '{http_name}' feeds condition node '{node_name}' via "
+                    "$json.statusCode, but parameters.options.response.response.fullResponse is "
+                    "false. "
+                    "Enable 'Include Response Headers and Status' so downstream status checks "
+                    "receive the HTTP status code."
+                )
+                if error not in seen:
+                    seen.add(error)
+                    errors.append(error)
+            if not never_error:
+                error = (
+                    f"HTTP Request node '{http_name}' feeds condition node '{node_name}' via "
+                    "$json.statusCode, but parameters.options.response.response.neverError is "
+                    "false. Enable 'Never Error' so non-2xx HTTP responses still emit items for "
+                    "the downstream condition."
+                )
+                if error not in seen:
+                    seen.add(error)
+                    errors.append(error)
+            if drives_side_effect and not continue_output:
+                error = (
+                    f"HTTP Request node '{http_name}' feeds condition node '{node_name}', whose "
+                    "downstream path reaches a side-effect node, but node.onError is not "
+                    "'continueRegularOutput'. Enable top-level onError=continueRegularOutput so "
+                    "connection/DNS/timeout failures also reach the alert-handling branch instead "
+                    "of aborting the workflow."
+                )
+                if error not in seen:
+                    seen.add(error)
+                    errors.append(error)
+
+    return errors
+
+
 def _is_trigger_node(node: Mapping[str, Any], schema: dict[str, Any] | None) -> bool:
     if schema and schema.get("isTrigger"):
         return True
@@ -308,6 +623,7 @@ _GOOGLE_SHEETS_ROW_OPS = {"read", "append", "update", "appendorupdate", "clear",
 _GOOGLE_SHEETS_LEGACY_KEYS = ("dataMode", "values", "range")
 _GOOGLE_SHEETS_LEGACY_DOCUMENT_KEYS = ("spreadsheetId", "sheetId")
 _AMBIGUOUS_SHEET_ID_RE = re.compile(r"^\d+$")
+_SPLIT_IN_BATCHES_TYPE = "n8n-nodes-base.splitInBatches"
 
 
 def _has_sheet_name(value: Any) -> bool:
@@ -938,6 +1254,8 @@ def validate_workflow_payload(
                     errors.append(f"connections references unknown target node '{target_name}'")
 
         errors.extend(_langchain_subnode_wiring_errors(connections, node_type_by_name))
+        errors.extend(_validate_split_in_batches_connections(raw_nodes, connections))
+        errors.extend(_validate_http_status_condition_flow(raw_nodes, connections))
 
     return errors
 

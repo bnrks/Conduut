@@ -76,6 +76,22 @@ def _extract_category(raw: dict[str, Any]) -> str:
     return "Core"
 
 
+def _extract_port_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    ports: list[str] = []
+    for item in value:
+        if isinstance(item, dict):
+            label = item.get("displayName") or item.get("type") or item.get("name")
+            if label:
+                ports.append(str(label))
+            continue
+        if item is None:
+            continue
+        ports.append(str(item))
+    return [port for port in ports if port.strip()]
+
+
 def _version_condition_matches(condition: Any, version: int | float) -> bool:
     current = _as_number(version)
     if current is None:
@@ -449,6 +465,8 @@ def _parse_node(raw: dict[str, Any]) -> NodeInfo | None:
         is_trigger=_is_trigger(raw),
         resources=resources,
         operations=operations,
+        output_types=_extract_port_list(raw.get("outputs")),
+        output_names=_extract_port_list(raw.get("outputNames")),
         key_properties=list(contracts[0].key_properties),
         contracts=contracts,
     )

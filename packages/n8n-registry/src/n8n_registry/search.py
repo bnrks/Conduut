@@ -324,6 +324,40 @@ def _contract_example_params(contract: NodeContract) -> dict[str, Any]:
     return example_params
 
 
+def _split_in_batches_ports(type_version: int | float) -> dict[str, str]:
+    if type_version >= 3:
+        return {"0": "done", "1": "loop"}
+    return {"0": "loop", "1": "done"}
+
+
+def _derived_output_ports(node: NodeInfo) -> dict[str, str]:
+    if node.type_name == "n8n-nodes-base.splitInBatches":
+        return _split_in_batches_ports(node.type_version)
+
+    labels = [label.strip() for label in node.output_names if label.strip()]
+    if labels:
+        return {str(index): label for index, label in enumerate(labels)}
+
+    count = len(node.output_types)
+    if count <= 1:
+        return {}
+    return {
+        str(index): label.strip() for index, label in enumerate(node.output_types) if label.strip()
+    }
+
+
+def _branch_behavior(node: NodeInfo) -> dict[str, Any]:
+    ports = _derived_output_ports(node)
+    output_count = max(len(ports), len(node.output_types), len(node.output_names), 1)
+    behavior: dict[str, Any] = {
+        "outputs": output_count,
+        "routing": "single" if output_count == 1 else "port-conditioned",
+    }
+    if ports:
+        behavior["ports"] = ports
+    return behavior
+
+
 def _node_contract_semantics(node: NodeInfo, contract: NodeContract) -> dict[str, Any]:
     node_type = node.type_name
     operation = str(contract.operation or "")
@@ -372,7 +406,7 @@ def _node_contract_semantics(node: NodeInfo, contract: NodeContract) -> dict[str
             "shape": "n8n item list",
             "cardinality": "operation-dependent",
         },
-        "branchBehavior": {"outputs": 1, "routing": "single"},
+        "branchBehavior": _branch_behavior(node),
         "fieldLineage": {"preservesInputItems": None, "preservesInputFields": None},
         "sideEffect": {"kind": "none", "external": False},
         "retryPolicy": {"automaticRetrySafe": True, "requiresIdentityKey": False},
@@ -469,13 +503,42 @@ def _node_contract_semantics(node: NodeInfo, contract: NodeContract) -> dict[str
         ]
         semantics["validatorRuleIds"] = ["condition_operator_shape", "item_scope_first_forbidden"]
         if node_type.endswith(".if"):
-            semantics["branchBehavior"] = {
-                "outputs": 2,
-                "ports": {"0": "true", "1": "false"},
-                "routing": "exactly one branch per input item",
-            }
+            semantics["branchBehavior"]["routing"] = "exactly one branch per input item"
         else:
             semantics["outputContract"]["cardinality"] = "0..N matching input items"
+
+    elif node_type == "n8n-nodes-base.splitInBatches":
+        ports = semantics["branchBehavior"].get("ports") or _split_in_batches_ports(
+            node.type_version
+        )
+        loop_port = next((index for index, label in ports.items() if label == "loop"), "1")
+        done_port = next((index for index, label in ports.items() if label == "done"), "0")
+        semantics["branchBehavior"] = {
+            **semantics["branchBehavior"],
+            "ports": ports,
+            "routing": "loop port emits each batch; done port emits after the final batch",
+            "loopPort": loop_port,
+            "donePort": done_port,
+        }
+        semantics["fieldLineage"] = {
+            "preservesInputItems": "per-batch on the loop port",
+            "preservesInputFields": True,
+        }
+        semantics["knownPitfalls"] = [
+            (
+                "Most n8n nodes already execute once per item; use Loop Over Items "
+                "only for true batch-state loops."
+            ),
+            (
+                f"Continue the loop from output {loop_port} ('loop') and attach "
+                f"post-loop steps to output {done_port} ('done')."
+            ),
+            (
+                "A side-effect node on the loop branch runs once per batch unless "
+                "you gate it explicitly."
+            ),
+        ]
+        semantics["validatorRuleIds"] = ["split_in_batches_port_contract"]
 
     elif node_type == "n8n-nodes-base.code":
         semantics["requiredParameters"] = ["jsCode when language is javaScript"]

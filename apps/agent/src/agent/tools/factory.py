@@ -74,6 +74,7 @@ from src.registry import (
 from src.registry import (
     search_workflow_cards as registry_search_workflow_cards,
 )
+from src.workflow_test_policy import WORKFLOW_TEST_POLICY_VERSION
 
 log = structlog.get_logger()
 
@@ -263,8 +264,32 @@ def _needs_pretest(
     if workflow is None:
         return False
     assurance = metadata.resources.get("assurance") if metadata else None
+    version = assurance.get("version") if isinstance(assurance, dict) else None
+    if version != WORKFLOW_TEST_POLICY_VERSION:
+        return True
     stored = assurance.get("workflow_fingerprint") if isinstance(assurance, dict) else None
     return stored != workflow_fingerprint(workflow)
+
+
+def _workflow_test_state(
+    metadata: store.WorkflowMetadata | None,
+    workflow: dict[str, Any] | None = None,
+    *,
+    default_required: bool = True,
+) -> dict[str, Any]:
+    """Summarize current sandbox evidence without conflating it with credential readiness."""
+
+    resources = metadata.resources if metadata else {}
+    assurance = resources.get("assurance") if isinstance(resources, dict) else None
+    test_status = resources.get("test_status") if isinstance(resources, dict) else None
+    test_coverage = assurance.get("coverage") if isinstance(assurance, dict) else None
+    test_required = _needs_pretest(metadata, workflow) if metadata is not None else default_required
+    return {
+        "test_status": test_status,
+        "test_coverage": test_coverage,
+        "test_required": test_required,
+        "ready_for_activation": not test_required,
+    }
 
 
 async def _run_pretest_gate(
@@ -308,6 +333,32 @@ def _readiness_block_result(workflow_id: str, readiness: dict[str, Any]) -> dict
         result["error"] = "Missing credentials. Ask the user to submit the credential request."
         result["instruction"] = _missing_credentials_instruction()
     return result
+
+
+def _augment_readiness_result(
+    result: dict[str, Any],
+    readiness: dict[str, Any],
+    *,
+    test_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Add explicit test-readiness dimensions to readiness/tool payloads."""
+
+    credential_ready = (
+        readiness.get("missing_count", 0) == 0
+        and not readiness.get("reuse_candidates")
+        and not readiness.get("research_candidates")
+    )
+    out = dict(result)
+    out["credential_ready"] = credential_ready
+    if test_state is None:
+        return out
+    out["test_required"] = bool(test_state.get("test_required"))
+    out["ready_for_activation"] = credential_ready and not out["test_required"]
+    if test_state.get("test_status"):
+        out["test_status"] = test_state["test_status"]
+    if test_state.get("test_coverage"):
+        out["test_coverage"] = test_state["test_coverage"]
+    return out
 
 
 async def _dedup_existing_workflow(existing_id: str | None) -> dict[str, Any] | None:
@@ -858,6 +909,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             readiness,
             timezone=workflow_timezone,
         )
+        result = _augment_readiness_result(result, readiness)
         if _should_run_sandbox_test(result, awaiting=ctx.deps.awaiting_user_input):
             # Lazy import: tools/__init__ imports factory, and sandbox_gate
             # imports back into the tools package — importing it here (not at
@@ -964,6 +1016,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             readiness,
             timezone=workflow_timezone,
         )
+        result = _augment_readiness_result(result, readiness)
         if _should_run_sandbox_test(result, awaiting=ctx.deps.awaiting_user_input):
             # Lazy import: tools/__init__ imports factory, and sandbox_gate
             # imports back into the tools package — importing it here (not at
@@ -994,9 +1047,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                 _log_tool_finished("activate_workflow", started_at, block)
                 return block
             metadata = await store.get_workflow_metadata(ctx.deps.user_id, workflow_id)
-            test_status = metadata.resources.get("test_status") if metadata else None
-            assurance = metadata.resources.get("assurance") if metadata else None
-            test_coverage = assurance.get("coverage") if isinstance(assurance, dict) else None
+            test_state = _workflow_test_state(metadata, workflow)
             if _needs_pretest(metadata, workflow):
                 gate = await _run_pretest_gate(ctx, workflow)
                 if gate.get("test_status") == "needs_attention":
@@ -1004,16 +1055,22 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                     gate["workflow_id"] = workflow_id
                     _log_tool_finished("activate_workflow", started_at, gate)
                     return gate
-                test_status = gate.get("test_status") or test_status
-                test_coverage = gate.get("test_coverage") or test_coverage
+                test_state["test_status"] = gate.get("test_status") or test_state.get("test_status")
+                test_state["test_coverage"] = gate.get("test_coverage") or test_state.get(
+                    "test_coverage"
+                )
+                test_state["test_required"] = False
+                test_state["ready_for_activation"] = True
             ctx.deps.mark_replay_unsafe("activate_workflow")
             await n8n_client.activate_workflow(workflow_id)
             ctx.deps.record_claim_evidence("workflow_activated", workflow_id=workflow_id)
             result = {
                 "success": True,
                 "workflow_id": workflow_id,
-                "test_status": test_status,
-                "test_coverage": test_coverage,
+                "test_status": test_state.get("test_status"),
+                "test_coverage": test_state.get("test_coverage"),
+                "test_required": False,
+                "ready_for_activation": True,
                 "run_verified": False,
                 "instruction": (
                     "The workflow trigger is active, but activation is not execution evidence. "
@@ -1256,12 +1313,22 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                 instruction = _credential_suggestion_instruction()
             else:
                 instruction = "No missing credentials were found."
+            test_state = _workflow_test_state(
+                await store.get_workflow_metadata(ctx.deps.user_id, workflow_id),
+                workflow,
+            )
+            if readiness["ready"] and test_state["test_required"]:
+                instruction = (
+                    "Credentials are ready, but this workflow fingerprint still needs a "
+                    "sandbox pretest before activation or a real run can be treated as ready."
+                )
             result = {
                 "ready": readiness["ready"],
                 "testable": readiness["testable"],
                 "missing_credentials": len(readiness["missing_credentials"]),
                 "instruction": instruction,
             }
+            result = _augment_readiness_result(result, readiness, test_state=test_state)
             if suggestions:
                 result["credential_suggestions"] = suggestions
             if research:

@@ -603,6 +603,761 @@ async def test_evaluate_sandbox_run_allows_real_business_output(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_evaluate_sandbox_run_allows_healthy_http_status_no_action():
+    detail = {
+        "id": "exec-http-healthy",
+        "status": "success",
+        "finished": True,
+        "workflowId": "clone-http",
+        "data": {
+            "resultData": {
+                "lastNodeExecuted": "Filter",
+                "runData": {
+                    "Check Website": [
+                        {"data": {"main": [[{"json": {"statusCode": 200, "body": {"ok": True}}}]]}}
+                    ],
+                    "Filter": [
+                        {
+                            "data": {
+                                "main": [
+                                    [],
+                                    [{"json": {"statusCode": 200, "body": {"ok": True}}}],
+                                ]
+                            }
+                        }
+                    ],
+                },
+            }
+        },
+    }
+    workflow = {
+        "nodes": [
+            {
+                "name": "Check Website",
+                "type": "n8n-nodes-base.httpRequest",
+                "parameters": {
+                    "method": "GET",
+                    "url": "https://example.test/health",
+                    "options": {
+                        "response": {
+                            "response": {
+                                "fullResponse": True,
+                                "neverError": True,
+                                "responseFormat": "json",
+                            }
+                        }
+                    },
+                },
+                "onError": "continueRegularOutput",
+            },
+            {
+                "name": "Filter",
+                "type": "n8n-nodes-base.if",
+                "parameters": {
+                    "conditions": {
+                        "conditions": [
+                            {
+                                "leftValue": "={{ $json.statusCode }}",
+                                "operator": {"type": "number", "operation": "notEqual"},
+                                "rightValue": 200,
+                            }
+                        ]
+                    }
+                },
+            },
+            {"name": "Send", "type": "n8n-nodes-base.gmail", "parameters": {"operation": "send"}},
+        ],
+        "connections": {
+            "Check Website": {"main": [[{"node": "Filter", "type": "main", "index": 0}]]},
+            "Filter": {"main": [[{"node": "Send", "type": "main", "index": 0}], []]},
+        },
+    }
+    probes = [
+        sandbox.ActionProbe(
+            name="Send",
+            kind="gmail_send",
+            covered=True,
+            original_type="n8n-nodes-base.gmail",
+        )
+    ]
+
+    result = await _evaluate_sandbox_run(detail, workflow, probes, "Monitor website and alert me")
+
+    assert result.passed is True
+    assert result.status == "no_action"
+    assert result.eligible_count == 0
+
+
+@pytest.mark.asyncio
+async def test_evaluate_sandbox_run_rejects_http_alert_path_without_continue_regular_output():
+    detail = {
+        "id": "exec-http-no-onerror",
+        "status": "success",
+        "finished": True,
+        "workflowId": "clone-http",
+        "data": {
+            "resultData": {
+                "lastNodeExecuted": "Filter",
+                "runData": {
+                    "Check Website": [
+                        {"data": {"main": [[{"json": {"statusCode": 200, "body": {"ok": True}}}]]}}
+                    ],
+                    "Filter": [
+                        {
+                            "data": {
+                                "main": [
+                                    [],
+                                    [{"json": {"statusCode": 200, "body": {"ok": True}}}],
+                                ]
+                            }
+                        }
+                    ],
+                },
+            }
+        },
+    }
+    workflow = {
+        "nodes": [
+            {
+                "name": "Check Website",
+                "type": "n8n-nodes-base.httpRequest",
+                "parameters": {
+                    "method": "GET",
+                    "url": "https://example.test/health",
+                    "options": {
+                        "response": {
+                            "response": {
+                                "fullResponse": True,
+                                "neverError": True,
+                                "responseFormat": "json",
+                            }
+                        }
+                    },
+                },
+            },
+            {
+                "name": "Filter",
+                "type": "n8n-nodes-base.if",
+                "parameters": {
+                    "conditions": {
+                        "conditions": [
+                            {
+                                "leftValue": "={{ $json.statusCode }}",
+                                "operator": {"type": "number", "operation": "notEqual"},
+                                "rightValue": 200,
+                            }
+                        ]
+                    }
+                },
+            },
+            {"name": "Send", "type": "n8n-nodes-base.gmail", "parameters": {"operation": "send"}},
+        ],
+        "connections": {
+            "Check Website": {"main": [[{"node": "Filter", "type": "main", "index": 0}]]},
+            "Filter": {"main": [[{"node": "Send", "type": "main", "index": 0}], []]},
+        },
+    }
+    probes = [
+        sandbox.ActionProbe(
+            name="Send",
+            kind="gmail_send",
+            covered=True,
+            original_type="n8n-nodes-base.gmail",
+        )
+    ]
+
+    result = await _evaluate_sandbox_run(detail, workflow, probes, "Monitor website and alert me")
+
+    assert result.passed is False
+    assert any("node.onError" in item for item in result.findings)
+
+
+@pytest.mark.asyncio
+async def test_evaluate_sandbox_run_rejects_http_status_branch_without_full_response():
+    detail = {
+        "id": "exec-http-false-pass",
+        "status": "success",
+        "finished": True,
+        "workflowId": "clone-http",
+        "data": {
+            "resultData": {
+                "lastNodeExecuted": "Send",
+                "runData": {
+                    "Check Website": [{"data": {"main": [[{"json": {"body": {"ok": True}}}]]}}],
+                    "Filter": [
+                        {
+                            "data": {
+                                "main": [
+                                    [{"json": {"body": {"ok": True}}}],
+                                    [],
+                                ]
+                            }
+                        }
+                    ],
+                    "Send": [
+                        {
+                            "data": {
+                                "main": [
+                                    [
+                                        {
+                                            "json": {
+                                                "__conduut_probe": "gmail_send",
+                                                "__conduut_probe_target": "ops@example.com",
+                                                "__conduut_probe_subject": "Site down",
+                                                "__conduut_probe_message": "Alert",
+                                            }
+                                        }
+                                    ]
+                                ]
+                            }
+                        }
+                    ],
+                },
+            }
+        },
+    }
+    workflow = {
+        "nodes": [
+            {
+                "name": "Check Website",
+                "type": "n8n-nodes-base.httpRequest",
+                "parameters": {
+                    "method": "GET",
+                    "url": "https://example.test/health",
+                    "options": {
+                        "response": {
+                            "response": {
+                                "fullResponse": False,
+                                "neverError": True,
+                                "responseFormat": "json",
+                            }
+                        }
+                    },
+                },
+                "onError": "continueRegularOutput",
+            },
+            {
+                "name": "Filter",
+                "type": "n8n-nodes-base.if",
+                "parameters": {
+                    "conditions": {
+                        "conditions": [
+                            {
+                                "leftValue": "={{ $json.statusCode }}",
+                                "operator": {"type": "number", "operation": "notEqual"},
+                                "rightValue": 200,
+                            }
+                        ]
+                    }
+                },
+            },
+            {"name": "Send", "type": "n8n-nodes-base.gmail", "parameters": {"operation": "send"}},
+        ],
+        "connections": {
+            "Check Website": {"main": [[{"node": "Filter", "type": "main", "index": 0}]]},
+            "Filter": {"main": [[{"node": "Send", "type": "main", "index": 0}], []]},
+        },
+    }
+    probes = [
+        sandbox.ActionProbe(
+            name="Send",
+            kind="gmail_send",
+            covered=True,
+            original_type="n8n-nodes-base.gmail",
+        )
+    ]
+
+    result = await _evaluate_sandbox_run(detail, workflow, probes, "Monitor website and alert me")
+
+    assert result.passed is False
+    assert result.status == "needs_attention"
+    assert any("fullResponse" in item for item in result.findings)
+    assert any("no statusCode field" in item for item in result.findings)
+
+
+def test_http_status_findings_use_nearest_http_source_only():
+    detail = {
+        "data": {
+            "resultData": {
+                "runData": {
+                    "Warmup": [{"data": {"main": [[{"json": {"data": "ready"}}]]}}],
+                    "Check Website": [
+                        {"data": {"main": [[{"json": {"statusCode": 200, "body": {}}}]]}}
+                    ],
+                }
+            }
+        }
+    }
+    workflow = {
+        "nodes": [
+            {
+                "name": "Warmup",
+                "type": "n8n-nodes-base.httpRequest",
+                "parameters": {
+                    "method": "GET",
+                    "url": "https://example.test/warmup",
+                    "options": {},
+                },
+            },
+            {
+                "name": "Check Website",
+                "type": "n8n-nodes-base.httpRequest",
+                "parameters": {
+                    "method": "GET",
+                    "url": "https://example.test/health",
+                    "options": {
+                        "response": {
+                            "response": {
+                                "fullResponse": True,
+                                "neverError": True,
+                            }
+                        }
+                    },
+                },
+            },
+            {
+                "name": "Filter",
+                "type": "n8n-nodes-base.if",
+                "parameters": {
+                    "conditions": {
+                        "conditions": [
+                            {
+                                "leftValue": "={{ $json.statusCode }}",
+                                "operator": {"type": "number", "operation": "notEqual"},
+                                "rightValue": 200,
+                            }
+                        ]
+                    }
+                },
+            },
+        ],
+        "connections": {
+            "Warmup": {"main": [[{"node": "Check Website", "type": "main", "index": 0}]]},
+            "Check Website": {"main": [[{"node": "Filter", "type": "main", "index": 0}]]},
+        },
+    }
+
+    findings = sandbox._http_status_condition_findings(detail, workflow)
+
+    assert not any("Warmup" in finding for finding in findings)
+    assert findings == []
+
+
+def test_http_status_findings_require_transport_policy_for_http_post_action():
+    detail = {
+        "data": {
+            "resultData": {
+                "runData": {
+                    "Check Website": [
+                        {"data": {"main": [[{"json": {"statusCode": 200, "body": {}}}]]}}
+                    ],
+                }
+            }
+        }
+    }
+    workflow = {
+        "nodes": [
+            {
+                "name": "Check Website",
+                "type": "n8n-nodes-base.httpRequest",
+                "parameters": {
+                    "method": "GET",
+                    "url": "https://example.test/health",
+                    "options": {
+                        "response": {
+                            "response": {
+                                "fullResponse": True,
+                                "neverError": True,
+                            }
+                        }
+                    },
+                },
+            },
+            {
+                "name": "Filter",
+                "type": "n8n-nodes-base.if",
+                "parameters": {
+                    "conditions": {
+                        "conditions": [
+                            {
+                                "leftValue": "={{ $json.statusCode }}",
+                                "operator": {"type": "number", "operation": "notEqual"},
+                                "rightValue": 200,
+                            }
+                        ]
+                    }
+                },
+            },
+            {
+                "name": "Post Alert",
+                "type": "n8n-nodes-base.httpRequest",
+                "parameters": {
+                    "method": "POST",
+                    "url": "https://alerts.example.test/hook",
+                    "options": {},
+                },
+            },
+        ],
+        "connections": {
+            "Check Website": {"main": [[{"node": "Filter", "type": "main", "index": 0}]]},
+            "Filter": {"main": [[{"node": "Post Alert", "type": "main", "index": 0}], []]},
+        },
+    }
+
+    findings = sandbox._http_status_condition_findings(detail, workflow)
+
+    assert any("node.onError" in finding and "Check Website" in finding for finding in findings)
+
+
+@pytest.mark.asyncio
+async def test_evaluate_sandbox_run_rejects_loop_body_on_done_output():
+    detail = {
+        "id": "exec-loop-done",
+        "status": "success",
+        "finished": True,
+        "workflowId": "clone-loop",
+        "data": {
+            "resultData": {
+                "lastNodeExecuted": "Loop",
+                "runData": {
+                    "Filter": [
+                        {
+                            "data": {
+                                "main": [
+                                    [
+                                        {"json": {"Email": "a@example.com"}},
+                                        {"json": {"Email": "b@example.com"}},
+                                    ]
+                                ]
+                            }
+                        }
+                    ],
+                    "Loop": [
+                        {
+                            "data": {
+                                "main": [
+                                    [],
+                                    [{"json": {"Email": "a@example.com"}}],
+                                ]
+                            }
+                        }
+                    ],
+                },
+            }
+        },
+    }
+    workflow = {
+        "nodes": [
+            {"name": "Filter", "type": "n8n-nodes-base.filter", "parameters": {}},
+            {
+                "name": "Loop",
+                "type": "n8n-nodes-base.splitInBatches",
+                "typeVersion": 3,
+                "parameters": {"batchSize": 1},
+            },
+            {"name": "AI", "type": "@n8n/n8n-nodes-langchain.agent", "parameters": {}},
+            {
+                "name": "Send",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"operation": "send"},
+            },
+        ],
+        "connections": {
+            "Filter": {"main": [[{"node": "Loop", "type": "main", "index": 0}]]},
+            "Loop": {"main": [[{"node": "AI", "type": "main", "index": 0}], []]},
+            "AI": {"main": [[{"node": "Send", "type": "main", "index": 0}]]},
+        },
+    }
+    probes = [
+        sandbox.ActionProbe(
+            name="Send",
+            kind="gmail_send",
+            covered=True,
+            original_type="n8n-nodes-base.gmail",
+        )
+    ]
+
+    result = await _evaluate_sandbox_run(detail, workflow, probes, "Send outreach")
+
+    assert result.passed is False
+    assert result.status == "needs_attention"
+    assert any("routes its action body from the 'done' output" in item for item in result.findings)
+    assert any("'loop' output" in item and "no downstream path" in item for item in result.findings)
+
+
+@pytest.mark.asyncio
+async def test_evaluate_sandbox_run_rejects_loop_without_feedback_edge():
+    detail = {
+        "id": "exec-loop-feedback",
+        "status": "success",
+        "finished": True,
+        "workflowId": "clone-loop",
+        "data": {
+            "resultData": {
+                "lastNodeExecuted": "Send",
+                "runData": {
+                    "Loop": [
+                        {
+                            "data": {
+                                "main": [
+                                    [],
+                                    [{"json": {"Email": "a@example.com"}}],
+                                ]
+                            }
+                        }
+                    ],
+                    "Send": [
+                        {
+                            "data": {
+                                "main": [
+                                    [
+                                        {
+                                            "json": {
+                                                "__conduut_probe": "gmail_send",
+                                                "__conduut_probe_target": "a@example.com",
+                                                "__conduut_probe_subject": "Hello",
+                                                "__conduut_probe_message": "Message",
+                                            }
+                                        }
+                                    ]
+                                ]
+                            }
+                        }
+                    ],
+                },
+            }
+        },
+    }
+    workflow = {
+        "nodes": [
+            {
+                "name": "Loop",
+                "type": "n8n-nodes-base.splitInBatches",
+                "typeVersion": 3,
+                "parameters": {"batchSize": 1},
+            },
+            {
+                "name": "Send",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"operation": "send"},
+            },
+        ],
+        "connections": {"Loop": {"main": [[], [{"node": "Send", "type": "main", "index": 0}]]}},
+    }
+    probes = [
+        sandbox.ActionProbe(
+            name="Send",
+            kind="gmail_send",
+            covered=True,
+            original_type="n8n-nodes-base.gmail",
+        )
+    ]
+
+    result = await _evaluate_sandbox_run(detail, workflow, probes, "Send outreach")
+
+    assert result.passed is False
+    assert any("has no feedback path" in item for item in result.findings)
+
+
+@pytest.mark.asyncio
+async def test_evaluate_sandbox_run_rejects_feedback_shared_with_done_branch():
+    detail = {
+        "id": "exec-loop-shared-feedback",
+        "status": "success",
+        "finished": True,
+        "workflowId": "clone-loop",
+        "data": {
+            "resultData": {
+                "lastNodeExecuted": "Send",
+                "runData": {
+                    "Loop": [
+                        {
+                            "data": {
+                                "main": [
+                                    [],
+                                    [{"json": {"Email": "a@example.com"}}],
+                                ]
+                            }
+                        }
+                    ],
+                    "Send": [
+                        {
+                            "data": {
+                                "main": [
+                                    [
+                                        {
+                                            "json": {
+                                                "__conduut_probe": "gmail_send",
+                                                "__conduut_probe_target": "a@example.com",
+                                                "__conduut_probe_subject": "Hello",
+                                                "__conduut_probe_message": "Message",
+                                            }
+                                        }
+                                    ]
+                                ]
+                            }
+                        }
+                    ],
+                },
+            }
+        },
+    }
+    workflow = {
+        "nodes": [
+            {
+                "name": "Loop",
+                "type": "n8n-nodes-base.splitInBatches",
+                "typeVersion": 3,
+                "parameters": {"batchSize": 1},
+            },
+            {"name": "After", "type": "n8n-nodes-base.set", "parameters": {}},
+            {
+                "name": "Send",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"operation": "send"},
+            },
+            {"name": "Update", "type": "n8n-nodes-base.googleSheets", "parameters": {}},
+        ],
+        "connections": {
+            "Loop": {
+                "main": [
+                    [{"node": "After", "type": "main", "index": 0}],
+                    [{"node": "Send", "type": "main", "index": 0}],
+                ]
+            },
+            "After": {"main": [[{"node": "Update", "type": "main", "index": 0}]]},
+            "Send": {"main": [[{"node": "Update", "type": "main", "index": 0}]]},
+            "Update": {"main": [[{"node": "Loop", "type": "main", "index": 0}]]},
+        },
+    }
+    probes = [
+        sandbox.ActionProbe(
+            name="Send",
+            kind="gmail_send",
+            covered=True,
+            original_type="n8n-nodes-base.gmail",
+        )
+    ]
+
+    result = await _evaluate_sandbox_run(detail, workflow, probes, "Send outreach")
+
+    assert result.passed is False
+    assert any(
+        "reachable from both the 'loop' and 'done' outputs" in item for item in result.findings
+    )
+
+
+@pytest.mark.asyncio
+async def test_evaluate_sandbox_run_allows_proven_filter_no_action():
+    detail = {
+        "id": "exec-filter-no-action",
+        "status": "success",
+        "finished": True,
+        "workflowId": "clone-filter",
+        "data": {
+            "resultData": {
+                "lastNodeExecuted": "Filter",
+                "runData": {
+                    "Filter": [
+                        {
+                            "data": {
+                                "main": [
+                                    [],
+                                    [{"json": {"Status": "Contacted"}}],
+                                ]
+                            }
+                        }
+                    ]
+                },
+            }
+        },
+    }
+    workflow = {
+        "nodes": [
+            {"name": "Filter", "type": "n8n-nodes-base.if", "parameters": {}},
+            {
+                "name": "Send",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"operation": "send"},
+            },
+        ],
+        "connections": {"Filter": {"main": [[{"node": "Send", "type": "main", "index": 0}], []]}},
+    }
+    probes = [
+        sandbox.ActionProbe(
+            name="Send",
+            kind="gmail_send",
+            covered=True,
+            original_type="n8n-nodes-base.gmail",
+        )
+    ]
+
+    result = await _evaluate_sandbox_run(detail, workflow, probes, "Send outreach")
+
+    assert result.passed is True
+    assert result.status == "no_action"
+    assert result.eligible_count == 0
+
+
+@pytest.mark.asyncio
+async def test_evaluate_sandbox_run_rejects_unreached_action_after_positive_filter():
+    detail = {
+        "id": "exec-filter-drop",
+        "status": "success",
+        "finished": True,
+        "workflowId": "clone-filter",
+        "data": {
+            "resultData": {
+                "lastNodeExecuted": "Filter",
+                "runData": {
+                    "Filter": [
+                        {
+                            "data": {
+                                "main": [
+                                    [
+                                        {"json": {"Email": "a@example.com"}},
+                                        {"json": {"Email": "b@example.com"}},
+                                    ]
+                                ]
+                            }
+                        }
+                    ]
+                },
+            }
+        },
+    }
+    workflow = {
+        "nodes": [
+            {"name": "Filter", "type": "n8n-nodes-base.filter", "parameters": {}},
+            {"name": "Transform", "type": "n8n-nodes-base.set", "parameters": {}},
+            {
+                "name": "Send",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"operation": "send"},
+            },
+        ],
+        "connections": {
+            "Filter": {"main": [[{"node": "Transform", "type": "main", "index": 0}]]},
+            "Transform": {"main": [[{"node": "Send", "type": "main", "index": 0}]]},
+        },
+    }
+    probes = [
+        sandbox.ActionProbe(
+            name="Send",
+            kind="gmail_send",
+            covered=True,
+            original_type="n8n-nodes-base.gmail",
+        )
+    ]
+
+    result = await _evaluate_sandbox_run(detail, workflow, probes, "Send outreach")
+
+    assert result.passed is False
+    assert result.eligible_count == 2
+    assert any("was not reached" in item for item in result.findings)
+
+
+@pytest.mark.asyncio
 async def test_evaluate_sandbox_run_blocks_simple_if_branch_contradiction(monkeypatch):
     detail = {
         "id": "exec-if-1",

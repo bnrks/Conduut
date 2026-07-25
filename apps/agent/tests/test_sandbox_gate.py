@@ -7,13 +7,17 @@ import pytest
 from pydantic_ai import ModelRetry
 
 import src.agent.tools.sandbox_gate as gate
+from src.agent.assurance import workflow_fingerprint
 from src.agent.sandbox import SandboxTestResult
 from src.agent.tools.factory import (
+    _augment_readiness_result,
     _needs_pretest,
     _run_pretest_gate,
     _should_run_sandbox_test,
+    _workflow_test_state,
 )
 from src.store import WorkflowMetadata
+from src.workflow_test_policy import WORKFLOW_TEST_POLICY_VERSION
 
 
 def _meta(test_status):
@@ -268,5 +272,40 @@ def test_needs_pretest_runs_when_absent_or_not_passed():
 def test_needs_pretest_invalidates_stale_fingerprint():
     workflow = {"nodes": [], "connections": {}, "settings": {"timezone": "Europe/Istanbul"}}
     metadata = _meta("passed")
-    metadata.resources["assurance"] = {"workflow_fingerprint": "stale"}
+    metadata.resources["assurance"] = {
+        "version": WORKFLOW_TEST_POLICY_VERSION,
+        "workflow_fingerprint": "stale",
+    }
     assert _needs_pretest(metadata, workflow) is True
+
+
+def test_needs_pretest_invalidates_legacy_policy_evidence():
+    workflow = {"nodes": [], "connections": {}, "settings": {"timezone": "Europe/Istanbul"}}
+    metadata = _meta("no_action")
+    metadata.resources["assurance"] = {
+        "version": WORKFLOW_TEST_POLICY_VERSION - 1,
+        "workflow_fingerprint": workflow_fingerprint(workflow),
+    }
+
+    assert _needs_pretest(metadata, workflow) is True
+
+
+def test_workflow_test_state_marks_missing_evidence_as_test_required():
+    state = _workflow_test_state(None, _WF)
+
+    assert state["test_required"] is True
+    assert state["ready_for_activation"] is False
+    assert state["test_status"] is None
+
+
+def test_augment_readiness_result_keeps_credential_and_test_axes_separate():
+    base = {"ready": True, "missing_credentials": 0}
+    readiness = {"missing_count": 0, "reuse_candidates": [], "research_candidates": []}
+    state = {"test_required": True, "ready_for_activation": False, "test_status": None}
+
+    result = _augment_readiness_result(base, readiness, test_state=state)
+
+    assert result["ready"] is True
+    assert result["credential_ready"] is True
+    assert result["test_required"] is True
+    assert result["ready_for_activation"] is False

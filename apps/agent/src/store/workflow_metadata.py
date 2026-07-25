@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 
 import src.store as _pkg_store
+from src.workflow_test_policy import WORKFLOW_TEST_POLICY_VERSION
 
 
 @dataclass
@@ -97,7 +98,7 @@ async def save_workflow_test_status(
     assurance = dict(resources.get("assurance") or {})
     assurance.update(
         {
-            "version": 1,
+            "version": WORKFLOW_TEST_POLICY_VERSION,
             "sandbox_status": status,
             "findings": list(findings or []),
         }

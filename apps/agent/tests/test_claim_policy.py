@@ -18,6 +18,13 @@ def test_sandbox_evidence_cannot_support_real_run_claim():
     assert claim_exceeds_evidence("Workflow başarıyla çalıştı.", evidence) is True
 
 
+def test_created_evidence_cannot_support_ready_or_test_passed_claims():
+    evidence = [{"outcome": "workflow_created"}]
+
+    assert claim_exceeds_evidence("Her şey hazır, aktive edebilirsin.", evidence) is True
+    assert claim_exceeds_evidence("Test passed.", evidence) is True
+
+
 def test_verified_evidence_supports_claim_and_safe_summary():
     evidence = [{"outcome": "run_verified", "execution_id": "327"}]
     assert claim_exceeds_evidence("Workflow başarıyla çalıştı.", evidence) is False

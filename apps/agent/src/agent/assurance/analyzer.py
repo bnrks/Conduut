@@ -24,6 +24,7 @@ _TRIGGER_TYPES = {
     "n8n-nodes-base.webhook",
 }
 _SHEETS_UPDATE_OPERATIONS = {"update", "appendorupdate"}
+_SPLIT_IN_BATCHES_TYPE = "n8n-nodes-base.splitInBatches"
 
 
 def _node_dict(node: WorkflowNode | Mapping[str, Any]) -> dict[str, Any]:
@@ -58,23 +59,79 @@ def _node_references(value: Any, pattern: re.Pattern[str]) -> set[str]:
     return refs
 
 
+def _main_connection_groups(connection: Any) -> tuple[tuple[Mapping[str, Any], ...], ...]:
+    if not isinstance(connection, Mapping):
+        return ()
+
+    groups = connection.get("main")
+    if not isinstance(groups, list):
+        return ()
+
+    normalized: list[tuple[Mapping[str, Any], ...]] = []
+    for group in groups:
+        if isinstance(group, list):
+            normalized.append(
+                tuple(
+                    target
+                    for target in group
+                    if isinstance(target, Mapping)
+                    and target.get("node")
+                    and str(target.get("type") or "main") == "main"
+                )
+            )
+        elif (
+            isinstance(group, Mapping)
+            and group.get("node")
+            and str(group.get("type") or "main") == "main"
+        ):
+            normalized.append((group,))
+        else:
+            normalized.append(())
+    return tuple(normalized)
+
+
+def _split_in_batches_ports(node: Mapping[str, Any]) -> tuple[int, int] | None:
+    if node.get("type") != _SPLIT_IN_BATCHES_TYPE:
+        return None
+
+    type_version = node.get("typeVersion")
+    if not isinstance(type_version, int | float) or isinstance(type_version, bool):
+        return None
+    if type_version >= 3:
+        return (1, 0)
+    if type_version >= 2:
+        return (0, 1)
+    return None
+
+
+def _descendants_from(
+    start_nodes: Sequence[str],
+    adjacency: Mapping[str, tuple[str, ...]],
+    *,
+    stop_at: str | None = None,
+) -> set[str]:
+    descendants: set[str] = set()
+    pending = list(start_nodes)
+    while pending:
+        current = pending.pop()
+        if current in descendants:
+            continue
+        descendants.add(current)
+        if stop_at is not None and current == stop_at:
+            continue
+        pending.extend(adjacency.get(current, ()))
+    return descendants
+
+
+def _split_output_label(output_index: int, branch_name: str) -> str:
+    return f"main output {output_index} ('{branch_name}')"
+
+
 def _main_targets(connections: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
     adjacency: dict[str, list[str]] = defaultdict(list)
     for source, connection in connections.items():
-        if not isinstance(connection, Mapping):
-            continue
-        groups = connection.get("main")
-        if not isinstance(groups, list):
-            continue
-        for group in groups:
-            if not isinstance(group, list):
-                continue
-            for target in group:
-                if not isinstance(target, Mapping) or not target.get("node"):
-                    continue
-                if str(target.get("type") or "main") != "main":
-                    continue
-                adjacency[str(source)].append(str(target["node"]))
+        for group in _main_connection_groups(connection):
+            adjacency[str(source)].extend(str(target["node"]) for target in group)
     return {source: tuple(targets) for source, targets in adjacency.items()}
 
 
@@ -83,10 +140,65 @@ def _is_trigger(node: Mapping[str, Any]) -> bool:
     return node_type in _TRIGGER_TYPES or "trigger" in node_type.lower()
 
 
+def _sanctioned_split_loopback_edges(
+    nodes_by_name: Mapping[str, Mapping[str, Any]],
+    adjacency: Mapping[str, tuple[str, ...]],
+    connections: Mapping[str, Any],
+) -> set[tuple[str, str]]:
+    sanctioned: set[tuple[str, str]] = set()
+    predecessors = _predecessors(adjacency)
+
+    for name, node in nodes_by_name.items():
+        ports = _split_in_batches_ports(node)
+        if ports is None:
+            continue
+
+        loop_output, done_output = ports
+        groups = _main_connection_groups(connections.get(name, {}))
+        loop_targets = (
+            [str(target["node"]) for target in groups[loop_output]]
+            if loop_output < len(groups)
+            else []
+        )
+        done_targets = (
+            [str(target["node"]) for target in groups[done_output]]
+            if done_output < len(groups)
+            else []
+        )
+        if not loop_targets:
+            continue
+
+        loop_descendants = _descendants_from(loop_targets, adjacency, stop_at=name)
+        done_descendants = _descendants_from(done_targets, adjacency, stop_at=name)
+        for source in predecessors.get(name, ()):
+            source_node = nodes_by_name.get(source)
+            if (
+                source in loop_descendants
+                and source not in done_descendants
+                and source_node is not None
+                and not _is_trigger(source_node)
+            ):
+                sanctioned.add((source, name))
+
+    return sanctioned
+
+
+def _without_edges(
+    adjacency: Mapping[str, tuple[str, ...]], ignored: set[tuple[str, str]]
+) -> dict[str, tuple[str, ...]]:
+    return {
+        source: tuple(target for target in targets if (source, target) not in ignored)
+        for source, targets in adjacency.items()
+    }
+
+
 def _graph_findings(
-    nodes_by_name: Mapping[str, Mapping[str, Any]], adjacency: Mapping[str, tuple[str, ...]]
+    nodes_by_name: Mapping[str, Mapping[str, Any]],
+    adjacency: Mapping[str, tuple[str, ...]],
+    connections: Mapping[str, Any],
 ) -> list[AssuranceFinding]:
     findings: list[AssuranceFinding] = []
+    sanctioned_loopbacks = _sanctioned_split_loopback_edges(nodes_by_name, adjacency, connections)
     trigger_names = {name for name, node in nodes_by_name.items() if _is_trigger(node)}
     for source, targets in adjacency.items():
         for target in targets:
@@ -112,6 +224,8 @@ def _graph_findings(
         state[node_name] = 1
         stack.append(node_name)
         for target in adjacency.get(node_name, ()):
+            if (node_name, target) in sanctioned_loopbacks:
+                continue
             target_state = state.get(target, 0)
             if target_state == 0:
                 visit(target)
@@ -471,6 +585,121 @@ def _choreography_findings(
     return findings
 
 
+def _split_in_batches_findings(
+    nodes_by_name: Mapping[str, Mapping[str, Any]],
+    adjacency: Mapping[str, tuple[str, ...]],
+    connections: Mapping[str, Any],
+) -> list[AssuranceFinding]:
+    findings: list[AssuranceFinding] = []
+    predecessors = _predecessors(adjacency)
+
+    for name, node in nodes_by_name.items():
+        ports = _split_in_batches_ports(node)
+        if ports is None:
+            continue
+
+        loop_output, done_output = ports
+        groups = _main_connection_groups(connections.get(name, {}))
+        loop_targets = (
+            [str(target["node"]) for target in groups[loop_output]]
+            if loop_output < len(groups)
+            else []
+        )
+        done_targets = (
+            [str(target["node"]) for target in groups[done_output]]
+            if done_output < len(groups)
+            else []
+        )
+        loop_descendants = _descendants_from(loop_targets, adjacency, stop_at=name)
+        done_descendants = _descendants_from(done_targets, adjacency, stop_at=name)
+        loopback_candidates = tuple(
+            source
+            for source in predecessors.get(name, ())
+            if source != name and (source in loop_descendants or source in done_descendants)
+        )
+        sanctioned_return_sources = tuple(
+            source
+            for source in loopback_candidates
+            if source in loop_descendants and source not in done_descendants
+        )
+        wrong_return_sources = tuple(
+            source
+            for source in loopback_candidates
+            if source not in loop_descendants or source in done_descendants
+        )
+        done_side_effects = sorted(
+            node_name
+            for node_name in done_descendants
+            if node_name != name
+            and (contract := output_contract(nodes_by_name.get(node_name))) is not None
+            and contract.side_effect
+        )
+        loop_side_effects = sorted(
+            node_name
+            for node_name in loop_descendants
+            if node_name != name
+            and (contract := output_contract(nodes_by_name.get(node_name))) is not None
+            and contract.side_effect
+        )
+
+        if wrong_return_sources:
+            wrong_label = (
+                _split_output_label(done_output, "done")
+                if any(source in done_descendants for source in wrong_return_sources)
+                else f"a non-loop branch of '{name}'"
+            )
+            findings.append(
+                AssuranceFinding(
+                    code="split_in_batches_wrong_loop_output",
+                    severity=FindingSeverity.ERROR,
+                    node_name=name,
+                    related_nodes=wrong_return_sources,
+                    message=(
+                        f"Split In Batches node '{name}' loops back from {wrong_label} via "
+                        f"{', '.join(repr(source) for source in wrong_return_sources)}. For "
+                        f"typeVersion {node.get('typeVersion')}, the per-item body must leave "
+                        f"{_split_output_label(loop_output, 'loop')} and only that branch may "
+                        f"return to '{name}'."
+                    ),
+                )
+            )
+
+        if loop_descendants and not sanctioned_return_sources:
+            findings.append(
+                AssuranceFinding(
+                    code="split_in_batches_missing_loop_return",
+                    severity=FindingSeverity.ERROR,
+                    node_name=name,
+                    related_nodes=tuple(sorted(loop_descendants)),
+                    message=(
+                        f"Split In Batches node '{name}' sends items into "
+                        f"{_split_output_label(loop_output, 'loop')} but nothing returns to "
+                        f"'{name}'. Connect the last per-item node back to the Split In Batches "
+                        "node so the next batch can run."
+                    ),
+                )
+            )
+
+        if done_side_effects and not loop_side_effects and not sanctioned_return_sources:
+            findings.append(
+                AssuranceFinding(
+                    code="split_in_batches_done_port_drives_body",
+                    severity=FindingSeverity.ERROR,
+                    node_name=name,
+                    related_nodes=tuple(done_side_effects),
+                    message=(
+                        f"Split In Batches node '{name}' reaches side-effect node(s) "
+                        f"{', '.join(repr(node_name) for node_name in done_side_effects)} from "
+                        f"{_split_output_label(done_output, 'done')}. That branch runs only "
+                        "after the loop finishes. Move the per-item action/write-back body to "
+                        f"{_split_output_label(loop_output, 'loop')} instead."
+                    ),
+                )
+            )
+
+    return findings
+
+
 def _assurance_plan(
     fingerprint: str,
     nodes_by_name: Mapping[str, Mapping[str, Any]],
@@ -533,13 +762,18 @@ def analyze_workflow_semantics(
     }
     normalized_connections = dict(connections or {})
     adjacency = _main_targets(normalized_connections)
+    sanctioned_loopbacks = _sanctioned_split_loopback_edges(
+        nodes_by_name, adjacency, normalized_connections
+    )
+    forward_adjacency = _without_edges(adjacency, sanctioned_loopbacks)
     findings = [
-        *_graph_findings(nodes_by_name, adjacency),
+        *_graph_findings(nodes_by_name, adjacency, normalized_connections),
         *_if_findings(nodes_by_name),
         *_gmail_dataflow_findings(nodes_by_name, adjacency),
         *_side_effect_first_reference_findings(nodes_by_name, adjacency),
         *_sheets_matching_findings(nodes_by_name, adjacency),
-        *_choreography_findings(nodes_by_name, adjacency),
+        *_choreography_findings(nodes_by_name, forward_adjacency),
+        *_split_in_batches_findings(nodes_by_name, adjacency, normalized_connections),
         *_contract_coverage_findings(nodes_by_name, adjacency),
     ]
     # Stable ordering keeps ModelRetry feedback and tests deterministic.

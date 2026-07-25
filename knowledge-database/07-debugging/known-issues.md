@@ -58,7 +58,9 @@ blocking finding yapiyor.
 Sandbox da guvenle degerlendirilebilen tek-rule string `equals` kosullarinda
 true/false branch output'unu predicate ile karsilastirip celiskiyi side-effect
 oncesinde durduruyor. Exact H1 hata sekilleri validation, assurance ve sandbox
-regresyon testleriyle korunuyor. Canli H1/H2 kabul kosusu henuz yapilmadi.
+regresyon testleriyle korunuyor. Canli H1 execution `421` ve H2 execution `433`
+ile kardeş senaryolar geçti; H2'nin ayrı ikinci gerçek `0/0/0` koşusu gelecekteki
+regresyon turunda tekrar edilmelidir.
 
 ## Sheets Document boş kaldı, dropdown 403 verdi ve agent aktivasyonu run başarısı sandı (2026-07-19, Document fix canlı doğrulandı; assurance takibi açık)
 
@@ -175,6 +177,36 @@ editördeki Execute workflow aksiyonunu kullanabilir veya gerçek trigger'ı
 bekleyebilir. Tam backend desteği açık; n8n internal `/rest/.../run` session
 cookie + editor push bağlantısına bağlı ve public API olmadığı için entegre
 edilmedi.
+
+## Schedule site monitor sandbox false-positive verdi (2026-07-25, cozuldu ve kullanici kabulüyle canli dogrulandi)
+
+**Belirti:** H3 workflow `Kme7UBPjfNX7CLsg` sandbox execution `435` sonrasinda
+`passed` gorundu. Gercek manual execution `436` saglikli sitede bile `Send Alert`
+calistirdi; HTTP output yalniz `data` tasiyor, `statusCode` tasimiyordu.
+Execution `437` ise erisilemeyen domainde `ENOTFOUND` ile `Check Website`
+node'unda durdu ve `If Down`'a hic ulasmadi.
+
+**Kok neden:** HTTP Request `options={}` ile uretilmisti; IF buna ragmen
+`$json.statusCode != 200` okuyordu. Eksik deger n8n'de alarm dalina dustu.
+Sandbox tek gercek URL kosusunda Gmail probe'una ulasmayi yeterli saydigi icin
+yanlis alarm semantigini ayirt edemedi. Transport hatasi icin
+`onError=continueRegularOutput`, non-2xx icin `neverError` ve status alani icin
+`fullResponse` kontratlari validation/sandbox zincirinde zorunlu degildi.
+
+**Durum:** `validation.py` HTTP status-condition dataflow'unu upstream HTTP
+node'una kadar izler. `fullResponse=true` ve `neverError=true` zorunludur;
+kosuldan side effect'e yol varsa top-level
+`onError=continueRegularOutput` da zorunludur. `sandbox.py` ayni kontrati
+runtime'da fail-closed uygular ve HTTP output'unda `statusCode` yokken kosunun
+`passed` olmasini engeller. Saglikli `200 -> no_action`, eksik-status false
+alarm, eksik transport policy ve static payload regresyon testleri eklendi.
+Yeni agent build `GdxzW5oBvhUgMSZ4` gerekli uc kontrati tasiyor. Kullanici
+n8n editöründen manual execution `440`'i calistirdi: HTTP `statusCode=200`,
+IF alarm output'u `0`, saglikli output `1`, Gmail calismadi. Kullanici H3'u
+bu kanitla kabul etti. Erisim-hatasi dali ayrica canli hata enjekte edilerek
+kosulmadi; ileride opsiyonel failure-injection regresyonu olarak korunur. Ilgili:
+[[scenario-h3-website-monitor-alert]], [[chat-workflow-generation]],
+[[adr-0020-workflow-node-cards-assurance-v2]].
 
 ## Gmail Trigger managed OAuth disinda kalip genel credential formu gosteriyordu (2026-07-14, cozuldu ve canli dogrulandi)
 
@@ -1120,6 +1152,34 @@ Gerekirse:
 ```bash
 python packages/n8n-registry/scripts/fetch_nodes.py
 ```
+
+## Loop Over Items false-success (2026-07-25, çözüldü; canlı H2 geçti)
+
+H2 execution `427`'de Split In Batches v3 body yanlışlıkla `main[0]=done`
+koluna bağlandı ve feedback edge'i kurulmadı. Filter iki item üretmesine rağmen
+AI/Gmail/Sheets update çalışmadı; transport success ve sonradan gelen zero-item
+sonuç `no_action` olarak kabul edildi.
+
+Sistemik çözüm:
+
+- registry Node/Workflow Card'lari output index ve label taşır;
+- validation ve assurance v2/v3 port semantiği, zorunlu feedback ve
+  done/loop-shared return edge'ini fail-closed denetler;
+- sandbox pozitif eligibility sonrası unreached action'ı ve bozuk loop
+  topolojisini reddeder;
+- credential readiness ile test readiness ayrıdır; kanıtsız hazır/test-geçti
+  claim'i bloklanır;
+- sandbox evidence policy version 2 ile saklanır, legacy `no_action` yeniden
+  test gerektirir.
+
+Kod regresyon testleri geçmiştir. Sonraki agent run'ı workflow
+`qx1hRmK5O6EJu052` oluşturdu; sandbox execution `430` ve activation/preview
+clone execution `431/432` full `2/2/2` geçti. Gerçek execution `433`, iki action,
+iki Sheet write-back, effect verification ve remote read-back
+`Postconditions: Yes` üretti. Kullanıcı sonucu kabul etti;
+[[scenario-h2-lead-outreach]] kapatıldı. AI Agent'ın statik output contract
+eksikliği yalnız shadow warning olarak kaldı. Ayrı ikinci gerçek `0/0/0`
+execution kaydı yoktur; idempotency regresyon turunda yeniden doğrulanmalıdır.
 
 Ilgili notlar: [[current-state]], [[agent-service]], [[dashboard]],
 [[issue-backlog]].

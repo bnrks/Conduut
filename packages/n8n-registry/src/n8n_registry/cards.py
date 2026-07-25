@@ -20,7 +20,7 @@ _WHITESPACE_RE = re.compile(r"\s+")
 _CODE_NODE_SUFFIXES = {"code", "function", "functionitem"}
 _AI_NODE_PREFIXES = ("@n8n/n8n-nodes-langchain.",)
 _TRIGGER_SUFFIXES = ("trigger", "webhook")
-_CONTROL_SUFFIXES = {"filter", "if", "merge", "switch"}
+_CONTROL_SUFFIXES = {"filter", "if", "merge", "splitinbatches", "switch"}
 _TRANSFORM_SUFFIXES = {"code", "function", "functionitem", "set"}
 _WRITEBACK_SUFFIXES = {"googlesheets", "airtable", "notion", "postgres", "mysql"}
 _SIDE_EFFECT_OPERATIONS = {
@@ -297,18 +297,62 @@ def _extract_capabilities(
     return _ordered_unique(capabilities)
 
 
+def _workflow_output_label(node: dict[str, Any], output_index: int) -> str | None:
+    node_type = str(node.get("type") or "")
+    suffix = _node_suffix(node_type).casefold()
+    type_version = node.get("typeVersion")
+    if suffix == "if":
+        return {0: "true", 1: "false"}.get(output_index)
+    if suffix == "splitinbatches":
+        if isinstance(type_version, int | float) and type_version >= 3:
+            return {0: "done", 1: "loop"}.get(output_index)
+        return {0: "loop", 1: "done"}.get(output_index)
+    return None
+
+
 def _extract_topology(workflow: dict[str, Any], roles: list[dict[str, str]]) -> dict[str, Any]:
     connections = workflow.get("connections")
     edge_count = 0
+    edges: list[dict[str, Any]] = []
+    node_by_name = {
+        str(node.get("name") or ""): node for node in _workflow_nodes(workflow) if node.get("name")
+    }
     if isinstance(connections, dict):
-        for outputs in connections.values():
-            main = outputs.get("main") if isinstance(outputs, dict) else None
+        for source_name, outputs in connections.items():
+            if not isinstance(outputs, dict):
+                continue
+            main = outputs.get("main")
             if not isinstance(main, list):
                 continue
-            edge_count += sum(len(branch) for branch in main if isinstance(branch, list))
+            source_node = node_by_name.get(str(source_name))
+            for output_index, branch in enumerate(main):
+                if not isinstance(branch, list):
+                    continue
+                for edge in branch:
+                    if not isinstance(edge, dict):
+                        continue
+                    target_name = _sanitize_text(edge.get("node") or "", limit=120)
+                    if not target_name:
+                        continue
+                    edge_count += 1
+                    item: dict[str, Any] = {
+                        "from": _sanitize_text(source_name, limit=120),
+                        "to": target_name,
+                        "outputIndex": output_index,
+                    }
+                    output_label = (
+                        _workflow_output_label(source_node, output_index) if source_node else None
+                    )
+                    if output_label:
+                        item["outputLabel"] = output_label
+                    target_index = edge.get("index")
+                    if isinstance(target_index, int):
+                        item["inputIndex"] = target_index
+                    edges.append(item)
     return {
         "nodeCount": len(roles),
         "edgeCount": edge_count,
+        "edges": edges,
         "roleCounts": {
             role: sum(1 for item in roles if item["role"] == role)
             for role in ("trigger", "control", "transform", "action", "writeback", "step")

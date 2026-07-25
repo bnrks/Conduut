@@ -204,7 +204,16 @@ geçirmelidir → genellik guard'ının canlı örneği.
   drift'ini kaçırması, düzeltme sonrası false-negative vermesi ve activation
   claim retry varyantı ayrı assurance takip bulgularıdır. Ayrıntı:
   [[scenario-m3-webhook-http-sheets]].
-- **SONRAKİ: [[scenario-h1-cold-outreach-status]].**
+- **H3 — GEÇTİ ✅ (2026-07-25, kullanıcı kabulü):** Guard sonrası yeni workflow
+  `GdxzW5oBvhUgMSZ4` doğru `fullResponse + neverError + onError` kontratıyla
+  üretildi ve aktif edildi. Kullanıcının n8n editöründen başlattığı manual
+  execution `#440` success; HTTP `statusCode=200`, IF true/alarm çıkışı `0`,
+  false/sağlıklı çıkışı `1`, Gmail çalışmadı. Sağlıklı site için yanlış alarm
+  yok. Erişim-hatası dalı ayrıca canlı enjekte edilmedi; kullanıcı mevcut sonucu
+  kabul etti. Ayrıntı:
+  [[scenario-h3-website-monitor-alert]].
+- **İLK TUR TAMAMLANDI:** Sonraki adım geçti senaryolar için regresyon turu ve
+  H3 erişim-hatası dalı için opsiyonel canlı failure injection.
 - Yeniden test sırası: **E1 → E2 → E3 → M1 → M2 → M3 → H1 → H2 → H3**.
 
 ## Güncelleme kuralı

@@ -45,6 +45,15 @@ def _gmail(name: str = "Send Email") -> dict[str, Any]:
     )
 
 
+def _split_node(type_version: float = 3, name: str = "Loop Over Leads") -> dict[str, Any]:
+    return {
+        "name": name,
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": type_version,
+        "parameters": {"batchSize": 1, "options": {}},
+    }
+
+
 def _sheets_update(match_value: str | None = "={{ $json.email }}") -> dict[str, Any]:
     value = {"status": "sent"}
     if match_value is not None:
@@ -277,6 +286,137 @@ def test_writeback_before_action_is_rejected_and_plan_exposes_postconditions():
     assert report.plan.identity_fields["Update Status"] == ("email",)
     assert "action_count == writeback_count" in report.plan.cardinality_relations
     assert "every successful action has one write-back" in report.plan.expected_postconditions
+
+
+def test_split_in_batches_v3_loop_cycle_is_sanctioned_with_done_exit():
+    report = analyze_workflow_semantics(
+        [
+            _node("Webhook", "n8n-nodes-base.webhook"),
+            _node("Filter Rows", "n8n-nodes-base.filter"),
+            _split_node(type_version=3),
+            _gmail(),
+            _sheets_update("={{ $('Filter Rows').item.json.email }}"),
+            _node("After Loop", "n8n-nodes-base.set"),
+        ],
+        {
+            "Webhook": {"main": [[{"node": "Filter Rows", "type": "main", "index": 0}]]},
+            "Filter Rows": {"main": [[{"node": "Loop Over Leads", "type": "main", "index": 0}]]},
+            "Loop Over Leads": {
+                "main": [
+                    [{"node": "After Loop", "type": "main", "index": 0}],
+                    [{"node": "Send Email", "type": "main", "index": 0}],
+                ]
+            },
+            "Send Email": {"main": [[{"node": "Update Status", "type": "main", "index": 0}]]},
+            "Update Status": {"main": [[{"node": "Loop Over Leads", "type": "main", "index": 0}]]},
+        },
+    )
+
+    assert "main_flow_cycle" not in _codes(report)
+    assert "split_in_batches_missing_loop_return" not in _codes(report)
+    assert "split_in_batches_wrong_loop_output" not in _codes(report)
+    assert "split_in_batches_done_port_drives_body" not in _codes(report)
+    assert report.blocking_findings == ()
+
+
+def test_split_in_batches_v2_loop_output_zero_is_sanctioned():
+    report = analyze_workflow_semantics(
+        [
+            _node("Webhook", "n8n-nodes-base.webhook"),
+            _node("Filter Rows", "n8n-nodes-base.filter"),
+            _split_node(type_version=2),
+            _gmail(),
+            _sheets_update("={{ $('Filter Rows').item.json.email }}"),
+            _node("After Loop", "n8n-nodes-base.set"),
+        ],
+        {
+            "Webhook": {"main": [[{"node": "Filter Rows", "type": "main", "index": 0}]]},
+            "Filter Rows": {"main": [[{"node": "Loop Over Leads", "type": "main", "index": 0}]]},
+            "Loop Over Leads": {
+                "main": [
+                    [{"node": "Send Email", "type": "main", "index": 0}],
+                    [{"node": "After Loop", "type": "main", "index": 0}],
+                ]
+            },
+            "Send Email": {"main": [[{"node": "Update Status", "type": "main", "index": 0}]]},
+            "Update Status": {"main": [[{"node": "Loop Over Leads", "type": "main", "index": 0}]]},
+        },
+    )
+
+    assert "main_flow_cycle" not in _codes(report)
+    assert "split_in_batches_missing_loop_return" not in _codes(report)
+    assert "split_in_batches_wrong_loop_output" not in _codes(report)
+    assert "split_in_batches_done_port_drives_body" not in _codes(report)
+
+
+def test_split_in_batches_done_port_loop_body_is_blocked():
+    report = analyze_workflow_semantics(
+        [
+            _node("Webhook", "n8n-nodes-base.webhook"),
+            _split_node(type_version=3),
+            _gmail(),
+            _sheets_update("={{ $('Webhook').first().json.body.email }}"),
+        ],
+        {
+            "Webhook": {"main": [[{"node": "Loop Over Leads", "type": "main", "index": 0}]]},
+            "Loop Over Leads": {"main": [[{"node": "Send Email", "type": "main", "index": 0}], []]},
+            "Send Email": {"main": [[{"node": "Update Status", "type": "main", "index": 0}]]},
+            "Update Status": {"main": [[{"node": "Loop Over Leads", "type": "main", "index": 0}]]},
+        },
+    )
+
+    assert {
+        "main_flow_cycle",
+        "split_in_batches_wrong_loop_output",
+        "split_in_batches_done_port_drives_body",
+    } <= _codes(report)
+
+
+def test_split_in_batches_missing_return_is_blocking():
+    report = analyze_workflow_semantics(
+        [
+            _node("Webhook", "n8n-nodes-base.webhook"),
+            _split_node(type_version=3),
+            _gmail(),
+            _sheets_update("={{ $('Webhook').first().json.body.email }}"),
+        ],
+        {
+            "Webhook": {"main": [[{"node": "Loop Over Leads", "type": "main", "index": 0}]]},
+            "Loop Over Leads": {"main": [[], [{"node": "Send Email", "type": "main", "index": 0}]]},
+            "Send Email": {"main": [[{"node": "Update Status", "type": "main", "index": 0}]]},
+        },
+    )
+
+    assert "split_in_batches_missing_loop_return" in _codes(report)
+
+
+def test_split_in_batches_shared_done_and_loop_return_is_blocking():
+    report = analyze_workflow_semantics(
+        [
+            _node("Webhook", "n8n-nodes-base.webhook"),
+            _split_node(type_version=3),
+            _gmail(),
+            _sheets_update("={{ $('Webhook').first().json.body.email }}"),
+            _node("After Loop", "n8n-nodes-base.set"),
+        ],
+        {
+            "Webhook": {"main": [[{"node": "Loop Over Leads", "type": "main", "index": 0}]]},
+            "Loop Over Leads": {
+                "main": [
+                    [{"node": "After Loop", "type": "main", "index": 0}],
+                    [{"node": "Send Email", "type": "main", "index": 0}],
+                ]
+            },
+            "After Loop": {"main": [[{"node": "Update Status", "type": "main", "index": 0}]]},
+            "Send Email": {"main": [[{"node": "Update Status", "type": "main", "index": 0}]]},
+            "Update Status": {"main": [[{"node": "Loop Over Leads", "type": "main", "index": 0}]]},
+        },
+    )
+
+    assert {
+        "main_flow_cycle",
+        "split_in_batches_wrong_loop_output",
+    } <= _codes(report)
 
 
 def test_missing_contract_is_a_non_blocking_shadow_finding():

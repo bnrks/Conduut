@@ -887,3 +887,27 @@ ve row count gibi PII-safe teknik sekil ozeti tutulur.
 - Partial gercek side effect ilk kosuda auto-retry/compensation'i durdurur ve
   reconciliation icin acik onay ister. Runner cümle bazli stream claim gate ile
   kanitsiz basari cümlesini token yayinlanmadan degistirir.
+
+## H2 Loop ve readiness kapanisi (2026-07-25)
+
+`splitInBatches` artik build validation, semantic assurance ve sandbox
+katmanlarinda typeVersion-aware denetlenir. v3'te per-item body `main[1]`,
+post-loop `main[0]`; v2'de bunun tersidir. Loop body'nin done koluna
+baglanmasi, geri-donus edge'inin olmamasi, done kolundan feedback verilmesi ve
+done/loop kollarinin ortak bir node'da birlesip oradan loop'a donmesi blocking
+finding'dir. Yalniz loop koluna ozel feedback edge'i sanctioned cycle sayilir;
+genel `main_flow_cycle` kontrolu bunun disindaki donguleri gizlemez.
+
+Sandbox functional oracle'i artik action node'unun en yakin Filter/IF/Loop
+eligibility boundary'sini izler. Boundary pozitif item uretmisken action
+calismadiysa run `no_action` kabul edilmez. Loop output item urettigi halde
+downstream veya feedback yoksa ve feedback done koluyla ortaksa
+`needs_attention` olur. Sifir-item `no_action` yalniz gercekten 0 eligibility
+kaniti ile gecer.
+
+Credential readiness ile test readiness ayrildi:
+`credential_ready`, `test_required`, `test_status`, `test_coverage` ve
+`ready_for_activation` ayri alanlardir. "Her sey hazir" ve "test gecti"
+iddialari full sandbox kaniti olmadan claim gate'ten gecmez. Persisted sandbox
+kaniti `WORKFLOW_TEST_POLICY_VERSION=2` ile surumlenir; eski v1 `passed` veya
+`no_action` fingerprint'i ayni olsa bile activation oncesi yeniden test edilir.
