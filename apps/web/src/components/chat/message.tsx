@@ -256,10 +256,10 @@ function MessageBase({ message, hideInputRequests = false, isStreaming = false }
         attachment.type !== "user_input_request" && attachment.type !== "execution_reference"
     ) ?? [];
   const inputRequests = hideInputRequests ? [] : inputRequestAttachments;
-  const hasText = message.content.trim().length > 0 && inputRequestAttachments.length === 0;
+  const hasText = message.content.trim().length > 0;
   const hasThinking = !isUser && !!message.thinking;
   const steps = !isUser ? message.steps : undefined;
-  const useSteps = !!steps && steps.length > 1 && inputRequestAttachments.length === 0;
+  const useSteps = !!steps && steps.length > 1;
 
   if (
     !hasText &&

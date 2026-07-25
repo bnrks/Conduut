@@ -188,6 +188,12 @@ anda message list icinde ozet karti olarak tekrar render edilmez. Panel agent
 sorusunu ve `missingFields` etiketlerinden uretilen cevap kontrollerini
 gosterir; boylece agent genel bir soru sorsa bile kullanici hangi alanlarin
 beklendigini gorur.
+
+Aktif clarification paneli yalniz ayni `user_input_request` attachment'inin
+kompakt ozet kartini gizler; assistant mesajinin daha once stream edilmis
+`content` ve segmentlenmis `steps` alanlarini gizlemez. Boylece agent once
+aciklama yapip sonra soru sordugunda aciklama `done` event'inde veya conversation
+reload sonrasinda kaybolmaz.
 Birden fazla `missingFields` varsa panel ayrica ozet/kart listesi acmaz, her
 alan icin dogrudan doldurulacak kontrol gosterir ve hepsi dolmadan submit aktif
 olmaz. Coklu alanda `choices` gelirse bunlar ayri cevap kartlari olarak degil
