@@ -20,7 +20,7 @@ import {
   createAssistantStreamState,
   reduceAssistantStreamEvent,
 } from "@/lib/chat/stream-state";
-import type { Conversation, Message } from "@/types/chat";
+import type { Conversation, ExecutionPolicy, Message } from "@/types/chat";
 
 interface ConversationDetailResponse extends Conversation {
   messages: Message[];
@@ -54,6 +54,16 @@ function appendRecentActivity(items: string[], activity: string) {
   return [...items, activity].slice(-3);
 }
 
+function readExecutionPolicy(conversation: ConversationDetailResponse): ExecutionPolicy {
+  return conversation.executionPolicy === "fast" ? "fast" : "safe";
+}
+
+function readExecutionPolicyLocked(conversation: ConversationDetailResponse): boolean {
+  return typeof conversation.executionPolicyLocked === "boolean"
+    ? conversation.executionPolicyLocked
+    : true;
+}
+
 export default function ConversationPage() {
   const params = useParams<{ conversationId: string | string[] }>();
   const conversationId = useMemo(() => {
@@ -71,6 +81,8 @@ export default function ConversationPage() {
   const [isAgentTyping, setIsAgentTyping] = useState(false);
   const [agentActivity, setAgentActivity] = useState<string | undefined>();
   const [agentActivities, setAgentActivities] = useState<string[]>([]);
+  const [executionPolicy, setExecutionPolicy] = useState<ExecutionPolicy>("safe");
+  const [executionPolicyLocked, setExecutionPolicyLocked] = useState(true);
 
   useEffect(() => {
     const loadConversation = async () => {
@@ -90,6 +102,8 @@ export default function ConversationPage() {
       }
 
       const data = (await response.json()) as ConversationDetailResponse;
+      setExecutionPolicy(readExecutionPolicy(data));
+      setExecutionPolicyLocked(readExecutionPolicyLocked(data));
       if (!hasCachedMessages.current) {
         // Use updater to avoid overwriting in-flight streaming messages
         setMessages((prev) =>
@@ -255,6 +269,8 @@ export default function ConversationPage() {
             onChange={setInputValue}
             onSend={(content) => { void handleSend(content); }}
             disabled={!user || isAgentTyping}
+            executionPolicy={executionPolicy}
+            executionPolicyLocked={executionPolicyLocked}
           />
         )}
       </div>

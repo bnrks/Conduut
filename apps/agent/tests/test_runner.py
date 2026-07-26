@@ -1205,3 +1205,45 @@ async def test_runner_injects_gathered_state_into_deps(monkeypatch):
 
     assert captured["platform_state"] is state
     assert captured["platform_state"].connections[0].service == "gmail"
+
+
+@pytest.mark.asyncio
+async def test_runner_injects_execution_policy_into_deps(monkeypatch):
+    captured = {}
+
+    async def fake_classify(*_a, **_k):
+        return Tier.MEDIUM
+
+    async def fake_add_message(*_a, **_k):
+        return None
+
+    class CapturingAgent(FakeStreamingAgent):
+        def iter(self, _prompt, *, deps, message_history, model_settings, usage_limits):
+            captured["execution_policy"] = deps.execution_policy
+            return super().iter(
+                _prompt,
+                deps=deps,
+                message_history=message_history,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+            )
+
+    monkeypatch.setattr(runner.settings, "model_profile", "default")
+    monkeypatch.setattr(runner, "classify_tier", fake_classify)
+    monkeypatch.setattr(runner, "key_for_provider", lambda *_a: "key")
+    monkeypatch.setattr(runner, "build_model", lambda *_a: object())
+    monkeypatch.setattr(runner, "create_agent", lambda _m: CapturingAgent(_text_events("ok")))
+    monkeypatch.setattr(runner.store, "add_message", fake_add_message)
+    _recognize_fake_model_node(monkeypatch)
+
+    _ = [
+        raw
+        async for raw in runner.run(
+            "u1",
+            "c1",
+            [{"role": "user", "content": "hi"}],
+            execution_policy="fast",
+        )
+    ]
+
+    assert captured["execution_policy"] == "fast"

@@ -241,6 +241,7 @@ async def run(
     messages: list[dict],
     *,
     request_id: str | None = None,
+    execution_policy: str = "safe",
 ) -> AsyncIterator[str]:
     """Run the Conduut agent and stream events compatible with the existing frontend."""
 
@@ -265,6 +266,7 @@ async def run(
             user_prompt=user_prompt,
             message_history=message_history,
             run_id=usage_run_id,
+            execution_policy=execution_policy,
         ):
             yield event
         completed = True
@@ -297,6 +299,7 @@ async def _run_agent_stream(
     user_prompt: str,
     message_history: list[ModelMessage],
     run_id: str,
+    execution_policy: str,
 ) -> AsyncIterator[str]:
     """Internal stream implementation owned by the outer run-log lifecycle."""
 
@@ -345,6 +348,7 @@ async def _run_agent_stream(
         return AgentDeps(
             user_id=user_id,
             conversation_id=conv_id,
+            execution_policy=execution_policy,
             event_queue=asyncio.Queue(),
             attempt_id=attempt_id,
             platform_resources=platform_resources,

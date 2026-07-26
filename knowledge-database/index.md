@@ -119,6 +119,9 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
 - [[adr-0020-workflow-node-cards-assurance-v2]] - Sanitized community
   Workflow Card + operation-aware Node Card retrieval, shared typed Oracle,
   immutable execution evidence, read-after-write ve stream claim gate karari.
+- [[adr-0021-chat-execution-policy]] - Chat basinda kilitlenen Safe/Fast
+  execution policy; Safe tek runtime sandbox preview, Fast full static contract
+  preview kullanir. Dashboard, batch ve activation safe-only kalir.
 
 ## Kaynak Dokumanlar
 

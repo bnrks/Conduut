@@ -17,6 +17,9 @@ class WorkflowRunPreview:
     workflow_fingerprint: str
     input_hash: str
     expires_at: str
+    conversation_id: str | None
+    execution_policy: str | None
+    preview_basis: str | None
     payload: dict[str, Any]
 
 
@@ -32,6 +35,9 @@ async def save_workflow_run_preview(
     workflow_fingerprint: str,
     input_payload: dict[str, Any] | None,
     payload: dict[str, Any],
+    conversation_id: str | None = None,
+    execution_policy: str | None = None,
+    preview_basis: str | None = None,
     ttl_seconds: int = 600,
 ) -> WorkflowRunPreview:
     token = uuid4().hex
@@ -44,6 +50,9 @@ async def save_workflow_run_preview(
         "input_hash": input_hash,
         "created_at": now.isoformat(),
         "expires_at": expires_at.isoformat(),
+        "conversation_id": conversation_id,
+        "execution_policy": execution_policy,
+        "preview_basis": preview_basis,
         "payload": dict(payload),
     }
     ref = _pkg_store._user_ref(user_id).collection("workflow_run_previews").document(token)
@@ -54,6 +63,9 @@ async def save_workflow_run_preview(
         workflow_fingerprint=workflow_fingerprint,
         input_hash=input_hash,
         expires_at=data["expires_at"],
+        conversation_id=conversation_id,
+        execution_policy=execution_policy,
+        preview_basis=preview_basis,
         payload=dict(payload),
     )
 
@@ -65,10 +77,20 @@ async def consume_workflow_run_preview(
     workflow_id: str,
     workflow_fingerprint: str,
     input_payload: dict[str, Any] | None,
+    conversation_id: str | None = None,
+    execution_policy: str | None = None,
+    preview_basis: str | None = None,
 ) -> WorkflowRunPreview | None:
     ref = _pkg_store._user_ref(user_id).collection("workflow_run_previews").document(token)
     expected_input_hash = workflow_input_hash(input_payload)
     now = datetime.now(timezone.utc)
+
+    def _matches_optional(stored: Any, expected: str | None) -> bool:
+        stored_text = str(stored or "").strip()
+        expected_text = str(expected or "").strip()
+        if not stored_text:
+            return not expected_text
+        return stored_text == expected_text
 
     def _consume():
         # Firestore transactions make the approval one-use even when two run
@@ -97,6 +119,9 @@ async def consume_workflow_run_preview(
                 data.get("workflow_id") != workflow_id
                 or data.get("workflow_fingerprint") != workflow_fingerprint
                 or data.get("input_hash") != expected_input_hash
+                or not _matches_optional(data.get("conversation_id"), conversation_id)
+                or not _matches_optional(data.get("execution_policy"), execution_policy)
+                or not _matches_optional(data.get("preview_basis"), preview_basis)
             ):
                 return None
             txn.delete(ref)
@@ -117,6 +142,9 @@ async def consume_workflow_run_preview(
         data.get("workflow_id") != workflow_id
         or data.get("workflow_fingerprint") != workflow_fingerprint
         or data.get("input_hash") != expected_input_hash
+        or not _matches_optional(data.get("conversation_id"), conversation_id)
+        or not _matches_optional(data.get("execution_policy"), execution_policy)
+        or not _matches_optional(data.get("preview_basis"), preview_basis)
     ):
         return None
     return WorkflowRunPreview(
@@ -125,5 +153,8 @@ async def consume_workflow_run_preview(
         workflow_fingerprint=workflow_fingerprint,
         input_hash=expected_input_hash,
         expires_at=expires_at.isoformat(),
+        conversation_id=str(data.get("conversation_id") or "") or None,
+        execution_policy=str(data.get("execution_policy") or "") or None,
+        preview_basis=str(data.get("preview_basis") or "") or None,
         payload=dict(data.get("payload") or {}),
     )

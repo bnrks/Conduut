@@ -10,14 +10,18 @@ from src.routes import chat as chat_route
 async def test_chat_send_streams_runner_response(monkeypatch):
     monkeypatch.setattr(chat_route, "get_user_id", lambda _request: "user_1")
     captured_runner_args = {}
+    captured_store_kwargs = {}
 
     async def fake_get_or_create_conversation(*_args, **_kwargs):
+        captured_store_kwargs.update(_kwargs)
         return store.Conversation(
             id="conv_1",
             title="New conversation",
             message_count=0,
             created_at="now",
             updated_at="now",
+            execution_policy="safe",
+            execution_policy_locked=True,
         )
 
     monkeypatch.setattr(
@@ -54,8 +58,9 @@ async def test_chat_send_streams_runner_response(monkeypatch):
             ),
         ]
 
-    async def fake_runner_run(*args, **_kwargs):
+    async def fake_runner_run(*args, **kwargs):
         captured_runner_args["messages"] = args[2]
+        captured_runner_args["execution_policy"] = kwargs["execution_policy"]
         yield 'event: done\ndata: {"conversation_id": "conv_1"}\n\n'
 
     monkeypatch.setattr(chat_route.store, "add_message", fake_add_message)
@@ -71,8 +76,12 @@ async def test_chat_send_streams_runner_response(monkeypatch):
 
     assert response.media_type == "text/event-stream"
     assert response.headers["x-conversation-id"] == "conv_1"
+    assert response.headers["x-execution-policy"] == "safe"
+    assert response.headers["x-execution-policy-locked"] == "true"
     assert chunks == ['event: done\ndata: {"conversation_id": "conv_1"}\n\n']
     assert captured_runner_args["messages"][0]["attachments"][0]["type"] == "user_input_request"
+    assert captured_runner_args["execution_policy"] == "safe"
+    assert captured_store_kwargs["execution_policy"] == "safe"
 
 
 def test_chat_request_ignores_legacy_provider_fields():
@@ -97,6 +106,8 @@ async def test_chat_send_persists_structured_workflow_approval(monkeypatch):
             message_count=0,
             created_at="now",
             updated_at="now",
+            execution_policy="safe",
+            execution_policy_locked=True,
         )
 
     async def fake_add_message(*args, **kwargs):
@@ -184,6 +195,8 @@ async def test_chat_send_canonicalizes_execution_reference_before_storing(monkey
             message_count=0,
             created_at="now",
             updated_at="now",
+            execution_policy="safe",
+            execution_policy_locked=True,
         )
 
     async def fake_add_message(*args, **kwargs):
@@ -266,3 +279,87 @@ async def test_chat_send_rejects_non_failed_execution_before_creating_conversati
         )
 
     assert exc_info.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_chat_send_omitted_policy_uses_existing_fast_conversation(monkeypatch):
+    monkeypatch.setattr(chat_route, "get_user_id", lambda _request: "user_1")
+    captured_runner_kwargs = {}
+
+    async def fake_get_or_create_conversation(*_args, **_kwargs):
+        return store.Conversation(
+            id="conv_fast",
+            title="Fast conversation",
+            message_count=3,
+            created_at="now",
+            updated_at="now",
+            execution_policy="fast",
+            execution_policy_locked=True,
+        )
+
+    async def fake_add_message(*_args, **_kwargs):
+        return None
+
+    async def fake_get_messages(*_args, **_kwargs):
+        return [store.Message(id="msg_1", role="user", content="continue", created_at="now")]
+
+    async def fake_runner_run(*_args, **kwargs):
+        captured_runner_kwargs.update(kwargs)
+        yield 'event: done\ndata: {"conversation_id": "conv_fast"}\n\n'
+
+    monkeypatch.setattr(
+        chat_route.store, "get_or_create_conversation", fake_get_or_create_conversation
+    )
+    monkeypatch.setattr(chat_route.store, "add_message", fake_add_message)
+    monkeypatch.setattr(chat_route.store, "get_conversation_messages", fake_get_messages)
+    monkeypatch.setattr(chat_route.runner, "run", fake_runner_run)
+
+    response = await chat_route.chat_send(
+        object(),
+        chat_route.ChatRequest(content="continue", conversation_id="conv_fast"),
+    )
+    _ = [chunk async for chunk in response.body_iterator]
+
+    assert response.headers["x-execution-policy"] == "fast"
+    assert captured_runner_kwargs["execution_policy"] == "fast"
+
+
+@pytest.mark.asyncio
+async def test_chat_send_rejects_locked_execution_policy_mismatch(monkeypatch):
+    monkeypatch.setattr(chat_route, "get_user_id", lambda _request: "user_1")
+
+    async def fake_get_or_create_conversation(*_args, **_kwargs):
+        return store.Conversation(
+            id="conv_safe",
+            title="Safe conversation",
+            message_count=1,
+            created_at="now",
+            updated_at="now",
+            execution_policy="safe",
+            execution_policy_locked=True,
+        )
+
+    async def fail_add_message(*_args, **_kwargs):
+        raise AssertionError("message must not be persisted on policy mismatch")
+
+    monkeypatch.setattr(
+        chat_route.store, "get_or_create_conversation", fake_get_or_create_conversation
+    )
+    monkeypatch.setattr(chat_route.store, "add_message", fail_add_message)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await chat_route.chat_send(
+            object(),
+            chat_route.ChatRequest(
+                content="continue",
+                conversation_id="conv_safe",
+                execution_policy="fast",
+            ),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == {
+        "code": "execution_policy_locked",
+        "message": "This conversation is locked to the existing execution policy.",
+        "execution_policy": "safe",
+    }

@@ -49,6 +49,8 @@ async def test_get_conversation_returns_chat_ui_message_shape(monkeypatch):
     assert response["messageCount"] == 2
     assert response["createdAt"] == "2026-05-25T12:00:00+00:00"
     assert response["reasoningEffort"] == "medium"
+    assert response["executionPolicy"] == "safe"
+    assert response["executionPolicyLocked"] is True
     assert response["messages"][0]["role"] == "agent"
     assert response["messages"][0]["createdAt"] == "2026-05-25T12:01:00+00:00"
     assert response["messages"][0]["attachments"][0]["type"] == "artifact_preview"
@@ -92,3 +94,39 @@ async def test_get_conversation_serializes_steps(monkeypatch):
     response = await conversations_route.get_conversation("conv_2", object())
 
     assert response["messages"][0]["steps"] == _steps
+
+
+@pytest.mark.asyncio
+async def test_list_conversations_includes_execution_policy(monkeypatch):
+    monkeypatch.setattr(conversations_route, "get_user_id", lambda _request: "user_1")
+
+    async def fake_list_conversations(_user_id: str):
+        return [
+            store.Conversation(
+                id="conv_fast",
+                title="Fast conversation",
+                message_count=4,
+                created_at="2026-07-25T09:00:00+00:00",
+                updated_at="2026-07-25T09:10:00+00:00",
+                execution_policy="fast",
+                execution_policy_locked=True,
+            )
+        ]
+
+    monkeypatch.setattr(conversations_route.store, "list_conversations", fake_list_conversations)
+
+    response = await conversations_route.list_conversations(object())
+
+    assert response == {
+        "conversations": [
+            {
+                "id": "conv_fast",
+                "title": "Fast conversation",
+                "messageCount": 4,
+                "lastMessageAt": "2026-07-25T09:10:00+00:00",
+                "createdAt": "2026-07-25T09:00:00+00:00",
+                "executionPolicy": "fast",
+                "executionPolicyLocked": True,
+            }
+        ]
+    }

@@ -228,6 +228,7 @@ async def activate_workflow(workflow_id: str, request: Request):
                 workflow,
                 user_id=user_id,
                 input_payload=None,
+                execution_policy="safe",
                 issue_token=False,
             )
             if not assurance.get("ready") or assurance.get("coverage") != "full":
@@ -272,6 +273,7 @@ async def run_workflow(workflow_id: str, request: Request, body: WorkflowRunRequ
             user_id=user_id,
             input_payload=input_payload,
             preview_token=body.previewToken if body else None,
+            execution_policy="safe",
         ):
             raise HTTPException(
                 status_code=409,
@@ -352,6 +354,7 @@ async def preview_run_workflow(
         workflow,
         user_id=user_id,
         input_payload=body.input if body else {},
+        execution_policy="safe",
     )
     if not result.get("ready"):
         raise HTTPException(status_code=409, detail=result)
@@ -381,6 +384,7 @@ async def batch_run_workflow(
             user_id=user_id,
             input_payload={"rows": rows},
             preview_token=body.previewToken,
+            execution_policy="safe",
         ):
             raise HTTPException(
                 status_code=409,
@@ -425,7 +429,12 @@ async def preview_batch_run_workflow(
             "coverage": "full",
         }
     rows = [row.model_dump() for row in body.rows]
-    result = await preview_workflow_batch(workflow, user_id=user_id, rows=rows)
+    result = await preview_workflow_batch(
+        workflow,
+        user_id=user_id,
+        rows=rows,
+        execution_policy="safe",
+    )
     if not result.get("ready"):
         raise HTTPException(status_code=409, detail=result)
     return result
@@ -454,6 +463,7 @@ async def stream_batch_run_workflow(
             user_id=user_id,
             input_payload={"rows": rows},
             preview_token=body.previewToken,
+            execution_policy="safe",
         ):
             raise HTTPException(
                 status_code=409,

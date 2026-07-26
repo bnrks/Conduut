@@ -22,6 +22,8 @@ async def list_conversations(request: Request):
                 "messageCount": c.message_count,
                 "lastMessageAt": c.updated_at,
                 "createdAt": c.created_at,
+                "executionPolicy": c.execution_policy,
+                "executionPolicyLocked": c.execution_policy_locked,
             }
             for c in convs
         ]
@@ -47,6 +49,10 @@ async def get_conversation(conversation_id: str, request: Request):
         "model": conv.model,
         "reasoning_effort": conv.reasoning_effort,
         "reasoningEffort": conv.reasoning_effort,
+        "execution_policy": conv.execution_policy,
+        "executionPolicy": conv.execution_policy,
+        "execution_policy_locked": conv.execution_policy_locked,
+        "executionPolicyLocked": conv.execution_policy_locked,
         "messages": [
             {
                 "id": m.id,

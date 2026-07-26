@@ -31,6 +31,7 @@ class ChatRequest(BaseModel):
 
     content: str
     conversation_id: str | None = None
+    execution_policy: Literal["safe", "fast"] | None = None
     execution_reference: ExecutionReference | None = None
     user_input_response: UserInputResponse | None = None
 
@@ -93,7 +94,25 @@ async def chat_send(request: Request, body: ChatRequest):
             }
         )
 
-    conv = await store.get_or_create_conversation(user_id, body.conversation_id)
+    requested_execution_policy = body.execution_policy
+    conv = await store.get_or_create_conversation(
+        user_id,
+        body.conversation_id,
+        execution_policy=requested_execution_policy or "safe",
+    )
+    if (
+        requested_execution_policy is not None
+        and requested_execution_policy != conv.execution_policy
+        and conv.execution_policy_locked
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "execution_policy_locked",
+                "message": ("This conversation is locked to the existing execution policy."),
+                "execution_policy": conv.execution_policy,
+            },
+        )
     await store.add_message(
         user_id,
         conv.id,
@@ -114,11 +133,19 @@ async def chat_send(request: Request, body: ChatRequest):
     ]
 
     return StreamingResponse(
-        runner.run(user_id, conv.id, messages, request_id=request_id),
+        runner.run(
+            user_id,
+            conv.id,
+            messages,
+            request_id=request_id,
+            execution_policy=conv.execution_policy,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
             "X-Conversation-Id": conv.id,
+            "X-Execution-Policy": conv.execution_policy,
+            "X-Execution-Policy-Locked": str(conv.execution_policy_locked).lower(),
         },
     )

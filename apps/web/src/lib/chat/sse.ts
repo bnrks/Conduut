@@ -1,5 +1,7 @@
 "use client";
 
+import type { ExecutionPolicy } from "@/types/chat";
+
 export interface ExecutionReference {
   execution_id: string;
   intent: "diagnose_and_fix";
@@ -16,6 +18,7 @@ export interface UserInputResponse {
 export interface ChatSendRequest {
   content: string;
   conversation_id?: string;
+  execution_policy?: ExecutionPolicy;
   execution_reference?: ExecutionReference;
   user_input_response?: UserInputResponse;
 }

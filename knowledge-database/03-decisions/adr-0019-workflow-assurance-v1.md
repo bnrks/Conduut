@@ -189,3 +189,13 @@ stream claim gate ile genisletilmistir. Full contract-covered sandbox yolunda
 LLM judge basari karari vermez. Partial side effect sonrasi ilk real run'dan
 itibaren auto-retry kapanir. Ayrintili karar:
 [[adr-0020-workflow-node-cards-assurance-v2]].
+
+## Chat Execution Policy ile Genisleme (2026-07-25)
+
+Assurance zincirinin static guard, structured approval, execution assessment
+ve claim gate katmanlari korunur. Chat manual execute icin kullanici ilk mesaj
+oncesi `safe|fast` policy secer: Safe gercek input'la tek runtime sandbox
+preview, Fast ise yalniz full coverage typed/static contract preview kullanir.
+Build-time runtime sandbox kaldirilmistir; dashboard, batch ve activation
+safe-only kalir. Token conversation/policy/preview basis'e de baglanir.
+Ayrintili karar: [[adr-0021-chat-execution-policy]].

@@ -285,6 +285,41 @@ async def test_activation_assurance_uses_generated_sample_input(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_activation_rejects_partial_coverage_assurance(monkeypatch):
+    monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
+    workflow = {
+        "id": "wf_1",
+        "name": "Reusable mailer",
+        "nodes": [
+            {
+                "name": "Send",
+                "type": "n8n-nodes-base.gmail",
+                "parameters": {"operation": "send"},
+            }
+        ],
+    }
+
+    async def fake_get_workflow(_workflow_id):
+        return workflow
+
+    async def fake_readiness(_workflow, *, user_id):
+        return {"missing_credentials": []}
+
+    async def fake_preview(_workflow, **kwargs):
+        return {"ready": True, "coverage": "partial", "status": "partial_coverage"}
+
+    monkeypatch.setattr(workflows_route.n8n_client, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(workflows_route, "analyze_workflow_readiness_payload", fake_readiness)
+    monkeypatch.setattr(workflows_route, "preview_workflow_run", fake_preview)
+
+    with pytest.raises(HTTPException) as exc:
+        await workflows_route.activate_workflow("wf_1", object())
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "workflow_assurance_required"
+
+
+@pytest.mark.asyncio
 async def test_preview_route_returns_safe_approval(monkeypatch):
     monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
     workflow = {

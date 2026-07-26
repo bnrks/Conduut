@@ -4,6 +4,7 @@ import pytest
 
 import src.agent.workflow_preview as preview
 from src.agent.sandbox import SandboxTestResult
+from src.agent.schemas import OracleContract
 
 _WORKFLOW = {
     "id": "wf-1",
@@ -21,10 +22,13 @@ _WORKFLOW = {
 
 @pytest.mark.asyncio
 async def test_preview_issues_token_after_safe_probe(monkeypatch):
+    calls = {"sandbox": 0}
+
     async def fake_metadata(user_id, workflow_id):
         return None
 
     async def fake_sandbox(*args, **kwargs):
+        calls["sandbox"] += 1
         assert kwargs["input_payload"] == {"customer": "1"}
         return SandboxTestResult(
             passed=True,
@@ -37,6 +41,8 @@ async def test_preview_issues_token_after_safe_probe(monkeypatch):
         )
 
     async def fake_save(*args, **kwargs):
+        assert kwargs["execution_policy"] == "safe"
+        assert kwargs["preview_basis"] == "safe_sandbox"
         return SimpleNamespace(token="token-1", expires_at="2030-01-01T00:00:00+00:00")
 
     monkeypatch.setattr(preview.store, "get_workflow_metadata", fake_metadata)
@@ -48,6 +54,7 @@ async def test_preview_issues_token_after_safe_probe(monkeypatch):
     assert result["ready"] is True
     assert result["preview_token"] == "token-1"
     assert result["actions"][0]["target"] == "a***@example.com"
+    assert calls["sandbox"] == 1
 
 
 @pytest.mark.asyncio
@@ -88,10 +95,15 @@ async def test_preview_is_bound_to_fingerprint_and_input(monkeypatch):
         user_id="u1",
         input_payload={"customer": "1"},
         preview_token="token-1",
+        conversation_id="conv-1",
+        execution_policy="safe",
     )
     assert ok is True
     assert captured["workflow_id"] == "wf-1"
     assert captured["input_payload"] == {"customer": "1"}
+    assert captured["conversation_id"] == "conv-1"
+    assert captured["execution_policy"] == "safe"
+    assert captured["preview_basis"] == "safe_sandbox"
 
 
 @pytest.mark.asyncio
@@ -156,3 +168,54 @@ async def test_batch_preview_aggregates_rows_into_one_token(monkeypatch):
     assert result["action_count"] == 2
     assert result["writeback_count"] == 2
     assert captured["input_payload"] == {"rows": rows}
+    assert captured["execution_policy"] == "safe"
+    assert captured["preview_basis"] == "safe_sandbox"
+
+
+@pytest.mark.asyncio
+async def test_fast_preview_uses_static_basis_without_sandbox(monkeypatch):
+    async def fake_metadata(user_id, workflow_id):
+        raise AssertionError("fast preview must not read sandbox input metadata")
+
+    async def fail_sandbox(*args, **kwargs):
+        raise AssertionError("fast preview must not execute sandbox")
+
+    async def fake_save(*args, **kwargs):
+        assert kwargs["execution_policy"] == "fast"
+        assert kwargs["preview_basis"] == "fast_static"
+        return SimpleNamespace(token="fast-token", expires_at="2030-01-01T00:00:00+00:00")
+
+    monkeypatch.setattr(preview.store, "get_workflow_metadata", fake_metadata)
+    monkeypatch.setattr(preview, "run_sandbox_test", fail_sandbox)
+    monkeypatch.setattr(preview.store, "save_workflow_run_preview", fake_save)
+    monkeypatch.setattr(
+        preview,
+        "analyze_workflow_semantics",
+        lambda *_args, **_kwargs: SimpleNamespace(findings=(), blocking_findings=()),
+    )
+    monkeypatch.setattr(
+        preview,
+        "build_oracle_contract",
+        lambda *_args, **_kwargs: OracleContract(
+            fingerprint="fp-1",
+            contextSource="current",
+            contractCoverage="full",
+            actionNodes=["Send"],
+            writebackNodes=[],
+            mutationNodes=["Send"],
+            claimScope=["action_verified"],
+        ),
+    )
+
+    result = await preview.preview_workflow_run(
+        _WORKFLOW,
+        user_id="u1",
+        input_payload={"customer": "1"},
+        conversation_id="conv-fast",
+        execution_policy="fast",
+    )
+
+    assert result["ready"] is True
+    assert result["preview_basis"] == "fast_static"
+    assert result["execution_policy"] == "fast"
+    assert result["preview_token"] == "fast-token"

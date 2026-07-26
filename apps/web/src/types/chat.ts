@@ -1,4 +1,5 @@
 export type MessageRole = "user" | "agent" | "assistant";
+export type ExecutionPolicy = "safe" | "fast";
 
 export type AgentStep =
   | { kind: "text"; text: string }
@@ -45,4 +46,6 @@ export interface Conversation {
   model?: string;
   reasoning_effort?: string;
   reasoningEffort?: string;
+  executionPolicy?: ExecutionPolicy;
+  executionPolicyLocked?: boolean;
 }

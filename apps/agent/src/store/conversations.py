@@ -1,9 +1,12 @@
 """Conversations and messages — chat history."""
 
 from dataclasses import dataclass
+from typing import Literal
 from uuid import uuid4
 
 import src.store as _pkg_store
+
+ExecutionPolicy = Literal["safe", "fast"]
 
 
 @dataclass
@@ -29,7 +32,19 @@ class Conversation:
     provider: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
+    execution_policy: ExecutionPolicy = "safe"
+    execution_policy_locked: bool = True
     messages: list[Message] | None = None
+
+
+def _conversation_execution_policy(data: dict | None) -> ExecutionPolicy:
+    value = (data or {}).get("execution_policy")
+    return "fast" if value == "fast" else "safe"
+
+
+def _conversation_execution_policy_locked(data: dict | None) -> bool:
+    value = (data or {}).get("execution_policy_locked")
+    return True if value is None else bool(value)
 
 
 def _conv_ref(user_id: str, conv_id: str):
@@ -59,6 +74,8 @@ async def list_conversations(user_id: str) -> list[Conversation]:
                 message_count=data.get("message_count", 0),
                 created_at=data.get("created_at", ""),
                 updated_at=data.get("updated_at", ""),
+                execution_policy=_conversation_execution_policy(data),
+                execution_policy_locked=_conversation_execution_policy_locked(data),
             )
         )
     return result
@@ -102,6 +119,8 @@ async def get_conversation(user_id: str, conv_id: str) -> Conversation | None:
         provider=data.get("provider"),
         model=data.get("model"),
         reasoning_effort=data.get("reasoning_effort"),
+        execution_policy=_conversation_execution_policy(data),
+        execution_policy_locked=_conversation_execution_policy_locked(data),
         messages=messages,
     )
 
@@ -109,6 +128,7 @@ async def get_conversation(user_id: str, conv_id: str) -> Conversation | None:
 async def get_or_create_conversation(
     user_id: str,
     conv_id: str | None,
+    execution_policy: ExecutionPolicy = "safe",
     provider: str | None = None,
     model: str | None = None,
     reasoning_effort: str | None = None,
@@ -117,6 +137,20 @@ async def get_or_create_conversation(
         doc = await _pkg_store._run(lambda: _pkg_store._conv_ref(user_id, conv_id).get())
         if doc.exists:
             data = doc.to_dict()
+            stored_execution_policy = _conversation_execution_policy(data)
+            stored_execution_policy_locked = _conversation_execution_policy_locked(data)
+            if (
+                data.get("execution_policy") != stored_execution_policy
+                or data.get("execution_policy_locked") is None
+            ):
+                await _pkg_store._run(
+                    lambda: _pkg_store._conv_ref(user_id, conv_id).update(
+                        {
+                            "execution_policy": stored_execution_policy,
+                            "execution_policy_locked": stored_execution_policy_locked,
+                        }
+                    )
+                )
             return Conversation(
                 id=conv_id,
                 title=data.get("title", "New conversation"),
@@ -126,6 +160,8 @@ async def get_or_create_conversation(
                 provider=data.get("provider"),
                 model=data.get("model"),
                 reasoning_effort=data.get("reasoning_effort"),
+                execution_policy=stored_execution_policy,
+                execution_policy_locked=stored_execution_policy_locked,
             )
 
     new_id = str(uuid4())
@@ -135,6 +171,8 @@ async def get_or_create_conversation(
         "message_count": 0,
         "created_at": now,
         "updated_at": now,
+        "execution_policy": execution_policy,
+        "execution_policy_locked": True,
     }
     if provider:
         doc_data["provider"] = provider
@@ -153,6 +191,8 @@ async def get_or_create_conversation(
         provider=provider,
         model=model,
         reasoning_effort=reasoning_effort,
+        execution_policy=execution_policy,
+        execution_policy_locked=True,
     )  # noqa: E501
 
 

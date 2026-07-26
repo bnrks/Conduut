@@ -11,6 +11,7 @@ from src.agent.assurance import workflow_fingerprint
 from src.agent.claim_policy import claim_exceeds_evidence, safe_evidence_summary
 from src.agent.platform_profile import render_static_profile
 from src.agent.platform_state import platform_state_instructions
+from src.agent.runtime_policy import execution_policy_from_deps
 from src.agent.schemas import (
     AgentDeps,
     ArtifactPreviewAttachment,
@@ -86,6 +87,7 @@ _AWAITING_INPUT_SUMMARY = (
     "Bu işlem devam etmek için kullanıcı girdisi bekliyor. "
     "Henüz doğrulanmış bir çalıştırma veya dış sistem değişikliği yok."
 )
+_MAX_RUNTIME_PREVIEW_ATTEMPTS = 2
 
 
 def _tool_status(result: Any) -> str:
@@ -141,19 +143,28 @@ async def _request_workflow_run_approval(
     """Emit a persisted approval request whose opaque id survives chat turns."""
 
     preview_token = str(preview.get("preview_token") or "")
+    preview_basis = str(preview.get("preview_basis") or "safe_sandbox")
     masked_targets = [
         str(action.get("target"))
         for action in preview.get("actions") or []
         if isinstance(action, dict) and action.get("target")
     ]
     target_summary = f" Masked targets: {', '.join(masked_targets[:5])}." if masked_targets else ""
-    question = (
-        "The side-effect preview found "
-        f"{preview.get('eligible_count') or 0} eligible item(s), "
-        f"{preview.get('action_count') or 0} action(s), and "
-        f"{preview.get('writeback_count') or 0} write-back(s)."
-        f"{target_summary} Do you want to run it now?"
-    )
+    if preview_basis == "fast_static":
+        question = (
+            "The static side-effect preview did not execute n8n. It expects "
+            f"{preview.get('action_count') or 0} action node(s) and "
+            f"{preview.get('writeback_count') or 0} write-back node(s)."
+            f"{target_summary} Do you want to run it now?"
+        )
+    else:
+        question = (
+            "The side-effect preview found "
+            f"{preview.get('eligible_count') or 0} eligible item(s), "
+            f"{preview.get('action_count') or 0} action(s), and "
+            f"{preview.get('writeback_count') or 0} write-back(s)."
+            f"{target_summary} Do you want to run it now?"
+        )
     await ctx.deps.emit_tool_call("request_user_input")
     started_at = perf_counter()
     await ctx.deps.emit_attachment(
@@ -192,6 +203,56 @@ async def _request_workflow_run_approval(
             "Stop and wait for the user's answer. The approval token is persisted in the "
             "structured request and will be supplied automatically on the next turn. Do not "
             "ask for confirmation again unless the approval is explicitly rejected as stale."
+        ),
+    }
+
+
+async def _gate_failed_workflow_preview(
+    deps: AgentDeps,
+    *,
+    workflow: dict[str, Any],
+    preview: dict[str, Any],
+    execution_policy: str,
+) -> dict[str, Any]:
+    """Drive bounded safe-preview repair without duplicating the same sandbox run."""
+
+    workflow_id = str(workflow.get("id") or "")
+    findings = [str(item) for item in preview.get("findings") or [] if str(item).strip()]
+    if execution_policy == "safe":
+        attempts = deps.workflow_test_attempts.get(workflow_id, 0) + 1
+        deps.workflow_test_attempts[workflow_id] = attempts
+        if attempts < _MAX_RUNTIME_PREVIEW_ATTEMPTS:
+            details = "\n".join(f"- {item}" for item in findings) or "- Preview failed."
+            raise ModelRetry(
+                "The real-input safe preview found a problem before any side effect occurred:\n"
+                f"{details}\n\n"
+                f"Fix workflow {workflow_id} with update_workflow, then call execute_workflow "
+                "again with the same real input. Do not claim it works yet. If the fix needs "
+                "missing user information, ask one concise question instead."
+            )
+
+        deps.awaiting_user_input = True
+        deps.terminal = True
+        await store.save_workflow_test_status(
+            deps.user_id,
+            workflow_id,
+            status="needs_attention",
+            findings=findings,
+            fingerprint=str(preview.get("workflow_fingerprint") or workflow_fingerprint(workflow)),
+            coverage=str(preview.get("coverage") or "none"),
+        )
+
+    basis = "safe runtime" if execution_policy == "safe" else "fast static"
+    return {
+        "success": False,
+        "workflow_id": workflow_id,
+        "functional_status": "needs_attention",
+        "preview": preview,
+        "error": f"The {basis} preview did not pass.",
+        "terminal": execution_policy == "safe",
+        "instruction": (
+            "Do not claim the workflow is ready or tested. Explain the preview findings "
+            "without exposing internal data."
         ),
     }
 
@@ -239,27 +300,14 @@ def _effective_workflow_timezone(workflow: dict[str, Any]) -> str:
     return settings.workflow_timezone
 
 
-def _should_run_sandbox_test(result: dict[str, Any], *, awaiting: bool) -> bool:
-    """Sandbox-test only genuinely-complete builds (credential-ready, not waiting)."""
-
-    if awaiting:
-        return False
-    # _workflow_result_with_readiness adds ready=False only when blocked.
-    return "ready" not in result
-
-
 def _needs_pretest(
-    metadata: store.WorkflowMetadata | None, workflow: dict[str, Any] | None = None
+    metadata: store.WorkflowMetadata | None,
+    workflow: dict[str, Any] | None = None,
 ) -> bool:
-    """Whether a workflow should be sandbox-tested before its first real run.
-
-    Workflows that were credential-blocked at build time never got tested, so the
-    structure is unverified. Run the test once before executing for real; skip it
-    when a prior test already passed (test_status='passed').
-    """
+    """Whether activation still needs fresh runtime evidence."""
 
     status = metadata.resources.get("test_status") if metadata else None
-    if status not in {"passed", "no_action", "partial_coverage"}:
+    if status not in {"passed", "no_action"}:
         return True
     if workflow is None:
         return False
@@ -909,14 +957,11 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             readiness,
             timezone=workflow_timezone,
         )
-        result = _augment_readiness_result(result, readiness)
-        if _should_run_sandbox_test(result, awaiting=ctx.deps.awaiting_user_input):
-            # Lazy import: tools/__init__ imports factory, and sandbox_gate
-            # imports back into the tools package — importing it here (not at
-            # module top) avoids that cycle.
-            from src.agent.tools.sandbox_gate import _test_and_gate
-
-            result = await _test_and_gate(ctx, full_workflow, name, result)
+        test_state = _workflow_test_state(
+            await store.get_workflow_metadata(ctx.deps.user_id, workflow.id),
+            full_workflow,
+        )
+        result = _augment_readiness_result(result, readiness, test_state=test_state)
         ctx.deps.record_claim_evidence("workflow_created", workflow_id=workflow.id)
         _log_tool_finished("create_workflow", started_at, result)
         return result
@@ -1016,14 +1061,11 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             readiness,
             timezone=workflow_timezone,
         )
-        result = _augment_readiness_result(result, readiness)
-        if _should_run_sandbox_test(result, awaiting=ctx.deps.awaiting_user_input):
-            # Lazy import: tools/__init__ imports factory, and sandbox_gate
-            # imports back into the tools package — importing it here (not at
-            # module top) avoids that cycle.
-            from src.agent.tools.sandbox_gate import _test_and_gate
-
-            result = await _test_and_gate(ctx, full_workflow, name, result)
+        test_state = _workflow_test_state(
+            await store.get_workflow_metadata(ctx.deps.user_id, workflow.id),
+            full_workflow,
+        )
+        result = _augment_readiness_result(result, readiness, test_state=test_state)
         ctx.deps.record_claim_evidence("workflow_created", workflow_id=workflow.id)
         _log_tool_finished("update_workflow", started_at, result)
         return result
@@ -1050,7 +1092,10 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             test_state = _workflow_test_state(metadata, workflow)
             if _needs_pretest(metadata, workflow):
                 gate = await _run_pretest_gate(ctx, workflow)
-                if gate.get("test_status") == "needs_attention":
+                if (
+                    gate.get("test_status") not in {"passed", "no_action"}
+                    or gate.get("test_coverage") != "full"
+                ):
                     gate["success"] = False
                     gate["workflow_id"] = workflow_id
                     _log_tool_finished("activate_workflow", started_at, gate)
@@ -1128,6 +1173,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         try:
             workflow = await _get_workflow_for_reference(workflow_id)
             workflow_id = str(workflow.get("id") or workflow_id)
+            execution_policy = execution_policy_from_deps(ctx.deps)
             preview_token, preview_cancelled = _take_workflow_preview_decision(
                 ctx.deps, workflow_id, preview_token
             )
@@ -1170,18 +1216,6 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                 _log_tool_finished("execute_workflow", started_at, result)
                 return result
 
-            # Test-before-execute: a workflow that was credential-blocked at build
-            # time never got sandbox-tested. Run the test now (once) before the
-            # real run; a structural failure drives a fix (ModelRetry) or blocks
-            # the real execution rather than producing a bad side effect.
-            if _needs_pretest(metadata, workflow):
-                gate = await _run_pretest_gate(ctx, workflow, input_payload=input)
-                if gate.get("test_status") == "needs_attention":
-                    gate["success"] = False
-                    gate["workflow_id"] = workflow_id
-                    _log_tool_finished("execute_workflow", started_at, gate)
-                    return gate
-
             from src.agent.workflow_preview import (
                 consume_workflow_preview,
                 preview_workflow_run,
@@ -1194,15 +1228,16 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                         workflow,
                         user_id=ctx.deps.user_id,
                         input_payload=input,
+                        conversation_id=ctx.deps.conversation_id,
+                        execution_policy=execution_policy,
                     )
                     if not preview.get("ready") or not preview.get("preview_token"):
-                        result = {
-                            "success": False,
-                            "workflow_id": workflow_id,
-                            "functional_status": "needs_attention",
-                            "preview": preview,
-                            "error": "The safe production preview did not pass.",
-                        }
+                        result = await _gate_failed_workflow_preview(
+                            ctx.deps,
+                            workflow=workflow,
+                            preview=preview,
+                            execution_policy=execution_policy,
+                        )
                         _log_tool_finished("execute_workflow", started_at, result)
                         return result
                     result = await _request_workflow_run_approval(
@@ -1217,6 +1252,8 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                     user_id=ctx.deps.user_id,
                     input_payload=input,
                     preview_token=preview_token,
+                    conversation_id=ctx.deps.conversation_id,
+                    execution_policy=execution_policy,
                 )
                 if not approved:
                     # A consumed, expired or stale approval is terminal for this

@@ -444,6 +444,7 @@ class AgentDeps:
     user_id: str
     conversation_id: str
     event_queue: asyncio.Queue[AgentEvent]
+    execution_policy: Literal["safe", "fast"] = "safe"
     attempt_id: str | None = None
     attachments: list[dict[str, Any]] = field(default_factory=list)
     platform_resources: dict[str, dict[str, Any]] = field(default_factory=dict)

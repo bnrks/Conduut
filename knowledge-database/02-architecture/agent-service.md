@@ -911,3 +911,25 @@ Credential readiness ile test readiness ayrildi:
 iddialari full sandbox kaniti olmadan claim gate'ten gecmez. Persisted sandbox
 kaniti `WORKFLOW_TEST_POLICY_VERSION=2` ile surumlenir; eski v1 `passed` veya
 `no_action` fingerprint'i ayni olsa bile activation oncesi yeniden test edilir.
+
+## Conversation Execution Policy (2026-07-25)
+
+[[adr-0021-chat-execution-policy]] backend conversation sozlesmesine
+`execution_policy=safe|fast` ve `execution_policy_locked` alanlarini ekler.
+Yeni conversation ilk user mesaji kabul edilirken policy ile olusturulur ve
+kilitlenir; sonraki istekte persisted deger otoritedir. Legacy kayitlar
+`safe + locked` olarak normalize edilir. Celisen explicit policy chat
+route'unda `409 execution_policy_locked` olur.
+
+Runner policy'yi request body'sinden dogrudan kullanmaz; conversation
+store'dan cozulmus degeri `AgentDeps.execution_policy` olarak tool katmanina
+tasir. Build tool'lari runtime sandbox calistirmaz. Chat manual execute
+preview'i Safe icin `safe_sandbox`, Fast icin `fast_static` basis'i
+uretir. Token store conversation, policy ve basis alanlarini fingerprint/input
+hash ile birlikte kontrol eder.
+
+Safe preview failure repair butcesi agent run basina iki denemedir; workflow
+degisikligi sonrasi yeni preview `ModelRetry` ile istenir. Butce sonunda
+workflow `needs_attention` ve run terminal olur. Fast static failure runtime
+repair baslatmaz. Dashboard/batch route'lari ve activation yolu policy input'u
+kabul etmez, Safe sinirini korur.

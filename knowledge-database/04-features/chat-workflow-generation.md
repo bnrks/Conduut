@@ -344,6 +344,16 @@ Agent workflow olusturduktan veya guncelledikten sonra readiness analizi yapar:
   pretest'i de kullanicinin gercek run payload'uyla yapilir. Activation ise
   runtime degeri olmadigi icin `{}` gondermez; schema'dan guvenli sample
   uretilen `None` yolunu kullanir.
+- Conversation execution policy (2026-07-25): chat composer kullaniciya ilk
+  mesajdan once `safe|fast` secimi verir ve bu secim conversation'da kilitlenir.
+  `safe` mod yalniz chat manual execute yolunda gercek input ile bir adet
+  `safe_sandbox` preview + structured approval + bir adet real run zinciri
+  kullanir. `fast` mod n8n runtime sandbox'i atlar; yalniz full coverage
+  typed/static contract preview (`fast_static`) ile approval ister, sonra tek
+  real run yapar. Build-time `create_workflow`/`update_workflow` runtime
+  sandbox calistirmaz; static validation, readiness, typed Oracle, approval,
+  execution assessment ve claim gate her iki modda da zorunludur. Dashboard,
+  batch ve activation yolu ilk surumde safe-only kalir.
 - Dashboard, runtime input schema'si olan workflow'lari `.xlsx`/`.csv`
   satirlariyla batch calistirabilir. Bu V1 ozellik [[adr-0007-batch-workflow-runs]]
   ile Conduut tarafinda loop olarak tasarlanmistir; workflow JSON'u
@@ -456,3 +466,31 @@ correctness otoritesi dynamic header contract, static/dataflow validation ve
 typed Oracle'dir. Gercek run sonucunda streamed/final metin yalniz evidence
 scope'u kadar claim kurabilir. Partial side effect yeni bir otomatik run
 baslatmaz; reconciliation preview + kullanici onayi gerekir.
+
+## Chat Bazli Safe/Fast Execution Policy (2026-07-25)
+
+[[adr-0021-chat-execution-policy]] ile yeni chat composer'inda varsayilan Safe
+olan kompakt bir execution policy switch'i bulunur. Switch, uzun aciklama
+paneli yerine composer'in alt arac satirinda `Safe mode` etiketiyle gosterilir;
+yanindaki bilgi ikonu hover/focus ile opak kart zemininde
+hiz-maliyet-risk aciklamasini acar.
+Kullanici ilk mesaji gondermeden Fast'i secebilir; ilk mesaj conversation'i
+olusturdugunda secim persist edilir ve kilitlenir. Mevcut ve legacy
+conversation'lar server'daki policy'yi kullanir; policy sonraki mesajlarla
+degistirilemez.
+
+- Safe: gercek input ile bir yan-etkisiz n8n sandbox preview, structured
+  kullanici onayi ve bir real run.
+- Fast: full typed/static contract preview, structured kullanici onayi ve bir
+  real run; n8n runtime sandbox yoktur.
+
+Create/update yalniz build validation ve static assurance calistirir; build
+aninda runtime sandbox yapmaz. Safe preview basarisizsa model workflow'u
+degistirip ayni gercek input ile yeniden deneyebilir, fakat butce iki runtime
+preview ile sinirlidir. Fast static failure runtime repair loop'una girmez.
+Readiness, credential/header contract, approval token, execution assessment ve
+claim gate iki modda da zorunludur.
+
+Policy ilk surumde yalniz chat manual execute yolunu etkiler. Dashboard manual
+run, batch ve activation Safe davranisini korur. Preview token'lari chat,
+policy, preview basis, workflow fingerprint ve input hash'ine baglanir.

@@ -6,14 +6,15 @@ from types import SimpleNamespace
 import pytest
 from pydantic_ai import ModelRetry
 
+import src.agent.tools.factory as factory
 import src.agent.tools.sandbox_gate as gate
 from src.agent.assurance import workflow_fingerprint
 from src.agent.sandbox import SandboxTestResult
 from src.agent.tools.factory import (
     _augment_readiness_result,
+    _gate_failed_workflow_preview,
     _needs_pretest,
     _run_pretest_gate,
-    _should_run_sandbox_test,
     _workflow_test_state,
 )
 from src.store import WorkflowMetadata
@@ -41,6 +42,61 @@ def _ctx():
 
 _WF = {"id": "wf-1", "name": "Demo", "nodes": [], "connections": {}}
 _BASE = {"id": "wf-1", "name": "Demo", "active": False}
+
+
+@pytest.mark.asyncio
+async def test_safe_runtime_preview_failure_drives_bounded_repair():
+    ctx = _ctx()
+
+    with pytest.raises(ModelRetry, match="real-input safe preview"):
+        await _gate_failed_workflow_preview(
+            ctx.deps,
+            workflow=_WF,
+            preview={"findings": ["Body is empty."], "coverage": "full"},
+            execution_policy="safe",
+        )
+
+    assert ctx.deps.workflow_test_attempts["wf-1"] == 1
+    assert ctx.deps.awaiting_user_input is False
+
+
+@pytest.mark.asyncio
+async def test_safe_runtime_preview_failure_becomes_terminal_after_budget(monkeypatch):
+    ctx = _ctx()
+    ctx.deps.workflow_test_attempts["wf-1"] = 1
+    saved = {}
+
+    async def fake_save(user_id, workflow_id, **kwargs):
+        saved.update({"user_id": user_id, "workflow_id": workflow_id, **kwargs})
+
+    monkeypatch.setattr(factory.store, "save_workflow_test_status", fake_save)
+    result = await _gate_failed_workflow_preview(
+        ctx.deps,
+        workflow=_WF,
+        preview={"findings": ["Body is empty."], "coverage": "full"},
+        execution_policy="safe",
+    )
+
+    assert result["terminal"] is True
+    assert ctx.deps.awaiting_user_input is True
+    assert ctx.deps.terminal is True
+    assert ctx.deps.workflow_test_attempts["wf-1"] == 2
+    assert saved["status"] == "needs_attention"
+
+
+@pytest.mark.asyncio
+async def test_fast_static_preview_failure_does_not_start_runtime_repair():
+    ctx = _ctx()
+    result = await _gate_failed_workflow_preview(
+        ctx.deps,
+        workflow=_WF,
+        preview={"findings": ["Contract coverage is partial."], "coverage": "partial"},
+        execution_policy="fast",
+    )
+
+    assert result["error"] == "The fast static preview did not pass."
+    assert result["terminal"] is False
+    assert ctx.deps.workflow_test_attempts == {}
 
 
 def _patch_store(monkeypatch):
@@ -243,21 +299,6 @@ async def test_gate_harness_error_blocks_known_side_effect(monkeypatch):
     assert saved["status"] == "needs_attention"
 
 
-def test_should_run_sandbox_test_on_clean_result():
-    clean = {"id": "x", "name": "n", "active": False}
-    assert _should_run_sandbox_test(clean, awaiting=False) is True
-
-
-def test_should_skip_when_readiness_blocked():
-    blocked = {"id": "x", "name": "n", "active": False, "ready": False, "missing_credentials": 1}
-    assert _should_run_sandbox_test(blocked, awaiting=False) is False
-
-
-def test_should_skip_when_awaiting_user_input():
-    clean = {"id": "x", "name": "n", "active": False}
-    assert _should_run_sandbox_test(clean, awaiting=True) is False
-
-
 def test_needs_pretest_skips_when_already_passed():
     assert _needs_pretest(_meta("passed")) is False
 
@@ -266,6 +307,7 @@ def test_needs_pretest_runs_when_absent_or_not_passed():
     assert _needs_pretest(None) is True
     assert _needs_pretest(_meta(None)) is True
     assert _needs_pretest(_meta("skipped")) is True
+    assert _needs_pretest(_meta("partial_coverage")) is True
     assert _needs_pretest(_meta("needs_attention")) is True
 
 

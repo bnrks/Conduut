@@ -24,7 +24,7 @@ import {
   createAssistantStreamState,
   reduceAssistantStreamEvent,
 } from "@/lib/chat/stream-state";
-import type { Message } from "@/types/chat";
+import type { ExecutionPolicy, Message } from "@/types/chat";
 
 function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -62,6 +62,8 @@ export default function NewChatPage() {
   const [isAgentTyping, setIsAgentTyping] = useState(false);
   const [agentActivity, setAgentActivity] = useState<string | undefined>();
   const [agentActivities, setAgentActivities] = useState<string[]>([]);
+  const [executionPolicy, setExecutionPolicy] = useState<ExecutionPolicy>("safe");
+  const [executionPolicyLocked, setExecutionPolicyLocked] = useState(false);
 
   const handleSend = useCallback(async (
     content: string,
@@ -143,6 +145,7 @@ export default function NewChatPage() {
 
     setMessages((prev) => [...prev, userMessage]);
     setIsAgentTyping(true);
+    setExecutionPolicyLocked(true);
     setAgentActivity(undefined);
     setAgentActivities([]);
 
@@ -151,6 +154,7 @@ export default function NewChatPage() {
         token,
         body: {
           content,
+          execution_policy: executionPolicy,
           execution_reference: executionReference
             ? {
                 execution_id: executionReference.execution_id,
@@ -216,13 +220,16 @@ export default function NewChatPage() {
         router.replace(`/chat/${createdConversationId}`);
       }
     } catch (error) {
+      if (!createdConversationId) {
+        setExecutionPolicyLocked(false);
+      }
       toast.error(error instanceof Error ? error.message : "Message could not be sent.");
     } finally {
       setIsAgentTyping(false);
       setAgentActivity(undefined);
       setAgentActivities([]);
     }
-  }, [isAgentTyping, router, user]);
+  }, [executionPolicy, isAgentTyping, router, user]);
 
   useEffect(() => {
     if (!user || isAgentTyping || messages.length > 0) return;
@@ -270,6 +277,9 @@ export default function NewChatPage() {
             onChange={setInputValue}
             onSend={(content) => { void handleSend(content); }}
             disabled={!user || isAgentTyping}
+            executionPolicy={executionPolicy}
+            executionPolicyLocked={executionPolicyLocked}
+            onExecutionPolicyChange={setExecutionPolicy}
           />
         )}
       </div>
