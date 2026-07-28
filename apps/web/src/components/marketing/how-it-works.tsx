@@ -1,117 +1,207 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { MessageSquare, Wand2, Plug } from "lucide-react";
+import { motion, useReducedMotion } from "framer-motion";
+import {
+  CheckCheck,
+  MessageSquareText,
+  Play,
+  ShieldCheck,
+  Sparkles,
+  Workflow,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
-const STEPS = [
+const STAGES = [
   {
-    number: "1",
-    icon: MessageSquare,
-    title: "Describe what you need",
+    number: "01",
+    title: "Request",
     description:
-      "Tell the AI what you want to automate in plain English. No technical knowledge needed — just describe the outcome.",
-  },
-  {
-    number: "2",
-    icon: Wand2,
-    title: "AI builds your workflow",
-    description:
-      "Conduut's AI understands your intent, selects the right integrations, and generates a complete workflow — instantly.",
+      "Describe the outcome in plain language. Conduut starts from the business task, not nodes or JSON.",
+    detail: "Natural-language request",
+    icon: MessageSquareText,
+    accent: "from-[#A871FF]/30 via-[#A871FF]/10 to-transparent",
   },
   {
-    number: "3",
-    icon: Plug,
-    title: "Connect and automate",
+    number: "02",
+    title: "Draft",
     description:
-      "Authorize your services with one click. Your workflow goes live in your own isolated cloud environment.",
+      "Conduut drafts the native n8n workflow and maps reusable runtime inputs where they belong.",
+    detail: "Native n8n workflow draft",
+    icon: Workflow,
+    accent: "from-[#9A7BFF]/26 via-[#9A7BFF]/10 to-transparent",
   },
-];
-
-const containerVariants = {
-  hidden: {},
-  visible: {
-    transition: {
-      staggerChildren: 0.15,
-    },
+  {
+    number: "03",
+    title: "Check and preview",
+    description:
+      "Connections, readiness, and preview policy are checked before anything live happens.",
+    detail: "Readiness + Safe/Fast checks",
+    icon: ShieldCheck,
+    accent: "from-[#73C2FF]/24 via-[#73C2FF]/10 to-transparent",
   },
-};
-
-const itemVariants = {
-  hidden: { opacity: 0, y: 32 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.5, ease: "easeOut" as const },
+  {
+    number: "04",
+    title: "Approval",
+    description:
+      "Writes, sends, and updates stay behind a structured approval gate instead of running by default.",
+    detail: "Structured approval gate",
+    icon: CheckCheck,
+    accent: "from-[#8DF0C7]/24 via-[#8DF0C7]/10 to-transparent",
   },
-};
+  {
+    number: "05",
+    title: "Run and review",
+    description:
+      "After approval, you can review the saved workflow, run result, artifacts, and history in one place.",
+    detail: "Run result, artifacts, history",
+    icon: Play,
+    accent: "from-[#F6D37A]/22 via-[#F6D37A]/10 to-transparent",
+  },
+] as const;
 
 export function HowItWorks() {
+  const reduceMotion = useReducedMotion() ?? false;
+
   return (
     <section
       id="how-it-works"
-      className="bg-white py-20 sm:py-28"
+      className="relative scroll-mt-16 overflow-hidden bg-[#111218] py-14 text-white sm:py-16"
     >
-      <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
-        {/* Section header */}
-        <motion.div
-          initial={{ opacity: 0, y: 24 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: "-80px" }}
-          transition={{ duration: 0.5, ease: "easeOut" as const }}
-          className="text-center mb-14"
-        >
-          <p className="text-[13px] font-medium uppercase tracking-widest text-conduut-500 mb-3">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(168,113,255,0.16),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(78,163,255,0.12),transparent_26%)]"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/12 to-transparent"
+      />
+
+      <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-3xl text-center">
+          <p className="text-[12px] font-medium uppercase tracking-[0.28em] text-conduut-200/90">
             How it works
           </p>
-          <h2 className="text-3xl sm:text-4xl font-medium tracking-tight text-charcoal">
-            From idea to live automation
-            <br />
-            in three steps.
+          <h2 className="mt-3 text-3xl font-medium tracking-tight text-white sm:text-4xl">
+            One request, five controlled stages.
           </h2>
-        </motion.div>
+          <p className="mx-auto mt-4 max-w-2xl text-[15px] leading-7 text-white/68 sm:text-[16px]">
+            Conduut moves from request to draft, checks, approval, and run
+            review on a single visible path.
+          </p>
+        </div>
 
-        {/* Steps */}
-        <motion.div
-          variants={containerVariants}
-          initial="hidden"
-          whileInView="visible"
-          viewport={{ once: true, margin: "-60px" }}
-          className="grid grid-cols-1 md:grid-cols-3 gap-8 relative"
-        >
-          {/* Connector line — desktop */}
+        <div className="relative mx-auto mt-10 max-w-5xl lg:mt-12">
           <div
-            aria-hidden
-            className="hidden md:block absolute top-10 left-[calc(16.67%+1.5rem)] right-[calc(16.67%+1.5rem)] h-px bg-gradient-to-r from-transparent via-conduut-200 to-transparent"
+            aria-hidden="true"
+            className="absolute bottom-0 left-5 top-0 w-px bg-gradient-to-b from-white/0 via-white/16 to-white/0 sm:left-1/2 sm:-translate-x-1/2"
           />
 
-          {STEPS.map((step) => {
-            const Icon = step.icon;
-            return (
-              <motion.div
-                key={step.number}
-                variants={itemVariants}
-                className="flex flex-col items-center text-center"
-              >
-                {/* Number badge + icon */}
-                <div className="relative mb-5">
-                  <div className="h-20 w-20 rounded-2xl bg-conduut-50 flex items-center justify-center">
-                    <Icon className="h-8 w-8 text-conduut-500" />
-                  </div>
-                  <span className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-conduut-500 text-white text-[12px] font-medium flex items-center justify-center">
-                    {step.number}
-                  </span>
-                </div>
+          {!reduceMotion ? (
+            <motion.span
+              aria-hidden="true"
+              className="absolute left-5 top-[8%] h-2.5 w-2.5 rounded-full border border-conduut-100/65 bg-conduut-200 shadow-[0_0_14px_rgba(171,112,255,0.5)] sm:left-1/2 sm:-translate-x-1/2"
+              animate={{
+                top: ["8%", "92%", "8%"],
+                opacity: [0.35, 1, 0.35],
+              }}
+              transition={{
+                duration: 8.5,
+                ease: "easeInOut",
+                repeat: Number.POSITIVE_INFINITY,
+              }}
+            />
+          ) : null}
 
-                <h3 className="text-[17px] font-medium text-charcoal mb-2">
-                  {step.title}
-                </h3>
-                <p className="text-[15px] text-gray-500 leading-relaxed max-w-xs">
-                  {step.description}
-                </p>
-              </motion.div>
-            );
-          })}
-        </motion.div>
+          <div className="space-y-4 sm:space-y-5">
+            {STAGES.map((stage, index) => {
+              const Icon = stage.icon;
+              const isRightAligned = index % 2 === 1;
+
+              return (
+                <motion.article
+                  key={stage.number}
+                  initial={false}
+                  whileInView={
+                    reduceMotion
+                      ? undefined
+                      : {
+                          opacity: [0.72, 1],
+                          y: [18, 0],
+                        }
+                  }
+                  viewport={{ once: true, margin: "-80px" }}
+                  transition={{
+                    duration: reduceMotion ? 0 : 0.42,
+                    delay: reduceMotion ? 0 : index * 0.05,
+                    ease: "easeOut",
+                  }}
+                  className="relative"
+                >
+                  <div
+                    className={cn(
+                      "grid gap-3 sm:grid-cols-[minmax(0,1fr)_3rem_minmax(0,1fr)] sm:gap-4",
+                      isRightAligned ? "sm:[&>*:last-child]:col-start-3" : ""
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        "relative ml-11 min-w-0 overflow-hidden rounded-[24px] border border-white/10 bg-white/[0.045] p-4 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.75)] backdrop-blur-sm sm:ml-0 sm:max-w-[28rem] sm:p-5",
+                        isRightAligned ? "sm:col-start-3 sm:justify-self-start" : "sm:col-start-1 sm:justify-self-end"
+                      )}
+                    >
+                      <div
+                        aria-hidden="true"
+                        className={cn(
+                          "pointer-events-none absolute inset-0 bg-gradient-to-br opacity-100",
+                          stage.accent
+                        )}
+                      />
+
+                      <div className="relative flex items-start gap-3 sm:gap-4">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-conduut-200/35 bg-conduut-400/12 text-conduut-100">
+                          <Icon className="h-4.5 w-4.5" />
+                        </div>
+
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[11px] font-medium tracking-[0.24em] text-conduut-200/80">
+                              {stage.number}
+                            </span>
+                            <Badge
+                              variant="outline"
+                              className="border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-conduut-100/92"
+                            >
+                              {stage.detail}
+                            </Badge>
+                          </div>
+
+                          <h3 className="mt-2 text-[18px] font-medium leading-snug text-white">
+                            {stage.title}
+                          </h3>
+                          <p className="mt-2 text-[14px] leading-6 text-white/68">
+                            {stage.description}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div
+                      aria-hidden="true"
+                      className="absolute left-5 top-5 flex h-10 w-10 items-center justify-center sm:absolute sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2"
+                    >
+                      <div className="absolute inset-[7px] rounded-full border border-white/12 bg-[#171922]" />
+                      <div className="absolute inset-[11px] rounded-full bg-white/6" />
+                      <div className="relative z-10 flex h-4 w-4 items-center justify-center rounded-full bg-conduut-200 shadow-[0_0_14px_rgba(171,112,255,0.45)]">
+                        <Sparkles className="h-2.5 w-2.5 text-[#111218]" />
+                      </div>
+                    </div>
+                  </div>
+                </motion.article>
+              );
+            })}
+          </div>
+        </div>
       </div>
     </section>
   );

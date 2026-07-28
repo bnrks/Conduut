@@ -41,6 +41,67 @@ eklenmistir.
 - `(dashboard)`: dashboard shell, workflows, connections, usage, settings.
 - `api`: Next route handler'lari; agent servisine proxy/BFF katmani.
 
+`(marketing)` route grubu platform tema tercihinden bilincli olarak ayrilir.
+Landing acik renk tasarimidir; route-scoped `layout.module.css` layout kokundeki
+semantic tema degiskenlerini light degerlere sabitler. Boylece `<html>`
+uzerindeki persist edilmis `.dark` sinifi dashboard/chat icin korunurken logo
+ve ortak button variant'lari landing'de koyu metin ve acik yuzey renklerini
+kullanir.
+
+Landing yeniden tasariminin Part 1 adiminda hero, provider ve uygulanmamis plan
+iddialarindan arindirildi. Ilk ekran artik Conduut'un guncel urun zincirini
+anlatir: dogal dil istegi, n8n workflow draft'i, Gmail/Sheets connection
+kontrolu, Safe preview ve gercek run oncesi structured approval. Urun tiyatrosu
+bilincli olarak `No live run yet` siniri tasir; kullanici onayi ve execution
+kaniti olmadan workflow calismis gibi sunulmaz. Ana hero metni SSR'da gorunur,
+Framer Motion yalniz destekleyici urun panellerini progressive olarak getirir.
+Sag urun tiyatrosu dashboard-benzeri ozel kartlar yerine gercek chat yuzeyinin
+gorsel sozlugunu kullanir: user message bubble, assistant avatar + activity
+satirlari + segmentli cevap, dogrudan paylasilan `WorkflowPreview` attachment'i
+ve `ClarificationPanel` ile ayni secenek/onay dili. Marketing ornegi canli chat
+state'ine baglanmaz; statik ve yan etkisizdir.
+Hero chat tiyatrosunun dis olculeri mesaj/attachment sayisina bagli degildir.
+Masaustunde genis yatay panel sol metin bloguyla yaklasik ayni yuksekliktedir;
+header sabit kalir, conversation govdesi `min-h-0` + `overflow-y-auto` ile kendi
+icinde dikey kayar. Mobilde de ayni sabit viewport modeli korunur ve sayfa
+genisliginde yatay tasma olusmaz.
+Marketing chat ornegi mount sonrasi tek seferlik deterministik bir demo oynatir:
+idle viewport -> user message -> agent activity -> assistant cevabi ->
+`WorkflowPreview` -> structured approval. Her yeni asama conversation
+viewport'unu yumusak bicimde alta kaydirir; dis panel olculeri degismez. Timer'lar
+unmount'ta temizlenir; `prefers-reduced-motion` aktifse gecisler atlanip son
+durum dogrudan gosterilir.
+User mesajindan sonra kisa bir assistant typing asamasi vardir: Conduut avatarina
+eslik eden animasyonlu `...` balonu `AnimatePresence` ile girip activity
+satirlari baslamadan yumusakca kaybolur. Alt fade katmani typing/son mesajlari
+ortmemesi icin kullanilmaz; scrollbar conversation viewport'unu belirtir.
+
+Landing Part 2, eski uc adimli jenerik `HowItWorks` anlatimini
+`Request -> Draft -> Check and preview -> Approval -> Run and review` akisini
+gosteren tek merkez omurgali koyu timeline ile degistirir. Adim kartlari `sm`
+ve uzerinde omurganin iki yanina sirayla yerlesir; mobilde omurga solda kalir ve
+butun kartlar ayni kolonda akar. Ayri connector grid hucreleri, kart disina
+tasan yatay elemanlar veya genislige bagli kolon hesaplari kullanilmaz.
+Omurga uzerindeki hareketli durum isareti icerik yuksekligine yuzdeyle baglidir
+ve reduced-motion tercihinde gosterilmez.
+
+Landing Part 3, eski gercek-disi feature vaatlerini (`per-user isolated
+container`, genel `one-click OAuth`, `400+ integrations`) kaldirir. Yeni
+Features bolumu teknik altyapi adini one cikarmadan otomasyon dili kullanir.
+Platform yetenekleri alti ayri component card ile sergilenir: `AI Automation
+Builder`, `Integrations`, `Safe/Fast Checks`, `Approval Controls`,
+`Results & Artifacts` ve `Run History & Recovery`. Her kart yalniz ikon ve
+metin degil, ilgili urun davranisini gosteren kucuk bir UI motifi tasir.
+Integrations karti mevcut kapsami Google Workspace, HTTP API ve
+credential-backed servislerle sinirli ve dogru anlatir. Duzen genis
+masaustunde 3x2, tablette iki kolon, mobilde tek kolon kullanir; teknik altyapi
+adi kart metinlerinde yer almaz.
+
+Landing yeniden tasariminda pricing bolumu simdilik degistirilmeden birakildi.
+Pricing altindaki ayri `CtaSection` (`Get started today / Ready to automate
+your work?`) root marketing sayfa akisindan kaldirildi; component dosyasi
+yeniden kullanim ihtimali icin silinmedi.
+
 ## Auth
 
 Firebase client auth `src/hooks/use-auth.ts` icinde kullanilir. Browser
