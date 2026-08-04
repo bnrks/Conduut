@@ -6,9 +6,11 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConnectionCallout } from "@/components/n8n/connection-callout";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { useAuth } from "@/hooks/use-auth";
+import { useN8nInstance } from "@/hooks/use-n8n-instance";
 import { AUTH_METHODS, friendlyTypeLabel, type AuthMethod } from "@/lib/credential-auth-methods";
 import {
   CredentialForm,
@@ -88,6 +90,7 @@ async function getErrorMessage(response: Response, fallback: string): Promise<st
 
 export default function CredentialsPage() {
   const { user, loading: authLoading } = useAuth();
+  const { instance, error: instanceError, connectionRequired } = useN8nInstance();
   const confirm = useConfirm();
   const [credentials, setCredentials] = useState<SavedCredential[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -234,6 +237,19 @@ export default function CredentialsPage() {
         service type and asks you to confirm before using it. Secrets are stored only in
         your own n8n instance.
       </p>
+
+      {connectionRequired ? (
+        <div className="mb-5">
+          <ConnectionCallout
+            compact
+            statusLabel={instance?.connectionStatus ? instance.connectionStatus.replaceAll("_", " ") : undefined}
+            description={
+              instanceError ??
+              "This page stays available, but credentials that need your n8n instance should be completed after you connect your automation server in Settings."
+            }
+          />
+        </div>
+      ) : null}
 
       {showForm && (
         <Card className="mb-6">

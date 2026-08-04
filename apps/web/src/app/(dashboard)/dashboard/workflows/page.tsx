@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ArtifactPreview } from "@/components/artifacts/artifact-preview";
+import { ConnectionCallout } from "@/components/n8n/connection-callout";
 import { WorkflowResultView } from "@/components/dashboard/workflow-result-view";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,7 @@ import { WorkflowRunningOverlay } from "@/components/dashboard/workflow-running-
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useMultiSelect } from "@/hooks/use-multi-select";
 import { useAuth } from "@/hooks/use-auth";
+import { useN8nInstance } from "@/hooks/use-n8n-instance";
 import type { ArtifactPreviewData } from "@/types/artifact";
 import type { Workflow, WorkflowInputField, WorkflowResultPresentation, WorkflowStatus } from "@/types/workflow";
 
@@ -242,6 +244,72 @@ function columnLabel(headers: string[], index: number): string {
 
 function optionalNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function readString(record: Record<string, unknown> | null, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record?.[key];
+    if (typeof value === "string" && value.trim().length > 0) return value;
+  }
+  return undefined;
+}
+
+function readBoolean(record: Record<string, unknown> | null, ...keys: string[]): boolean | undefined {
+  for (const key of keys) {
+    const value = record?.[key];
+    if (typeof value === "boolean") return value;
+  }
+  return undefined;
+}
+
+function readNumber(record: Record<string, unknown> | null, ...keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = record?.[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+function normalizeWorkflow(raw: unknown): Workflow {
+  const record = asRecord(raw);
+  const status = readString(record, "status") === "active" ? "active" : "inactive";
+  const source =
+    readString(record, "source", "origin", "management_mode", "managementMode", "ownership") ??
+    "conduut";
+  const readOnly =
+    readBoolean(record, "read_only", "readOnly") ??
+    ["external", "remote", "unmanaged"].includes(source);
+
+  return {
+    id: readString(record, "id") ?? crypto.randomUUID(),
+    name: readString(record, "name") ?? "Untitled workflow",
+    description: readString(record, "description"),
+    status,
+    nodeCount: readNumber(record, "nodeCount", "node_count") ?? 0,
+    lastExecutionAt: readString(record, "lastExecutionAt", "last_execution_at"),
+    executionCount: readNumber(record, "executionCount", "execution_count") ?? 0,
+    createdAt: readString(record, "createdAt", "created_at") ?? "",
+    updatedAt: readString(record, "updatedAt", "updated_at") ?? "",
+    inputSchema: Array.isArray(record?.inputSchema)
+      ? (record.inputSchema as WorkflowInputField[])
+      : Array.isArray(record?.input_schema)
+        ? (record.input_schema as WorkflowInputField[])
+        : undefined,
+    source,
+    origin: readString(record, "origin"),
+    managementMode: readString(record, "management_mode", "managementMode"),
+    readOnly,
+    adoptable: readBoolean(record, "adoptable") ?? readOnly,
+    instanceId: readString(record, "instance_id", "instanceId"),
+  };
+}
+
+function isReadOnlyWorkflow(workflow: Workflow): boolean {
+  return workflow.readOnly === true;
 }
 
 function parseSseEvent(raw: string): BatchStreamEvent | null {
@@ -720,6 +788,14 @@ function notifyFunctionalResult(
 
 export default function WorkflowsPage() {
   const { user, loading: authLoading } = useAuth();
+  const {
+    instance,
+    loading: instanceLoading,
+    error: instanceError,
+    connected: instanceConnected,
+    connectionRequired,
+    refresh: refreshInstance,
+  } = useN8nInstance();
   const confirm = useConfirm();
   const selection = useMultiSelect();
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -744,10 +820,17 @@ export default function WorkflowsPage() {
   const [batchResult, setBatchResult] = useState<WorkflowBatchRunResult | null>(null);
   const [expandedBatchRows, setExpandedBatchRows] = useState<Set<number>>(new Set());
   const [runningOverlay, setRunningOverlay] = useState<{ workflowName: string } | null>(null);
+  const [adoptingWorkflowId, setAdoptingWorkflowId] = useState<string | null>(null);
 
   const fetchWorkflows = useCallback(async () => {
     if (authLoading) return;
     if (!user) {
+      setWorkflows([]);
+      setLoading(false);
+      return;
+    }
+    if (!instanceLoading && !instanceConnected) {
+      setWorkflows([]);
       setLoading(false);
       return;
     }
@@ -760,14 +843,14 @@ export default function WorkflowsPage() {
       if (!response.ok) {
         throw new Error(await getErrorMessage(response, "Failed to fetch workflows."));
       }
-      const data = (await response.json()) as { workflows: Workflow[] };
-      setWorkflows(data.workflows ?? []);
+      const data = (await response.json()) as { workflows?: unknown[] };
+      setWorkflows((data.workflows ?? []).map(normalizeWorkflow));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Workflows could not be loaded.");
     } finally {
       setLoading(false);
     }
-  }, [authLoading, user]);
+  }, [authLoading, instanceConnected, instanceLoading, user]);
 
   useEffect(() => {
     void fetchWorkflows();
@@ -1181,6 +1264,7 @@ export default function WorkflowsPage() {
 
   const handleToggle = async (workflow: Workflow) => {
     if (!user) return;
+    if (isReadOnlyWorkflow(workflow)) return;
     const action = workflow.status === "active" ? "deactivate" : "activate";
     // Optimistic update
     setWorkflows((prev) =>
@@ -1257,6 +1341,32 @@ export default function WorkflowsPage() {
   };
 
   const handleDelete = (workflow: Workflow) => handleBulkDelete([workflow]);
+
+  const handleAdopt = async (workflow: Workflow) => {
+    if (!user) return;
+    setAdoptingWorkflowId(workflow.id);
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch(`/api/workflows/${encodeURIComponent(workflow.id)}?action=adopt`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ source: "dashboard" }),
+      });
+      if (!response.ok) {
+        throw new Error(await getErrorMessage(response, "Workflow could not be adopted."));
+      }
+      toast.success(`"${workflow.name}" adopted.`);
+      await refreshInstance();
+      void fetchWorkflows();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Workflow could not be adopted.");
+    } finally {
+      setAdoptingWorkflowId(null);
+    }
+  };
 
   const submitWorkflowRun = async (workflow: Workflow, input: Record<string, string>) => {
     if (!user) return;
@@ -1568,6 +1678,7 @@ export default function WorkflowsPage() {
     const matchesStatus = statusFilter === "all" || wf.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
+  const bulkSelectable = filtered.filter((workflow) => !isReadOnlyWorkflow(workflow));
 
   return (
     <div>
@@ -1581,6 +1692,19 @@ export default function WorkflowsPage() {
           </Button>
         </Link>
       </div>
+
+      {connectionRequired ? (
+        <div className="mb-5">
+          <ConnectionCallout
+            compact
+            statusLabel={instance?.connectionStatus ? instance.connectionStatus.replaceAll("_", " ") : undefined}
+            description={
+              instanceError ??
+              "Connect your own n8n server before Conduut can list workflows or adopt automations that already live there."
+            }
+          />
+        </div>
+      ) : null}
 
       {/* Filters */}
       <div className="flex items-center gap-3 mb-6">
@@ -1614,7 +1738,7 @@ export default function WorkflowsPage() {
             variant={selection.selecting ? "default" : "outline"}
             size="sm"
             onClick={() => (selection.selecting ? selection.exit() : selection.enter())}
-            disabled={filtered.length === 0}
+            disabled={bulkSelectable.length === 0}
             className="gap-1.5"
           >
             <CheckSquare className="h-4 w-4" />
@@ -1626,14 +1750,14 @@ export default function WorkflowsPage() {
       {selection.selecting && (
         <BulkActionBar
           count={selection.selectedCount}
-          total={filtered.length}
-          allSelected={filtered.length > 0 && selection.selectedCount === filtered.length}
+          total={bulkSelectable.length}
+          allSelected={bulkSelectable.length > 0 && selection.selectedCount === bulkSelectable.length}
           busy={bulkDeleting}
-          onSelectAll={() => selection.selectAll(filtered.map((wf) => wf.id))}
+          onSelectAll={() => selection.selectAll(bulkSelectable.map((wf) => wf.id))}
           onClear={selection.clear}
           onCancel={selection.exit}
           onDelete={() =>
-            void handleBulkDelete(filtered.filter((wf) => selection.isSelected(wf.id)))
+            void handleBulkDelete(bulkSelectable.filter((wf) => selection.isSelected(wf.id)))
           }
         />
       )}
@@ -1650,12 +1774,14 @@ export default function WorkflowsPage() {
               key={wf.id}
               workflow={wf}
               isRunning={runningWorkflowId === wf.id}
+              isAdopting={adoptingWorkflowId === wf.id}
               selectable={selection.selecting}
               selected={selection.isSelected(wf.id)}
               onToggleSelect={(w) => selection.toggle(w.id)}
               onRun={(w) => handleRun(w)}
               onToggle={(w) => void handleToggle(w)}
               onDelete={(w) => void handleDelete(w)}
+              onAdopt={(w) => void handleAdopt(w)}
             />
           ))}
         </div>
@@ -1672,9 +1798,11 @@ export default function WorkflowsPage() {
           <p className="text-[14px] text-muted-foreground mb-6 max-w-xs">
             {search || statusFilter !== "all"
               ? "Try adjusting your search or filter."
-              : "Start a conversation with the AI agent to create your first workflow."}
+              : connectionRequired
+                ? "Connect your automation server first, then adopt or create workflows."
+                : "Start a conversation with the AI agent to create your first workflow."}
           </p>
-          {!search && statusFilter === "all" && (
+          {!search && statusFilter === "all" && !connectionRequired && (
             <Link href="/chat">
               <Button size="sm">
                 <Plus className="h-4 w-4" />
@@ -1682,6 +1810,11 @@ export default function WorkflowsPage() {
               </Button>
             </Link>
           )}
+          {!search && statusFilter === "all" && connectionRequired ? (
+            <Link href="/dashboard/settings?tab=automation-server">
+              <Button size="sm">Connect automation server</Button>
+            </Link>
+          ) : null}
         </div>
       )}
 

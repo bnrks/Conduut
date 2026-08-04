@@ -6,11 +6,13 @@ import { toast } from "sonner";
 import { MessageList } from "@/components/chat/message-list";
 import { ChatInput } from "@/components/chat/chat-input";
 import { EmptyState } from "@/components/chat/empty-state";
+import { ConnectionCallout } from "@/components/n8n/connection-callout";
 import {
   ClarificationPanel,
   type ClarificationPanelData,
 } from "@/components/chat/clarification-panel";
 import { useAuth } from "@/hooks/use-auth";
+import { useN8nInstance } from "@/hooks/use-n8n-instance";
 import { streamChat, type UserInputResponse } from "@/lib/chat/sse";
 import { popConversationCache } from "@/lib/chat/conversation-cache";
 import { normalizeMessages } from "@/lib/chat/messages";
@@ -72,6 +74,7 @@ export default function ConversationPage() {
   }, [params.conversationId]);
 
   const { user } = useAuth();
+  const { instance, error: instanceError, connectionRequired } = useN8nInstance();
   const cachedMessages = useMemo(() => popConversationCache(conversationId), [conversationId]);
   const [messages, setMessages] = useState<Message[]>(() =>
     normalizeMessages(cachedMessages ?? undefined, conversationId)
@@ -251,6 +254,20 @@ export default function ConversationPage() {
         )}
       </div>
       <div className="shrink-0">
+        {!clarification && connectionRequired ? (
+          <div className="px-4 pb-3">
+            <div className="mx-auto max-w-3xl">
+              <ConnectionCallout
+                compact
+                statusLabel={instance?.connectionStatus ? instance.connectionStatus.replaceAll("_", " ") : undefined}
+                description={
+                  instanceError ??
+                  "This conversation is ready, but Conduut still needs your automation server connection before it can work against your n8n instance."
+                }
+              />
+            </div>
+          </div>
+        ) : null}
         {clarification ? (
           <div className="px-4 pb-4">
             <div className="mx-auto max-w-3xl">

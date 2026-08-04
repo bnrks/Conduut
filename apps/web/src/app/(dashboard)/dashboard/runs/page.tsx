@@ -16,9 +16,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { ConnectionCallout } from "@/components/n8n/connection-callout";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useAuth } from "@/hooks/use-auth";
+import { useN8nInstance } from "@/hooks/use-n8n-instance";
 import { setPendingExecutionRepair } from "@/lib/chat/pending-execution-repair";
 import { cn } from "@/lib/utils";
 import type {
@@ -190,6 +192,7 @@ function RunDetailPanel({
 export default function RunsPage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
+  const { instance, loading: instanceLoading, error: instanceError, connected, connectionRequired } = useN8nInstance();
   const [executions, setExecutions] = useState<ExecutionSummary[]>([]);
   const [status, setStatus] = useState<"all" | ExecutionStatus>("all");
   const [workflowId, setWorkflowId] = useState("");
@@ -218,6 +221,13 @@ export default function RunsPage() {
       setExecutions([]);
       setLoading(false);
       setLoadingMore(false);
+      return;
+    }
+    if (!instanceLoading && !connected) {
+      setExecutions([]);
+      setLoading(false);
+      setLoadingMore(false);
+      setLoadError(null);
       return;
     }
     const requestId = ++listRequestId.current;
@@ -253,7 +263,7 @@ export default function RunsPage() {
         setLoadingMore(false);
       }
     }
-  }, [authLoading, queryString, user]);
+  }, [authLoading, connected, instanceLoading, queryString, user]);
 
   useEffect(() => { void loadRuns(); }, [loadRuns]);
 
@@ -304,6 +314,19 @@ export default function RunsPage() {
         </Button>
       </div>
 
+      {connectionRequired ? (
+        <div className="mb-5">
+          <ConnectionCallout
+            compact
+            statusLabel={instance?.connectionStatus ? instance.connectionStatus.replaceAll("_", " ") : undefined}
+            description={
+              instanceError ??
+              "Connect your own n8n server before Conduut can read workflow run history from your automation server."
+            }
+          />
+        </div>
+      ) : null}
+
       <form
         className="mb-5 flex flex-col gap-3 rounded-lg border border-border bg-card p-3 sm:flex-row sm:items-end"
         onSubmit={(event) => { event.preventDefault(); setAppliedWorkflowId(workflowId.trim()); }}
@@ -348,7 +371,11 @@ export default function RunsPage() {
             <div className="flex flex-col items-center px-6 py-20 text-center">
               <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-muted"><Activity className="h-7 w-7 text-muted-foreground" /></div>
               <h2 className="mt-4 text-[15px] font-medium text-foreground">No runs found</h2>
-              <p className="mt-1 max-w-sm text-[13px] text-muted-foreground">Run a workflow or change the filters to see execution history.</p>
+              <p className="mt-1 max-w-sm text-[13px] text-muted-foreground">
+                {connectionRequired
+                  ? "Connect your automation server first, then run a workflow to see execution history."
+                  : "Run a workflow or change the filters to see execution history."}
+              </p>
             </div>
           ) : (
             <>

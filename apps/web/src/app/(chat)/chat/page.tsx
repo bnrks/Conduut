@@ -5,12 +5,14 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { MessageList } from "@/components/chat/message-list";
 import { EmptyState } from "@/components/chat/empty-state";
+import { ConnectionCallout } from "@/components/n8n/connection-callout";
 import { ChatInput } from "@/components/chat/chat-input";
 import {
   ClarificationPanel,
   type ClarificationPanelData,
 } from "@/components/chat/clarification-panel";
 import { useAuth } from "@/hooks/use-auth";
+import { useN8nInstance } from "@/hooks/use-n8n-instance";
 import {
   streamChat,
   type ExecutionReference,
@@ -57,6 +59,7 @@ function appendRecentActivity(items: string[], activity: string) {
 export default function NewChatPage() {
   const router = useRouter();
   const { user } = useAuth();
+  const { instance, error: instanceError, connectionRequired } = useN8nInstance();
   const [inputValue, setInputValue] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isAgentTyping, setIsAgentTyping] = useState(false);
@@ -247,7 +250,23 @@ export default function NewChatPage() {
     <>
       <div className="flex flex-1 flex-col overflow-hidden">
         {messages.length === 0 ? (
-          <EmptyState onPromptClick={handlePromptClick} />
+          <div className="flex flex-1 flex-col gap-4">
+            {connectionRequired ? (
+              <div className="px-4 pt-4">
+                <div className="mx-auto max-w-3xl">
+                  <ConnectionCallout
+                    compact
+                    statusLabel={instance?.connectionStatus ? instance.connectionStatus.replaceAll("_", " ") : undefined}
+                    description={
+                      instanceError ??
+                      "Connect your own n8n server before asking Conduut to build or inspect automations."
+                    }
+                  />
+                </div>
+              </div>
+            ) : null}
+            <EmptyState onPromptClick={handlePromptClick} />
+          </div>
         ) : (
           <MessageList
             messages={messages}
@@ -259,6 +278,20 @@ export default function NewChatPage() {
         )}
       </div>
       <div className="shrink-0">
+        {!clarification && connectionRequired && messages.length > 0 ? (
+          <div className="px-4 pb-3">
+            <div className="mx-auto max-w-3xl">
+              <ConnectionCallout
+                compact
+                statusLabel={instance?.connectionStatus ? instance.connectionStatus.replaceAll("_", " ") : undefined}
+                description={
+                  instanceError ??
+                  "Connect your automation server in Settings so Conduut can work against your n8n instance."
+                }
+              />
+            </div>
+          </div>
+        ) : null}
         {clarification ? (
           <div className="px-4 pb-4">
             <div className="mx-auto max-w-3xl">

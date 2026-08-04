@@ -88,7 +88,7 @@ export async function POST(
   const url = new URL(request.url);
   const action = url.searchParams.get("action") ?? "run";
   if (
-    !["run", "preview-run", "batch-preview", "batch-run", "batch-run-stream"].includes(action)
+    !["run", "preview-run", "batch-preview", "batch-run", "batch-run-stream", "adopt"].includes(action)
   ) {
     return NextResponse.json({ message: "Unsupported workflow action" }, { status: 400 });
   }
@@ -96,15 +96,17 @@ export async function POST(
   try {
     const body = await request.json().catch(() => ({ input: {}, source: "dashboard" }));
     const agentAction =
-      action === "batch-run-stream"
-        ? "batch-run/stream"
-        : action === "batch-preview"
-          ? "batch-preview"
-        : action === "batch-run"
-          ? "batch-run"
-          : action === "preview-run"
-            ? "preview-run"
-            : "run";
+      action === "adopt"
+        ? "adopt"
+        : action === "batch-run-stream"
+          ? "batch-run/stream"
+          : action === "batch-preview"
+            ? "batch-preview"
+            : action === "batch-run"
+              ? "batch-run"
+              : action === "preview-run"
+                ? "preview-run"
+                : "run";
     const response = await fetch(
       `${getAgentBaseUrl()}/api/workflows/${encodeURIComponent(workflowId)}/${agentAction}`,
       {

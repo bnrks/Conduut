@@ -20,6 +20,12 @@ export interface Workflow {
   createdAt: string;
   updatedAt: string;
   inputSchema?: WorkflowInputField[];
+  source?: string;
+  origin?: string;
+  managementMode?: string;
+  readOnly?: boolean;
+  adoptable?: boolean;
+  instanceId?: string;
 }
 
 export interface WorkflowResultPresentationField {

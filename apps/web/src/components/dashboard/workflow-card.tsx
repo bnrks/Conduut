@@ -1,6 +1,6 @@
 "use client";
 
-import { Clock, Play, Trash2, Zap } from "lucide-react";
+import { ArrowRight, Clock, Play, Trash2, Zap } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -31,35 +31,42 @@ function statusLabel(status: WorkflowStatus): string {
 interface WorkflowCardProps {
   workflow: Workflow;
   isRunning?: boolean;
+  isAdopting?: boolean;
   selectable?: boolean;
   selected?: boolean;
   onToggleSelect?: (workflow: Workflow) => void;
   onRun?: (workflow: Workflow) => void;
   onToggle?: (workflow: Workflow) => void;
   onDelete?: (workflow: Workflow) => void;
+  onAdopt?: (workflow: Workflow) => void;
 }
 
 export function WorkflowCard({
   workflow,
   isRunning,
+  isAdopting,
   selectable = false,
   selected = false,
   onToggleSelect,
   onRun,
   onToggle,
   onDelete,
+  onAdopt,
 }: WorkflowCardProps) {
+  const readOnly = workflow.readOnly;
+  const adoptable = workflow.adoptable !== false && readOnly;
+
   return (
     <Card
       interactive
-      onClick={selectable ? () => onToggleSelect?.(workflow) : undefined}
+      onClick={selectable && !readOnly ? () => onToggleSelect?.(workflow) : undefined}
       className={cn("flex flex-col", selectable && selected && "ring-2 ring-conduut-500")}
     >
       <CardContent className="flex flex-col gap-3 p-5">
         {/* Header row */}
         <div className="flex items-start justify-between gap-2">
           <div className="flex min-w-0 max-w-full items-center gap-2">
-            {selectable && (
+            {selectable && !readOnly && (
               <Checkbox
                 checked={selected}
                 onCheckedChange={() => onToggleSelect?.(workflow)}
@@ -80,10 +87,11 @@ export function WorkflowCard({
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {readOnly && <Badge variant="outline">External</Badge>}
             <Badge variant={statusBadgeVariant(workflow.status)}>
               {statusLabel(workflow.status)}
             </Badge>
-            {!selectable && onDelete && (
+            {!selectable && !readOnly && onDelete && (
               <button
                 type="button"
                 className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -108,7 +116,7 @@ export function WorkflowCard({
         )}
 
         {/* Footer */}
-        <div className="flex items-center justify-between pt-1 border-t border-border">
+        <div className="flex items-center justify-between border-t border-border pt-1">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1 text-[12px] text-muted-foreground">
               <Zap className="h-3 w-3" />
@@ -122,43 +130,68 @@ export function WorkflowCard({
 
           {!selectable && (
             <div className="flex items-center gap-2">
-              {onRun && (
-                <button
-                  type="button"
-                  disabled={isRunning}
-                  className={cn(
-                    "flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    isRunning && "cursor-not-allowed opacity-70 hover:bg-transparent hover:text-muted-foreground"
+              {readOnly ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-[12px] text-muted-foreground">Read only</span>
+                  {onAdopt && adoptable && (
+                    <button
+                      type="button"
+                      disabled={isAdopting}
+                      className={cn(
+                        "flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-conduut-500 transition-colors hover:bg-conduut-50 hover:text-conduut-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        isAdopting && "cursor-not-allowed opacity-70 hover:bg-transparent hover:text-conduut-500"
+                      )}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!isAdopting) onAdopt(workflow);
+                      }}
+                    >
+                      {isAdopting ? <Spinner size="sm" /> : <ArrowRight className="h-3.5 w-3.5" />}
+                      {isAdopting ? "Adopting…" : "Adopt"}
+                    </button>
                   )}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (!isRunning) onRun(workflow);
-                  }}
-                >
-                  {isRunning ? <Spinner size="sm" /> : <Play className="h-3.5 w-3.5" />}
-                  {isRunning ? "Running…" : "Run"}
-                </button>
-              )}
+                </div>
+              ) : (
+                <>
+                  {onRun && (
+                    <button
+                      type="button"
+                      disabled={isRunning}
+                      className={cn(
+                        "flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        isRunning && "cursor-not-allowed opacity-70 hover:bg-transparent hover:text-muted-foreground"
+                      )}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!isRunning) onRun(workflow);
+                      }}
+                    >
+                      {isRunning ? <Spinner size="sm" /> : <Play className="h-3.5 w-3.5" />}
+                      {isRunning ? "Running…" : "Run"}
+                    </button>
+                  )}
 
-              <button
-                role="switch"
-                aria-checked={workflow.status === "active"}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggle?.(workflow);
-                }}
-                className={cn(
-                  "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  workflow.status === "active" ? "bg-conduut-500" : "bg-gray-200"
-                )}
-              >
-                <span
-                  className={cn(
-                    "pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm ring-0 transition-transform duration-200",
-                    workflow.status === "active" ? "translate-x-4" : "translate-x-0"
-                  )}
-                />
-              </button>
+                  <button
+                    role="switch"
+                    aria-checked={workflow.status === "active"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggle?.(workflow);
+                    }}
+                    className={cn(
+                      "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      workflow.status === "active" ? "bg-conduut-500" : "bg-gray-200"
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm ring-0 transition-transform duration-200",
+                        workflow.status === "active" ? "translate-x-4" : "translate-x-0"
+                      )}
+                    />
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
