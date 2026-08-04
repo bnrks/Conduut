@@ -6,7 +6,7 @@ import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.config import settings
+from src.config import registry_n8n_url, settings, validate_n8n_provider_settings
 from src.logging_config import bind_log_context, clear_log_context, configure_logging
 from src.registry import initialize_registry, registry_card_status
 from src.routes import artifacts as artifacts_router
@@ -14,6 +14,8 @@ from src.routes import chat, conversations
 from src.routes import connections as connections_router
 from src.routes import credentials as credentials_router
 from src.routes import executions as executions_router
+from src.routes import n8n as n8n_router
+from src.routes import n8n_migration as n8n_migration_router
 from src.routes import usage as usage_router
 from src.routes import workflows as workflows_router
 
@@ -24,8 +26,12 @@ log = structlog.get_logger()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validate_n8n_provider_settings()
     log.info("conduut_agent_starting", environment=settings.environment)
-    await initialize_registry(settings.n8n_url)
+    startup_registry_url = (
+        "" if settings.environment.strip().lower() == "production" else registry_n8n_url()
+    )
+    await initialize_registry(startup_registry_url)
     yield
     log.info("conduut_agent_stopping")
 
@@ -83,6 +89,8 @@ app.include_router(artifacts_router.router, prefix="/api")
 app.include_router(credentials_router.router, prefix="/api")
 app.include_router(connections_router.router, prefix="/api")
 app.include_router(executions_router.router, prefix="/api")
+app.include_router(n8n_router.router, prefix="/api")
+app.include_router(n8n_migration_router.router, prefix="/api")
 app.include_router(usage_router.router, prefix="/api")
 app.include_router(workflows_router.router, prefix="/api")
 

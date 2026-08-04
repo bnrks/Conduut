@@ -67,6 +67,25 @@ from .credentials import (
     save_draft_credential,
 )
 from .execution_evidence import save_execution_evidence
+from .n8n_instances import (
+    N8nInstanceRecord,
+    deactivate_other_n8n_instances,
+    delete_n8n_instance,
+    get_active_n8n_instance,
+    get_latest_n8n_instance,
+    get_n8n_instance,
+    list_n8n_instances,
+    save_n8n_instance,
+)
+from .n8n_migrations import (
+    N8nMigrationExecutionSummary,
+    N8nMigrationItem,
+    N8nMigrationRecord,
+    get_n8n_migration,
+    list_n8n_migration_execution_summaries,
+    save_n8n_migration,
+    upsert_n8n_migration_execution_summaries,
+)
 from .usage import (
     AgentUsageEvent,
     _usage_event_document_id,
@@ -106,6 +125,10 @@ __all__ = [
     "Conversation",
     "CustomCredential",
     "Message",
+    "N8nInstanceRecord",
+    "N8nMigrationExecutionSummary",
+    "N8nMigrationItem",
+    "N8nMigrationRecord",
     "OAuthState",
     "WorkflowMetadata",
     "WorkflowRunPreview",
@@ -145,6 +168,18 @@ __all__ = [
     "save_draft_credential",
     # execution evidence
     "save_execution_evidence",
+    # n8n instances
+    "deactivate_other_n8n_instances",
+    "delete_n8n_instance",
+    "get_active_n8n_instance",
+    "get_latest_n8n_instance",
+    "get_n8n_migration",
+    "get_n8n_instance",
+    "list_n8n_migration_execution_summaries",
+    "list_n8n_instances",
+    "save_n8n_instance",
+    "save_n8n_migration",
+    "upsert_n8n_migration_execution_summaries",
     # workflow_metadata
     "delete_workflow_metadata",
     "get_all_workflow_metadata",
