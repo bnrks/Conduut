@@ -161,3 +161,38 @@ async def test_registry_enforce_mode_requires_explicit_n8n_version(tmp_path, mon
 
     with pytest.raises(RuntimeError, match="n8n_version_required_in_enforce_mode"):
         await registry_module.initialize_registry("")
+
+
+@pytest.mark.asyncio
+async def test_registry_production_never_falls_back_to_live_n8n(tmp_path, monkeypatch):
+    observed = {}
+
+    async def fake_initialize_from_n8n(**kwargs):
+        observed.update(kwargs)
+
+    fake_registry = type(
+        "FakeRegistry",
+        (),
+        {
+            "initialize_from_n8n": staticmethod(fake_initialize_from_n8n),
+            "node_count": 1,
+            "template_count": 1,
+            "workflow_card_count": 1,
+            "credential_count": 1,
+        },
+    )()
+    credentials = tmp_path / "credentials.json"
+    credentials.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(registry_module, "_CREDENTIALS_PATH", credentials)
+    monkeypatch.setattr(
+        registry_module,
+        "_registry_artifact_readiness",
+        lambda: (True, "ready", {"artifactVersion": 2, "n8nVersion": "1.121.3"}),
+    )
+    monkeypatch.setattr(registry_module, "registry", fake_registry)
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "n8n_version", "1.121.3")
+
+    await registry_module.initialize_registry("https://must-not-be-used.example.com")
+
+    assert observed["n8n_base_url"] == ""

@@ -106,9 +106,13 @@ def _registry_artifact_readiness() -> tuple[bool, str, dict[str, Any]]:
 
 
 async def initialize_registry(n8n_base_url: str) -> None:
-    """Agent startup'ında çağrılır. n8n'den node şemalarını çeker."""
+    """Initialize the bundled registry, with a dev-only live n8n fallback."""
     mode = _card_retrieval_mode()
     ready, reason, manifest = _registry_artifact_readiness()
+    production = settings.environment.strip().lower() == "production"
+    if production and ready and not _CREDENTIALS_PATH.exists():
+        ready = False
+        reason = "missing_artifacts:credentials.json"
     if mode == "enforce" and ready:
         expected_version = str(settings.n8n_version or "").strip()
         manifest_version = str(manifest.get("n8nVersion") or "").strip()
@@ -125,16 +129,16 @@ async def initialize_registry(n8n_base_url: str) -> None:
             "dataDir": str(_DATA_DIR),
         }
     )
-    if mode == "enforce" and not ready:
+    if (mode == "enforce" or production) and not ready:
         raise RuntimeError(
-            "Workflow-card retrieval artifacts are required in enforce mode "
+            "Bundled registry artifacts are required in enforce mode or production "
             f"but are not ready ({reason}). Run packages/n8n-registry/scripts/build_cards.py."
         )
     if not ready:
         log.warning("workflow_card_registry_fallback", mode=mode, reason=reason)
 
     await registry.initialize_from_n8n(
-        n8n_base_url=n8n_base_url,
+        n8n_base_url="" if production else n8n_base_url,
         nodes_path=_NODES_PATH if _NODES_PATH.exists() else None,
         templates_path=_TEMPLATES_PATH if _TEMPLATES_PATH.exists() else None,
         credentials_path=_CREDENTIALS_PATH if _CREDENTIALS_PATH.exists() else None,

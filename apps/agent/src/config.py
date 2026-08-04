@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from pydantic_settings import BaseSettings
@@ -13,6 +14,13 @@ def _find_repo_root(start: Path) -> Path:
 
 
 _REPO_ROOT = _find_repo_root(_APP_DIR)
+
+
+def _registry_manifest_path() -> Path:
+    direct = _REPO_ROOT / "packages" / "n8n-registry" / "data" / "registry_manifest.json"
+    if direct.exists():
+        return direct
+    return _APP_DIR.parent / "data" / "registry_manifest.json"
 
 
 class Settings(BaseSettings):
@@ -53,6 +61,13 @@ class Settings(BaseSettings):
     n8n_url: str = "http://localhost:6180"
     n8n_api_key: str = ""
     n8n_version: str = ""
+    n8n_provider_mode: str = "shared_dev"
+    n8n_registry_url: str = ""
+    n8n_secret_manager_backend: str = "memory"
+    n8n_secret_manager_project_id: str = ""
+    n8n_secret_manager_secret_prefix: str = "conduut-n8n"
+    n8n_migration_mode: str = "off"
+    n8n_migration_manifest_path: str = ""
     # User-facing schedule times are stored in this workflow timezone. Keeping
     # it explicit prevents n8n's America/New_York default from silently shifting
     # schedules when the model writes the user's local clock time.
@@ -102,3 +117,41 @@ def key_for_provider(provider: str) -> str:
             f"Missing Conduut API key for provider '{provider_key}' (set CONDUUT_{attr.upper()})"
         )
     return value
+
+
+def canonical_n8n_version() -> str:
+    configured = str(settings.n8n_version or "").strip()
+    if configured:
+        return configured
+
+    manifest_path = _registry_manifest_path()
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return ""
+
+    version = payload.get("n8nVersion")
+    return str(version).strip() if version else ""
+
+
+def registry_n8n_url() -> str:
+    configured = str(settings.n8n_registry_url or "").strip()
+    if configured:
+        return configured
+    return str(settings.n8n_url or "").strip()
+
+
+def validate_n8n_provider_settings() -> None:
+    environment = str(settings.environment or "").strip().lower()
+    provider_mode = str(settings.n8n_provider_mode or "").strip().lower()
+    secret_backend = str(settings.n8n_secret_manager_backend or "").strip().lower()
+
+    if environment == "production":
+        if provider_mode != "customer_owned":
+            raise ValueError("Production requires CONDUUT_N8N_PROVIDER_MODE=customer_owned.")
+        if secret_backend != "google_secret_manager":
+            raise ValueError(
+                "Production requires CONDUUT_N8N_SECRET_MANAGER_BACKEND=google_secret_manager."
+            )
+    elif provider_mode not in {"shared_dev", "customer_owned"}:
+        raise ValueError("Unsupported CONDUUT_N8N_PROVIDER_MODE.")

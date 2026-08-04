@@ -1,6 +1,7 @@
 """Tests for n8n_client credential attachment wiring."""
 
 import asyncio
+import socket
 
 import pytest
 
@@ -632,6 +633,44 @@ async def test_mutations_do_not_serialize_across_different_workflows(monkeypatch
     await asyncio.gather(task_one, task_two)
 
 
+async def test_same_workflow_id_on_distinct_instances_uses_distinct_locks(monkeypatch):
+    in_flight = 0
+    both_in_flight = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_get_workflow(self, workflow_id):
+        return {
+            "id": workflow_id,
+            "name": "Workflow",
+            "active": False,
+            "nodes": [],
+            "connections": {},
+            "settings": {"executionOrder": "v1"},
+        }
+
+    async def fake_request(self, method, path, **kwargs):
+        nonlocal in_flight
+        if method == "PUT":
+            in_flight += 1
+            if in_flight == 2:
+                both_in_flight.set()
+            await release.wait()
+            in_flight -= 1
+            return _JsonResp({"id": "same", "active": False, **kwargs["json"]})
+        return _JsonResp({})
+
+    monkeypatch.setattr(n8n_client.N8nClient, "get_workflow", fake_get_workflow)
+    monkeypatch.setattr(n8n_client.N8nClient, "request", fake_request)
+    first = n8n_client.N8nClient("https://a.example.com", "a", instance_id="inst_a")
+    second = n8n_client.N8nClient("https://b.example.com", "b", instance_id="inst_b")
+
+    task_one = asyncio.create_task(first.update_workflow("same", "A", [], {}))
+    task_two = asyncio.create_task(second.update_workflow("same", "B", [], {}))
+    await asyncio.wait_for(both_in_flight.wait(), timeout=0.2)
+    release.set()
+    await asyncio.gather(task_one, task_two)
+
+
 async def test_call_webhook_uses_long_timeout_for_llm_workflows(monkeypatch):
     # A synchronous webhook run (responseMode=lastNode) blocks until the WHOLE
     # workflow finishes; AI/LLM workflows routinely take 30-120s. The webhook
@@ -719,3 +758,87 @@ async def test_legacy_list_executions_returns_page_items(monkeypatch):
     monkeypatch.setattr(n8n_client, "list_executions_page", fake_page)
 
     assert await n8n_client.list_executions("wf_1", limit=3) == [expected]
+
+
+def test_extract_n8n_version_prefers_version_cli():
+    assert (
+        n8n_client.extract_n8n_version({"versionCli": "1.121.3", "version": "1.0.0"}) == "1.121.3"
+    )
+
+
+async def test_instance_client_uses_webhook_base_url(monkeypatch):
+    captured: dict = {}
+
+    class _CapturingClient:
+        def __init__(self, *args, timeout=None, follow_redirects=None, **kwargs):
+            captured["timeout"] = timeout
+            captured["follow_redirects"] = follow_redirects
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, json=None, headers=None, extensions=None):
+            captured["url"] = url
+            captured["json"] = json
+            captured["headers"] = headers
+            captured["extensions"] = extensions
+            return _FakeResp()
+
+    monkeypatch.setattr(n8n_client.httpx, "AsyncClient", _CapturingClient)
+    monkeypatch.setattr(
+        "src.n8n_security.socket.getaddrinfo",
+        lambda *_args, **_kwargs: [(socket.AF_INET, None, None, None, ("93.184.216.34", 443))],
+    )
+    client = n8n_client.N8nClient(
+        base_url="https://api.example.com",
+        webhook_base_url="https://hooks.example.com",
+        api_key="secret",
+        instance_id="inst_1",
+        ownership="customer_owned",
+    )
+    await client.call_webhook("my/path", {"x": 1})
+
+    assert captured["url"] == "https://93.184.216.34/webhook/my/path"
+    assert captured["json"] == {"x": 1}
+    assert captured["headers"]["Host"] == "hooks.example.com"
+    assert captured["extensions"]["sni_hostname"] == "hooks.example.com"
+    assert captured["follow_redirects"] is False
+
+
+async def test_customer_owned_client_revalidates_dns_before_each_request(monkeypatch):
+    resolutions = 0
+
+    def fake_getaddrinfo(*_args, **_kwargs):
+        nonlocal resolutions
+        resolutions += 1
+        address = "93.184.216.34" if resolutions <= 2 else "10.0.0.5"
+        return [(socket.AF_INET, None, None, None, (address, 443))]
+
+    class _Client:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        async def request(self, *_args, **_kwargs):
+            return _FakeResp()
+
+    monkeypatch.setattr("src.n8n_security.socket.getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(n8n_client.httpx, "AsyncClient", _Client)
+    client = n8n_client.N8nClient(
+        base_url="https://automation.example.com",
+        api_key="secret",
+        instance_id="inst_1",
+        ownership="customer_owned",
+    )
+
+    await client.request("GET", "/workflows")
+    with pytest.raises(Exception, match="public IP"):
+        await client.request("GET", "/workflows")

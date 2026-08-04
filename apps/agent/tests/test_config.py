@@ -1,6 +1,17 @@
+import json
+import shutil
+import tempfile
+from pathlib import Path
+
 import pytest
 
-from src.config import _find_repo_root, key_for_provider, settings
+from src.config import (
+    _find_repo_root,
+    canonical_n8n_version,
+    key_for_provider,
+    registry_n8n_url,
+    settings,
+)
 
 
 def test_find_repo_root_uses_marker_directory(tmp_path):
@@ -12,11 +23,14 @@ def test_find_repo_root_uses_marker_directory(tmp_path):
     assert _find_repo_root(app_dir) == repo_root
 
 
-def test_find_repo_root_falls_back_to_start_without_marker(tmp_path):
-    app_dir = tmp_path / "app"
-    app_dir.mkdir()
-
-    assert _find_repo_root(app_dir) == app_dir
+def test_find_repo_root_falls_back_to_start_without_marker():
+    temp_dir = tempfile.mkdtemp(prefix="conduut-find-root-")
+    try:
+        app_dir = Path(temp_dir) / "app"
+        app_dir.mkdir()
+        assert _find_repo_root(app_dir) == app_dir
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def test_key_for_provider_returns_configured_key(monkeypatch):
@@ -47,3 +61,19 @@ def test_key_for_provider_rejects_unknown_provider():
 
 def test_workflow_timezone_defaults_to_istanbul():
     assert settings.workflow_timezone == "Europe/Istanbul"
+
+
+def test_registry_n8n_url_falls_back_to_n8n_url(monkeypatch):
+    monkeypatch.setattr(settings, "n8n_registry_url", "")
+    monkeypatch.setattr(settings, "n8n_url", "http://localhost:6180")
+    assert registry_n8n_url() == "http://localhost:6180"
+
+
+def test_canonical_n8n_version_reads_registry_manifest(tmp_path, monkeypatch):
+    manifest = tmp_path / "registry_manifest.json"
+    manifest.write_text(json.dumps({"n8nVersion": "1.121.3"}), encoding="utf-8")
+
+    monkeypatch.setattr(settings, "n8n_version", "")
+    monkeypatch.setattr("src.config._registry_manifest_path", lambda: manifest)
+
+    assert canonical_n8n_version() == "1.121.3"
