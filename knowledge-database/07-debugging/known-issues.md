@@ -846,9 +846,11 @@ reconciliation durumunu ayirir.
 2026-08-04 local startup takibi: tracked secret'i ayirmak icin kullanilan
 `CONDUUT_DEV_SHARED_N8N_API_KEY`, root `.env` dosyasindan dogrudan Uvicorn
 baslatildiginda `Settings` tarafindan extra field sayilip importu durduruyordu.
-`n8n_api_key` artik hem scoped local adi hem legacy `CONDUUT_N8N_API_KEY` adini
-validation alias olarak kabul eder; Docker Compose ve host Uvicorn ayni local
-shared-dev credential sozlesmesini kullanir.
+Iki degisken ayni `.env` icinde bulunabildigi icin ayri Settings alanlari olarak
+tuketilir; shared-dev resolver/client/migration scoped adi onceleyen tek helper'i
+kullanir ve legacy `CONDUUT_N8N_API_KEY` fallback'i korunur. Boylece
+`extra_forbidden` typo korumasi gevsetilmeden Docker Compose ve host Uvicorn ayni
+local shared-dev credential sozlesmesini kullanir.
 
 ## Credential Prompt After Workflow Create
 

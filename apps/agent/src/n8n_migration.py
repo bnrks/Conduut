@@ -8,7 +8,7 @@ from hashlib import sha256
 from typing import Any, Protocol
 
 from src import store
-from src.config import settings
+from src.config import settings, shared_dev_n8n_api_key
 from src.n8n_client import N8nApiError, N8nClient
 from src.n8n_provider import N8nClientFactory
 from src.n8n_target import N8nTarget
@@ -780,11 +780,12 @@ class N8nMigrationService:
         return target
 
     def _build_source_transport(self) -> N8nWorkflowTransport:
-        if not str(settings.n8n_url or "").strip() or not str(settings.n8n_api_key or "").strip():
+        api_key = shared_dev_n8n_api_key()
+        if not str(settings.n8n_url or "").strip() or not api_key:
             raise MigrationSourceUnavailableError()
         client = N8nClient(
             base_url=str(settings.n8n_url).rstrip("/"),
-            api_key=str(settings.n8n_api_key),
+            api_key=api_key,
             webhook_base_url=str(settings.n8n_url).rstrip("/"),
             instance_id="shared_dev",
             ownership="shared_dev",

@@ -12,6 +12,7 @@ from src.config import (
     key_for_provider,
     registry_n8n_url,
     settings,
+    shared_dev_n8n_api_key,
 )
 
 
@@ -70,13 +71,21 @@ def test_registry_n8n_url_falls_back_to_n8n_url(monkeypatch):
     assert registry_n8n_url() == "http://localhost:6180"
 
 
-def test_settings_accepts_scoped_shared_dev_n8n_api_key(monkeypatch):
+def test_settings_accepts_both_shared_dev_n8n_api_key_names(monkeypatch):
     monkeypatch.setenv("CONDUUT_DEV_SHARED_N8N_API_KEY", "dev-key")
-    monkeypatch.delenv("CONDUUT_N8N_API_KEY", raising=False)
+    monkeypatch.setenv("CONDUUT_N8N_API_KEY", "legacy-key")
 
     loaded = Settings(_env_file=None)
 
-    assert loaded.n8n_api_key == "dev-key"
+    assert loaded.dev_shared_n8n_api_key == "dev-key"
+    assert loaded.n8n_api_key == "legacy-key"
+
+
+def test_shared_dev_n8n_api_key_prefers_scoped_name(monkeypatch):
+    monkeypatch.setattr(settings, "dev_shared_n8n_api_key", "dev-key")
+    monkeypatch.setattr(settings, "n8n_api_key", "legacy-key")
+
+    assert shared_dev_n8n_api_key() == "dev-key"
 
 
 def test_canonical_n8n_version_reads_registry_manifest(tmp_path, monkeypatch):

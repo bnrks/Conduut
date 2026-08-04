@@ -13,7 +13,7 @@ from weakref import WeakValueDictionary
 import httpx
 import structlog
 
-from src.config import settings
+from src.config import settings, shared_dev_n8n_api_key
 from src.logging_config import redact_for_logging
 from src.n8n_security import normalize_customer_owned_n8n_url, pin_customer_owned_n8n_url
 
@@ -687,7 +687,7 @@ async def _request(method: str, path: str, **kwargs: Any) -> httpx.Response:
 def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(
         base_url=f"{settings.n8n_url}/api/v1",
-        headers={"X-N8N-API-KEY": settings.n8n_api_key},
+        headers={"X-N8N-API-KEY": shared_dev_n8n_api_key()},
         timeout=30.0,
     )
 

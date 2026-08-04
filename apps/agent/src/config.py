@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 
-from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 _APP_DIR = Path(__file__).resolve().parents[1]
@@ -60,13 +59,8 @@ class Settings(BaseSettings):
 
     # n8n
     n8n_url: str = "http://localhost:6180"
-    n8n_api_key: str = Field(
-        default="",
-        validation_alias=AliasChoices(
-            "CONDUUT_DEV_SHARED_N8N_API_KEY",
-            "CONDUUT_N8N_API_KEY",
-        ),
-    )
+    n8n_api_key: str = ""
+    dev_shared_n8n_api_key: str = ""
     n8n_version: str = ""
     n8n_provider_mode: str = "shared_dev"
     n8n_registry_url: str = ""
@@ -99,6 +93,12 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def shared_dev_n8n_api_key() -> str:
+    """Return the scoped local key, falling back to the legacy env name."""
+
+    return str(settings.dev_shared_n8n_api_key or settings.n8n_api_key or "").strip()
 
 
 # provider key -> Settings attribute holding the Conduut-managed API key.

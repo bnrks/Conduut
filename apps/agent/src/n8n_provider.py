@@ -8,7 +8,7 @@ from uuid import uuid4
 import httpx
 
 from src import n8n_client, store
-from src.config import canonical_n8n_version, settings
+from src.config import canonical_n8n_version, settings, shared_dev_n8n_api_key
 from src.n8n_security import N8nUrlValidationError, normalize_customer_owned_n8n_url
 from src.n8n_target import N8nRequestContext, N8nTarget
 from src.secret_store import SecretStore, get_secret_store
@@ -177,7 +177,8 @@ def _shared_dev_target() -> N8nTarget:
             "Set CONDUUT_N8N_PROVIDER_MODE=customer_owned."
         )
     base_url = str(settings.n8n_url or "").strip().rstrip("/")
-    if not base_url or not str(settings.n8n_api_key or "").strip():
+    api_key = shared_dev_n8n_api_key()
+    if not base_url or not api_key:
         raise N8nConfigurationError("Shared development n8n config is incomplete.")
     return N8nTarget(
         tenant_id="shared_dev",
@@ -185,9 +186,9 @@ def _shared_dev_target() -> N8nTarget:
         ownership="shared_dev",
         base_url=base_url,
         webhook_base_url=base_url,
-        api_key_secret_ref="env:CONDUUT_N8N_API_KEY",
+        api_key_secret_ref="env:CONDUUT_DEV_SHARED_N8N_API_KEY",
         n8n_version=canonical_n8n_version(),
-        api_key=str(settings.n8n_api_key),
+        api_key=api_key,
     )
 
 
