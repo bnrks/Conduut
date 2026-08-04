@@ -25,15 +25,21 @@ if "%CONDUUT_WEB_PORT%"=="" set "CONDUUT_WEB_PORT=3007"
 set "CONDUUT_ENVIRONMENT=development"
 set "CONDUUT_LOG_DIR=%ROOT%logs\agent"
 set "CONDUUT_N8N_URL=http://localhost:%CONDUUT_N8N_PORT%"
-set "CONDUUT_N8N_API_KEY=***REMOVED***"
+set "CONDUUT_N8N_API_KEY="
 set "CONDUUT_PUBLIC_WEB_URL=http://localhost:%CONDUUT_WEB_PORT%"
 if exist "%ROOT%.env" (
   for /f "usebackq eol=# tokens=1,* delims==" %%A in ("%ROOT%.env") do (
+    if /I "%%A"=="CONDUUT_DEV_SHARED_N8N_API_KEY" set "CONDUUT_N8N_API_KEY=%%B"
     if /I "%%A"=="CONDUUT_GOOGLE_OAUTH_CLIENT_ID" set "CONDUUT_GOOGLE_OAUTH_CLIENT_ID=%%B"
     if /I "%%A"=="CONDUUT_GOOGLE_OAUTH_CLIENT_SECRET" set "CONDUUT_GOOGLE_OAUTH_CLIENT_SECRET=%%B"
     if /I "%%A"=="CONDUUT_CONNECTION_ENCRYPTION_KEY" set "CONDUUT_CONNECTION_ENCRYPTION_KEY=%%B"
     if /I "%%A"=="CONDUUT_OAUTH_STATE_TTL_SECONDS" set "CONDUUT_OAUTH_STATE_TTL_SECONDS=%%B"
   )
+)
+if "%CONDUUT_N8N_API_KEY%"=="" (
+  echo Missing CONDUUT_DEV_SHARED_N8N_API_KEY in .env.
+  echo Create and rotate a local n8n API key before starting the agent.
+  exit /b 1
 )
 set "PYTHONPATH=%ROOT%packages\n8n-registry\src;%PYTHONPATH%"
 start "Conduut Agent" /D "%ROOT%apps\agent" cmd /k python -m uvicorn src.main:app --reload --host 0.0.0.0 --port 8100
