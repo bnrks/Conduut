@@ -99,6 +99,46 @@ async def test_get_custom_credential_missing_returns_none(monkeypatch):
     assert await store.get_custom_credential("u1", "nope") is None
 
 
+async def test_custom_credentials_are_scoped_to_n8n_instance(monkeypatch):
+    storage: dict[str, dict] = {}
+
+    async def fake_run(fn):
+        return fn()
+
+    monkeypatch.setattr(store, "_run", fake_run)
+    monkeypatch.setattr(store, "_user_ref", lambda _u: _FakeUserRef(storage, "credentials"))
+    monkeypatch.setattr(store, "_now_iso", lambda: "2026-08-03T00:00:00+00:00")
+
+    first = await store.save_custom_credential(
+        "u1",
+        label="First",
+        credential_type="httpHeaderAuth",
+        host="first.example.com",
+        n8n_credential_id="same_remote_id",
+        n8n_credential_name="First",
+        instance_id="inst_a",
+    )
+    second = await store.save_custom_credential(
+        "u1",
+        label="Second",
+        credential_type="httpHeaderAuth",
+        host="second.example.com",
+        n8n_credential_id="same_remote_id",
+        n8n_credential_name="Second",
+        instance_id="inst_b",
+    )
+
+    first_ids = [
+        item.id for item in await store.list_custom_credentials("u1", instance_id="inst_a")
+    ]
+    second_ids = [
+        item.id for item in await store.list_custom_credentials("u1", instance_id="inst_b")
+    ]
+    assert first_ids == [first.id]
+    assert second_ids == [second.id]
+    assert await store.get_custom_credential("u1", first.id, instance_id="inst_b") is None
+
+
 async def test_draft_credential_save_and_finalize(monkeypatch):
     storage: dict[str, dict] = {}
 

@@ -171,7 +171,7 @@ async def test_chat_send_canonicalizes_execution_reference_before_storing(monkey
     monkeypatch.setattr(chat_route, "get_user_id", lambda _request: "user_1")
     calls: dict = {}
 
-    async def fake_get_run(user_id: str, execution_id: str):
+    async def fake_get_run(user_id: str, execution_id: str, **_kwargs):
         assert user_id == "user_1"
         assert execution_id == "exec_1"
         return RunDetail(
@@ -253,7 +253,7 @@ async def test_chat_send_canonicalizes_execution_reference_before_storing(monkey
 async def test_chat_send_rejects_non_failed_execution_before_creating_conversation(monkeypatch):
     monkeypatch.setattr(chat_route, "get_user_id", lambda _request: "user_1")
 
-    async def fake_get_run(_user_id: str, _execution_id: str):
+    async def fake_get_run(_user_id: str, _execution_id: str, **_kwargs):
         return RunDetail(
             id="exec_ok",
             workflow_id="wf_1",

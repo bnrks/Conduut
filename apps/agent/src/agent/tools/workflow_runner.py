@@ -46,6 +46,57 @@ _MAX_EXECUTION_FAILURES = 2
 BatchProgressPayload = dict[str, Any] | WorkflowBatchRowResultData | WorkflowBatchRunResultData
 
 
+def _resolve_n8n(n8n: Any | None):
+    return n8n or n8n_client
+
+
+def _instance_id_from_n8n(n8n: Any | None) -> str | None:
+    instance_id = getattr(n8n, "instance_id", None)
+    return str(instance_id) if instance_id else None
+
+
+async def _analyze_workflow_readiness(
+    workflow: dict[str, Any],
+    *,
+    user_id: str,
+    n8n: Any,
+) -> dict[str, Any]:
+    try:
+        return await analyze_workflow_readiness_payload(
+            workflow,
+            user_id=user_id,
+            n8n=n8n,
+        )
+    except TypeError as exc:
+        if "unexpected keyword argument 'n8n'" not in str(exc):
+            raise
+        return await analyze_workflow_readiness_payload(workflow, user_id=user_id)
+
+
+async def _attach_reuse_candidates(
+    workflow_id: str,
+    user_id: str,
+    reuse_candidates: list[dict[str, Any]],
+    *,
+    n8n: Any,
+) -> None:
+    try:
+        await attach_unambiguous_reuse_candidates(
+            workflow_id,
+            user_id,
+            reuse_candidates,
+            n8n=n8n,
+        )
+    except TypeError as exc:
+        if "unexpected keyword argument 'n8n'" not in str(exc):
+            raise
+        await attach_unambiguous_reuse_candidates(
+            workflow_id,
+            user_id,
+            reuse_candidates,
+        )
+
+
 def execution_retry_guard(
     failures: dict[str, int],
     workflow_id: str,
@@ -124,10 +175,16 @@ async def run_workflow_with_input(
     *,
     user_id: str,
     input_payload: dict[str, Any] | None = None,
+    n8n: Any | None = None,
 ) -> WorkflowRunResultData:
+    n8n_ops = _resolve_n8n(n8n)
     workflow_id = str(workflow.get("id") or "")
     log.info("workflow_run_started", workflow_id=workflow_id)
-    metadata = await store.get_workflow_metadata(user_id, workflow_id)
+    metadata = await store.get_workflow_metadata(
+        user_id,
+        workflow_id,
+        instance_id=_instance_id_from_n8n(n8n_ops),
+    )
     input_schema = _workflow_input_schema_from_metadata(metadata)
     validated_input, missing = _validated_workflow_input(input_schema, input_payload)
     if missing:
@@ -139,13 +196,14 @@ async def run_workflow_with_input(
         )
         raise ValueError(f"Missing required workflow input: {', '.join(labels or missing)}")
 
-    workflow, path = await _prepare_workflow_for_conduut_run(workflow, user_id=user_id)
+    workflow, path = await _prepare_workflow_for_conduut_run(workflow, user_id=user_id, n8n=n8n_ops)
     result = await _run_prepared_webhook_workflow(
         workflow,
         path=path,
         input_payload=validated_input,
         metadata=metadata,
         user_id=user_id,
+        n8n=n8n_ops,
     )
     log.info(
         "workflow_run_finished",
@@ -163,12 +221,14 @@ async def run_workflow_batch_with_input(
     *,
     user_id: str,
     rows: list[dict[str, Any]],
+    n8n: Any | None = None,
 ) -> WorkflowBatchRunResultData:
     final_result: WorkflowBatchRunResultData | None = None
     async for event, payload in iter_workflow_batch_with_input(
         workflow,
         user_id=user_id,
         rows=rows,
+        n8n=n8n,
     ):
         if event == "completed" and isinstance(payload, WorkflowBatchRunResultData):
             final_result = payload
@@ -182,7 +242,9 @@ async def iter_workflow_batch_with_input(
     *,
     user_id: str,
     rows: list[dict[str, Any]],
+    n8n: Any | None = None,
 ) -> AsyncIterator[tuple[str, BatchProgressPayload]]:
+    n8n_ops = _resolve_n8n(n8n)
     workflow_id = str(workflow.get("id") or "")
     batch_run_id = str(uuid4())
     log.info("workflow_batch_run_started", workflow_id=workflow_id, batch_run_id=batch_run_id)
@@ -192,12 +254,16 @@ async def iter_workflow_batch_with_input(
     if len(rows) > _MAX_BATCH_ROWS:
         raise ValueError(f"Batch run supports up to {_MAX_BATCH_ROWS} rows.")
 
-    metadata = await store.get_workflow_metadata(user_id, workflow_id)
+    metadata = await store.get_workflow_metadata(
+        user_id,
+        workflow_id,
+        instance_id=_instance_id_from_n8n(n8n_ops),
+    )
     input_schema = _workflow_input_schema_from_metadata(metadata)
     if not input_schema:
         raise ValueError("Batch run requires a workflow input schema.")
 
-    workflow, path = await _prepare_workflow_for_conduut_run(workflow, user_id=user_id)
+    workflow, path = await _prepare_workflow_for_conduut_run(workflow, user_id=user_id, n8n=n8n_ops)
     results: list[WorkflowBatchRowResultData] = []
     succeeded = 0
     failed = 0
@@ -249,6 +315,7 @@ async def iter_workflow_batch_with_input(
                 input_payload=validated_input,
                 metadata=metadata,
                 user_id=user_id,
+                n8n=n8n_ops,
             )
         except Exception as exc:
             failed += 1
@@ -337,14 +404,23 @@ async def _prepare_workflow_for_conduut_run(
     workflow: dict[str, Any],
     *,
     user_id: str,
+    n8n: Any | None = None,
 ) -> tuple[dict[str, Any], str]:
+    n8n_ops = _resolve_n8n(n8n)
     workflow_id = str(workflow.get("id") or "")
-    workflow, converted_trigger = await ensure_conduut_runnable_workflow(workflow)
-    readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id)
+    workflow, converted_trigger = await ensure_conduut_runnable_workflow(workflow, n8n=n8n_ops)
+    readiness = await _analyze_workflow_readiness(
+        workflow,
+        user_id=user_id,
+        n8n=n8n_ops,
+    )
     # Explicit run: auto-attach a single deterministic host-matched saved
     # credential so "create -> Run" works without a separate chat confirmation.
-    await attach_unambiguous_reuse_candidates(
-        workflow_id, user_id, readiness.get("reuse_candidates", [])
+    await _attach_reuse_candidates(
+        workflow_id,
+        user_id,
+        readiness.get("reuse_candidates", []),
+        n8n=n8n_ops,
     )
     webhook_nodes = readiness["webhook_nodes"]
     if not webhook_nodes:
@@ -357,11 +433,11 @@ async def _prepare_workflow_for_conduut_run(
 
     if converted_trigger and workflow.get("active"):
         log.info("workflow_run_deactivating_for_trigger_patch", workflow_id=workflow_id)
-        await n8n_client.deactivate_workflow(workflow_id)
+        await n8n_ops.deactivate_workflow(workflow_id)
         workflow["active"] = False
     if not workflow.get("active"):
         log.info("workflow_run_activating_workflow", workflow_id=workflow_id)
-        await n8n_client.activate_workflow(workflow_id)
+        await n8n_ops.activate_workflow(workflow_id)
     path = webhook_nodes[0].get("parameters", {}).get("path")
     if not path:
         log.warning("workflow_run_missing_webhook_path", workflow_id=workflow_id)
@@ -376,9 +452,11 @@ async def _run_prepared_webhook_workflow(
     input_payload: dict[str, Any],
     metadata: store.WorkflowMetadata | None,
     user_id: str,
+    n8n: Any | None = None,
 ) -> WorkflowRunResultData:
+    n8n_ops = _resolve_n8n(n8n)
     workflow_id = str(workflow.get("id") or "")
-    webhook_response = await n8n_client.call_webhook(str(path), input_payload)
+    webhook_response = await n8n_ops.call_webhook(str(path), input_payload)
     response = _response_preview(webhook_response)
     full_response = _response_full(webhook_response)
     if webhook_response.status_code >= 400:
@@ -388,6 +466,7 @@ async def _run_prepared_webhook_workflow(
             full_response=full_response,
             metadata=metadata,
             user_id=user_id,
+            n8n=n8n_ops,
         )
         if execution_result is not None:
             log.warning(
@@ -427,6 +506,7 @@ async def _run_prepared_webhook_workflow(
         full_response=full_response,
         metadata=metadata,
         user_id=user_id,
+        n8n=n8n_ops,
     )
     if execution_result is None:
         log.info("workflow_run_triggered_without_execution_detail", workflow_id=workflow_id)
@@ -461,13 +541,15 @@ async def _latest_workflow_execution_result(
     full_response: dict[str, Any] | None = None,
     metadata: store.WorkflowMetadata | None,
     user_id: str,
+    n8n: Any | None = None,
 ) -> WorkflowRunResultData | None:
+    n8n_ops = _resolve_n8n(n8n)
     workflow_id = str(workflow.get("id") or "")
-    executions = await n8n_client.list_executions(workflow_id=workflow_id, limit=1)
+    executions = await n8n_ops.list_executions(workflow_id=workflow_id, limit=1)
     if not executions:
         return None
 
-    detail = await n8n_client.get_execution_detail(executions[0].id)
+    detail = await n8n_ops.get_execution_detail(executions[0].id)
     output_schema = _normalized_output_schema(
         metadata.resources.get("output_schema") if metadata else None
     )
@@ -500,7 +582,11 @@ async def _latest_workflow_execution_result(
     try:
         await store.save_execution_evidence(
             user_id,
-            execution_evidence_envelope(result, source="workflow_run"),
+            execution_evidence_envelope(
+                result,
+                source="workflow_run",
+                instance_id=_instance_id_from_n8n(n8n_ops),
+            ),
         )
     except Exception as exc:
         log.warning(
@@ -597,7 +683,10 @@ def _workflow_with_post_webhook_trigger(workflow: dict[str, Any]) -> dict[str, A
 
 async def ensure_conduut_runnable_workflow(
     workflow: dict[str, Any],
+    *,
+    n8n: Any | None = None,
 ) -> tuple[dict[str, Any], bool]:
+    n8n_ops = _resolve_n8n(n8n)
     manual_trigger_conversion = _workflow_with_conduut_webhook_trigger(workflow)
     converted = manual_trigger_conversion or _workflow_with_post_webhook_trigger(workflow)
     if not converted:
@@ -607,14 +696,14 @@ async def ensure_conduut_runnable_workflow(
     if not workflow_id:
         return workflow, False
 
-    updated = await n8n_client.update_workflow(
+    updated = await n8n_ops.update_workflow(
         workflow_id=workflow_id,
         name=str(workflow.get("name") or "Workflow"),
         nodes=converted.get("nodes") or [],
         connections=converted.get("connections") or {},
         settings=workflow.get("settings") if isinstance(workflow.get("settings"), dict) else None,
     )
-    refreshed = await n8n_client.get_workflow(updated.id)
+    refreshed = await n8n_ops.get_workflow(updated.id)
     log.info(
         "workflow_runnable_trigger_patched",
         workflow_id=workflow_id,

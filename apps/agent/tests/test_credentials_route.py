@@ -1,5 +1,7 @@
 """Tests for the custom credential library routes."""
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 from n8n_registry.models import CredentialTypeInfo
@@ -7,6 +9,22 @@ from n8n_registry.models import CredentialTypeInfo
 from src import n8n_client, store
 from src.routes import credentials as credentials_route
 from src.routes.credentials import CredentialSubmitIn
+
+
+@pytest.fixture(autouse=True)
+def _request_scoped_shared_n8n(monkeypatch):
+    context = SimpleNamespace(
+        target=SimpleNamespace(instance_id="shared_dev", ownership="shared_dev")
+    )
+
+    async def fake_request_n8n(_request, _user_id):
+        return context, credentials_route.n8n_client
+
+    async def fake_active_instance(_user_id):
+        return None
+
+    monkeypatch.setattr(credentials_route, "_request_n8n", fake_request_n8n)
+    monkeypatch.setattr(credentials_route.store, "get_active_n8n_instance", fake_active_instance)
 
 
 def _custom_credential(**overrides):
@@ -65,6 +83,42 @@ async def test_submit_http_credential_creates_and_attaches(monkeypatch):
     assert result["workflow_id"] == "wf1"
 
 
+async def test_customer_owned_submit_cannot_mutate_external_workflow(monkeypatch):
+    _patch_user(monkeypatch)
+    context = SimpleNamespace(
+        target=SimpleNamespace(instance_id="inst_1", ownership="customer_owned")
+    )
+    created = False
+
+    class _Client:
+        async def create_credential(self, *_args, **_kwargs):
+            nonlocal created
+            created = True
+
+    async def fake_request_n8n(_request, _user_id):
+        return context, _Client()
+
+    async def fake_metadata(_user_id, _workflow_id, **_kwargs):
+        return None
+
+    monkeypatch.setattr(credentials_route, "_request_n8n", fake_request_n8n)
+    monkeypatch.setattr(credentials_route.store, "get_workflow_metadata", fake_metadata)
+
+    body = CredentialSubmitIn(
+        credential_type="httpHeaderAuth",
+        data={"name": "Authorization", "value": "Bearer x"},
+        host="api.example.com",
+        workflow_id="external_wf",
+        node_name="HTTP Request",
+    )
+    with pytest.raises(HTTPException) as exc:
+        await credentials_route.submit_credential(object(), body)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "workflow_adoption_required"
+    assert created is False
+
+
 async def test_submit_requires_host_for_http_type(monkeypatch):
     _patch_user(monkeypatch)
 
@@ -114,7 +168,7 @@ async def test_submit_library_only_without_workflow(monkeypatch):
 async def test_list_credentials(monkeypatch):
     _patch_user(monkeypatch)
 
-    async def fake_list(user_id):
+    async def fake_list(user_id, **_kwargs):
         return [_custom_credential()]
 
     monkeypatch.setattr(credentials_route.store, "list_custom_credentials", fake_list)
@@ -138,13 +192,13 @@ async def test_delete_credential(monkeypatch):
     _patch_user(monkeypatch)
     deleted: dict = {}
 
-    async def fake_get(user_id, credential_id):
+    async def fake_get(user_id, credential_id, **_kwargs):
         return _custom_credential(id=credential_id)
 
     async def fake_n8n_delete(n8n_id):
         deleted["n8n"] = n8n_id
 
-    async def fake_store_delete(user_id, credential_id):
+    async def fake_store_delete(user_id, credential_id, **_kwargs):
         deleted["store"] = credential_id
 
     monkeypatch.setattr(credentials_route.store, "get_custom_credential", fake_get)
@@ -160,7 +214,7 @@ async def test_delete_credential(monkeypatch):
 async def test_delete_credential_not_found(monkeypatch):
     _patch_user(monkeypatch)
 
-    async def fake_get(user_id, credential_id):
+    async def fake_get(user_id, credential_id, **_kwargs):
         return None
 
     monkeypatch.setattr(credentials_route.store, "get_custom_credential", fake_get)
@@ -244,7 +298,7 @@ async def test_submit_type_matched_credential_no_host(monkeypatch):
 async def test_list_credentials_includes_match_kind(monkeypatch):
     _patch_user(monkeypatch)
 
-    async def fake_list(user_id):
+    async def fake_list(user_id, **_kwargs):
         return [_custom_credential(credential_type="openAiApi", host="", match_kind="type")]
 
     monkeypatch.setattr(credentials_route.store, "list_custom_credentials", fake_list)
@@ -256,7 +310,7 @@ async def test_list_credentials_includes_icon_url(monkeypatch):
     _patch_user(monkeypatch)
     from n8n_registry.models import CredentialTypeInfo
 
-    async def fake_list(user_id):
+    async def fake_list(user_id, **_kwargs):
         return [
             _custom_credential(credential_type="anthropicApi", host="", match_kind="type"),
             _custom_credential(id="cred_h", credential_type="httpHeaderAuth", match_kind="host"),
@@ -336,70 +390,61 @@ async def test_catalog_schema_oauth_definition_rejected(monkeypatch):
     assert exc.value.status_code == 422
 
 
-async def test_credential_icon_rejects_non_icon_path():
+async def test_credential_icon_rejects_non_icon_path(monkeypatch):
+    _patch_user(monkeypatch)
     with pytest.raises(HTTPException) as exc:
-        await credentials_route.credential_icon(path="../../etc/passwd")
+        await credentials_route.credential_icon(path="../../etc/passwd", request=object())
     assert exc.value.status_code == 400
 
 
-async def test_credential_icon_rejects_triple_encoded_traversal():
+async def test_credential_icon_rejects_triple_encoded_traversal(monkeypatch):
+    _patch_user(monkeypatch)
     with pytest.raises(HTTPException) as exc:
-        await credentials_route.credential_icon(path="icons/%25252e%25252e/api/v1/credentials")
+        await credentials_route.credential_icon(
+            path="icons/%25252e%25252e/api/v1/credentials", request=object()
+        )
     assert exc.value.status_code == 400
 
 
-async def test_credential_icon_rejects_double_encoded_traversal():
+async def test_credential_icon_rejects_double_encoded_traversal(monkeypatch):
+    _patch_user(monkeypatch)
     with pytest.raises(HTTPException) as exc:
-        await credentials_route.credential_icon(path="icons/%2e%2e/api/v1/credentials")
+        await credentials_route.credential_icon(
+            path="icons/%2e%2e/api/v1/credentials", request=object()
+        )
     assert exc.value.status_code == 400
 
 
 async def test_credential_icon_maps_upstream_5xx_to_502(monkeypatch):
+    _patch_user(monkeypatch)
+
     class _Resp:
         status_code = 503
         content = b""
         headers: dict = {}
 
-    class _Client:
-        def __init__(self, *a, **k):
-            pass
+    async def fake_fetch(_path):
+        return _Resp()
 
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def get(self, url):
-            return _Resp()
-
-    monkeypatch.setattr(credentials_route.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(credentials_route.n8n_client, "fetch_public_asset", fake_fetch)
     with pytest.raises(HTTPException) as exc:
-        await credentials_route.credential_icon(path="icons/x.svg")
+        await credentials_route.credential_icon(path="icons/x.svg", request=object())
     assert exc.value.status_code == 502
 
 
 async def test_credential_icon_streams_svg(monkeypatch):
+    _patch_user(monkeypatch)
+
     class _Resp:
         status_code = 200
         content = b"<svg/>"
         headers = {"content-type": "image/svg+xml"}
 
-    class _Client:
-        def __init__(self, *a, **k):
-            pass
+    async def fake_fetch(path):
+        assert path == "icons/slack.svg"
+        return _Resp()
 
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def get(self, url):
-            assert url.endswith("/icons/slack.svg")
-            return _Resp()
-
-    monkeypatch.setattr(credentials_route.httpx, "AsyncClient", _Client)
-    result = await credentials_route.credential_icon(path="icons/slack.svg")
+    monkeypatch.setattr(credentials_route.n8n_client, "fetch_public_asset", fake_fetch)
+    result = await credentials_route.credential_icon(path="icons/slack.svg", request=object())
     assert result.media_type == "image/svg+xml"
     assert result.body == b"<svg/>"

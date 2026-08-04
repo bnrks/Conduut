@@ -1,8 +1,22 @@
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 
 from src import executions, n8n_client
 from src.routes import executions as executions_route
+
+
+@pytest.fixture(autouse=True)
+def _request_scoped_shared_n8n(monkeypatch):
+    context = SimpleNamespace(
+        target=SimpleNamespace(instance_id="shared_dev", ownership="shared_dev")
+    )
+
+    async def fake_request_n8n(_request, _user_id):
+        return context, n8n_client
+
+    monkeypatch.setattr(executions_route, "_request_n8n", fake_request_n8n)
 
 
 @pytest.mark.asyncio
@@ -24,6 +38,7 @@ async def test_list_execution_route_passes_authenticated_user_and_filters(monkey
         limit=50,
     )
 
+    assert captured.pop("n8n") is n8n_client
     assert captured == {
         "user_id": "user_1",
         "workflow_id": "wf_1",
@@ -38,7 +53,7 @@ async def test_list_execution_route_passes_authenticated_user_and_filters(monkey
 async def test_execution_detail_route_returns_stable_contract(monkeypatch):
     monkeypatch.setattr(executions_route, "get_user_id", lambda _request: "user_1")
 
-    async def fake_get_run(user_id: str, execution_id: str):
+    async def fake_get_run(user_id: str, execution_id: str, **_kwargs):
         assert (user_id, execution_id) == ("user_1", "exec_1")
         return executions.RunDetail(
             id="exec_1",
@@ -66,7 +81,7 @@ async def test_execution_detail_route_returns_stable_contract(monkeypatch):
 async def test_execution_detail_route_returns_404_for_missing(monkeypatch):
     monkeypatch.setattr(executions_route, "get_user_id", lambda _request: "user_1")
 
-    async def fake_get_run(_user_id: str, execution_id: str):
+    async def fake_get_run(_user_id: str, execution_id: str, **_kwargs):
         raise executions.ExecutionNotFoundError(execution_id)
 
     monkeypatch.setattr(executions_route.executions, "get_run", fake_get_run)

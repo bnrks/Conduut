@@ -53,17 +53,49 @@ async def _safe(coro, source: str):
         return None
 
 
-async def gather_user_state(user_id: str) -> UserPlatformState:
+def _ownership_value(n8n: object, ownership: str | None) -> str:
+    if ownership:
+        return ownership
+    return str(getattr(n8n, "ownership", "shared_dev") or "shared_dev")
+
+
+def _instance_id_value(n8n: object) -> str | None:
+    instance_id = getattr(n8n, "instance_id", None)
+    return str(instance_id) if instance_id else None
+
+
+async def gather_user_state(
+    user_id: str,
+    *,
+    n8n=n8n_client,
+    ownership: str | None = None,
+) -> UserPlatformState:
     """Gather the user's platform state from all sources in PARALLEL, best-effort.
 
     Each source is isolated: if one fails the others still populate and this
     function never raises. Returns an empty state if everything fails.
     """
+    instance_id = _instance_id_value(n8n)
+    connections_call = (
+        store.list_connections(user_id, instance_id=instance_id)
+        if instance_id
+        else store.list_connections(user_id)
+    )
+    credentials_call = (
+        store.list_custom_credentials(user_id, instance_id=instance_id)
+        if instance_id
+        else store.list_custom_credentials(user_id)
+    )
+    metadata_call = (
+        store.get_all_workflow_metadata(user_id, instance_id=instance_id)
+        if instance_id
+        else store.get_all_workflow_metadata(user_id)
+    )
     connections, credentials, workflows, metadata = await asyncio.gather(
-        _safe(store.list_connections(user_id), "connections"),
-        _safe(store.list_custom_credentials(user_id), "credentials"),
-        _safe(n8n_client.list_workflows(), "workflows"),
-        _safe(store.get_all_workflow_metadata(user_id), "metadata"),
+        _safe(connections_call, "connections"),
+        _safe(credentials_call, "credentials"),
+        _safe(n8n.list_workflows(), "workflows"),
+        _safe(metadata_call, "metadata"),
     )
 
     state = UserPlatformState()
@@ -88,14 +120,8 @@ async def gather_user_state(user_id: str) -> UserPlatformState:
             for c in credentials
         ]
     if workflows:
-        # n8n is a shared MVP instance — list_workflows() returns ALL users' workflows
-        # (same situation as routes/workflows.py, which carries a per-user-filter TODO
-        # on its own list_workflows() call). Intersect with per-user metadata so only
-        # THIS user's automations appear in their agent instructions.
-        # Fail-closed: if the metadata fetch failed, meta == {} and NO workflows are
-        # shown — privacy over completeness; the `metadata or {}` guard above handles
-        # the None case.
         meta = metadata or {}
+        shared_dev = _ownership_value(n8n, ownership) == "shared_dev"
         state.workflows = [
             WorkflowSummary(
                 name=w.name,
@@ -103,7 +129,7 @@ async def gather_user_state(user_id: str) -> UserPlatformState:
                 has_runtime_inputs=bool(meta.get(w.id) and meta[w.id].input_schema),
             )
             for w in workflows
-            if w.id in meta  # exclude workflows that belong to other users
+            if (not shared_dev) or w.id in meta
         ]
     return state
 

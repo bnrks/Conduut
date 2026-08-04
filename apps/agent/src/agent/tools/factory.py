@@ -15,6 +15,8 @@ from src.agent.runtime_policy import execution_policy_from_deps
 from src.agent.schemas import (
     AgentDeps,
     ArtifactPreviewAttachment,
+    N8nConnectionPromptAttachment,
+    N8nConnectionPromptData,
     PlatformActionPlan,
     UserInputChoice,
     UserInputRequestAttachment,
@@ -88,6 +90,143 @@ _AWAITING_INPUT_SUMMARY = (
     "Henüz doğrulanmış bir çalıştırma veya dış sistem değişikliği yok."
 )
 _MAX_RUNTIME_PREVIEW_ATTEMPTS = 2
+
+
+def _n8n_from_deps(deps: AgentDeps):
+    if deps.n8n is not None:
+        return deps.n8n
+    if deps.n8n_error is not None:
+        raise deps.n8n_error
+    return n8n_client
+
+
+def _deps_instance_id(deps: AgentDeps) -> str | None:
+    target = getattr(deps.n8n_context, "target", None)
+    instance_id = getattr(target, "instance_id", None)
+    return str(instance_id) if instance_id else None
+
+
+async def _get_workflow_metadata(
+    deps: AgentDeps,
+    workflow_id: str,
+) -> store.WorkflowMetadata | None:
+    return await store.get_workflow_metadata(
+        deps.user_id,
+        workflow_id,
+        instance_id=_deps_instance_id(deps),
+    )
+
+
+async def _get_all_workflow_metadata(
+    deps: AgentDeps,
+) -> dict[str, store.WorkflowMetadata]:
+    return await store.get_all_workflow_metadata(
+        deps.user_id,
+        instance_id=_deps_instance_id(deps),
+    )
+
+
+async def _ensure_workflow_mutation_allowed(
+    deps: AgentDeps,
+    workflow_id: str,
+    *,
+    action: str,
+) -> store.WorkflowMetadata | None:
+    metadata = await _get_workflow_metadata(deps, workflow_id)
+    ownership = getattr(getattr(deps.n8n_context, "target", None), "ownership", "shared_dev")
+    if ownership == "customer_owned" and metadata is None:
+        raise RuntimeError(
+            f"This workflow already exists in your n8n instance but has not been adopted into "
+            f"Conduut yet. It is read-only until you adopt it, so I can't {action} it from chat."
+        )
+    return metadata
+
+
+def _workflow_baseline_payload(deps: AgentDeps, workflow: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "instance_id": getattr(getattr(deps.n8n_context, "target", None), "instance_id", ""),
+        "workflow_fingerprint": workflow_fingerprint(workflow),
+        "workflow_updated_at": str(workflow.get("updatedAt") or ""),
+    }
+
+
+def _workflow_drift_reason(
+    metadata: store.WorkflowMetadata | None,
+    workflow: dict[str, Any],
+    deps: AgentDeps,
+) -> str | None:
+    if metadata is None:
+        return None
+    baseline = metadata.resources.get("workflow_baseline")
+    if not isinstance(baseline, dict):
+        return None
+    expected_instance_id = str(baseline.get("instance_id") or "")
+    current_instance_id = str(getattr(getattr(deps.n8n_context, "target", None), "instance_id", ""))
+    if expected_instance_id and current_instance_id and expected_instance_id != current_instance_id:
+        return "The workflow baseline belongs to a different n8n instance."
+    expected_updated_at = str(baseline.get("workflow_updated_at") or "")
+    current_updated_at = str(workflow.get("updatedAt") or "")
+    if expected_updated_at and current_updated_at and expected_updated_at != current_updated_at:
+        return "The workflow changed in n8n after Conduut last synced it."
+    expected_fingerprint = str(baseline.get("workflow_fingerprint") or "")
+    current_fingerprint = workflow_fingerprint(workflow)
+    if expected_fingerprint and expected_fingerprint != current_fingerprint:
+        return "The workflow structure changed in n8n after Conduut last synced it."
+    return None
+
+
+async def _save_workflow_baseline(deps: AgentDeps, workflow: dict[str, Any]) -> None:
+    workflow_id = str(workflow.get("id") or "")
+    if not workflow_id:
+        return
+    metadata = await _get_workflow_metadata(deps, workflow_id)
+    if metadata is None:
+        return
+    resources = dict(metadata.resources)
+    baseline = _workflow_baseline_payload(deps, workflow)
+    if resources.get("workflow_baseline") == baseline:
+        return
+    resources["workflow_baseline"] = baseline
+    await store.save_workflow_metadata(
+        deps.user_id,
+        workflow_id,
+        input_schema=metadata.input_schema,
+        resources=resources,
+        instance_id=_deps_instance_id(deps),
+    )
+
+
+async def _emit_n8n_connection_prompt(ctx: RunContext[AgentDeps], message: str) -> dict[str, Any]:
+    await ctx.deps.emit_attachment(
+        N8nConnectionPromptAttachment(
+            data=N8nConnectionPromptData(
+                description=message,
+            )
+        )
+    )
+    ctx.deps.awaiting_user_input = True
+    ctx.deps.awaiting_user_input_summary = (
+        "Bu işlem için önce bir n8n bağlantısı gerekiyor. Henüz workflow değişikliği yapılmadı."
+    )
+    return {
+        "success": False,
+        "status": "waiting_for_user",
+        "code": "n8n_connection_required",
+        "error": message,
+        "instruction": (
+            "Stop now. Ask the user to connect their n8n instance from the connection prompt "
+            "before attempting any workflow, execution, credential, or readiness operation."
+        ),
+    }
+
+
+async def _require_n8n_tool(ctx: RunContext[AgentDeps], action: str) -> Any | None:
+    if ctx.deps.n8n is not None:
+        return ctx.deps.n8n
+    return await _emit_n8n_connection_prompt(
+        ctx,
+        f"I can't {action} yet because no active n8n instance is connected for this account.",
+    )
 
 
 def _tool_status(result: Any) -> str:
@@ -409,7 +548,11 @@ def _augment_readiness_result(
     return out
 
 
-async def _dedup_existing_workflow(existing_id: str | None) -> dict[str, Any] | None:
+async def _dedup_existing_workflow(
+    existing_id: str | None,
+    *,
+    n8n: Any | None = None,
+) -> dict[str, Any] | None:
     """The conversation's remembered workflow for create-dedup, or None to create
     fresh. Returns None when there is no remembered id OR the workflow was deleted
     (n8n 404) -- e.g. the user asked to delete and rebuild in the same chat, so the
@@ -419,7 +562,7 @@ async def _dedup_existing_workflow(existing_id: str | None) -> dict[str, Any] | 
     if not existing_id:
         return None
     try:
-        return await n8n_client.get_workflow(existing_id)
+        return await (n8n or n8n_client).get_workflow(existing_id)
     except n8n_client.N8nApiError as exc:
         if exc.status_code == 404:
             return None
@@ -530,7 +673,7 @@ async def _save_workflow_lookup_metadata(
             "node_contracts": contract_entries,
         }
     }
-    metadata = await store.get_workflow_metadata(deps.user_id, workflow_id)
+    metadata = await _get_workflow_metadata(deps, workflow_id)
     if metadata is None:
         return
     resources = merge_lookup_resources(metadata.resources, merged_patch)
@@ -541,6 +684,7 @@ async def _save_workflow_lookup_metadata(
         workflow_id,
         input_schema=metadata.input_schema,
         resources=resources,
+        instance_id=_deps_instance_id(deps),
     )
 
 
@@ -809,8 +953,15 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
 
         await ctx.deps.emit_tool_call("list_workflows")
         started_at = perf_counter()
+        n8n = await _require_n8n_tool(ctx, "list workflows")
+        if isinstance(n8n, dict):
+            _log_tool_finished("list_workflows", started_at, n8n)
+            return [n8n]
         try:
-            workflows = await n8n_client.list_workflows()
+            workflows = await n8n.list_workflows()
+            if str(getattr(n8n, "ownership", "shared_dev") or "shared_dev") == "shared_dev":
+                owned_ids = set((await _get_all_workflow_metadata(ctx.deps)).keys())
+                workflows = [workflow for workflow in workflows if workflow.id in owned_ids]
         except Exception as exc:
             log.error("tool_error", tool="list_workflows", error=str(exc))
             result = [{"error": _safe_error(exc)}]
@@ -826,8 +977,16 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
 
         await ctx.deps.emit_tool_call("get_workflow")
         started_at = perf_counter()
+        n8n = await _require_n8n_tool(ctx, "load this workflow")
+        if isinstance(n8n, dict):
+            _log_tool_finished("get_workflow", started_at, n8n)
+            return n8n
         try:
-            result = await n8n_client.get_workflow(workflow_id)
+            result = await _get_workflow_for_reference(
+                workflow_id,
+                n8n=n8n,
+                user_id=ctx.deps.user_id,
+            )
             _log_tool_finished("get_workflow", started_at, result)
             return result
         except Exception as exc:
@@ -865,6 +1024,10 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             return _waiting_for_user_input_result()
         await ctx.deps.emit_tool_call("create_workflow")
         started_at = perf_counter()
+        n8n = await _require_n8n_tool(ctx, "create a workflow")
+        if isinstance(n8n, dict):
+            _log_tool_finished("create_workflow", started_at, n8n)
+            return n8n
 
         # Dedup: if this conversation already built a workflow with this name,
         # update it instead of creating a duplicate (the agent often rebuilds the
@@ -872,7 +1035,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
         existing_id = ctx.deps.conversation_workflows.get(name)
 
         try:
-            existing = await _dedup_existing_workflow(existing_id)
+            existing = await _dedup_existing_workflow(existing_id, n8n=n8n)
             requested_connections = connections or None
             (
                 validated_nodes,
@@ -892,7 +1055,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             node_dicts = dump_workflow_nodes(validated_nodes)
             if existing_id and existing is not None:
                 ctx.deps.mark_replay_unsafe("create_workflow")
-                workflow = await n8n_client.update_workflow(
+                workflow = await n8n.update_workflow(
                     workflow_id=existing_id,
                     name=name,
                     nodes=node_dicts,
@@ -918,7 +1081,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                         conversation_id=ctx.deps.conversation_id,
                     )
                 ctx.deps.mark_replay_unsafe("create_workflow")
-                workflow = await n8n_client.create_workflow(
+                workflow = await n8n.create_workflow(
                     name=name,
                     nodes=node_dicts,
                     connections=validated_connections,
@@ -949,7 +1112,8 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                 )
             )
         )
-        full_workflow = await n8n_client.get_workflow(workflow.id)
+        full_workflow = await n8n.get_workflow(workflow.id)
+        await _save_workflow_baseline(ctx.deps, full_workflow)
         readiness = await _emit_missing_credentials(ctx, full_workflow)
         workflow_timezone = _effective_workflow_timezone(full_workflow)
         result = _workflow_result_with_readiness(
@@ -958,7 +1122,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             timezone=workflow_timezone,
         )
         test_state = _workflow_test_state(
-            await store.get_workflow_metadata(ctx.deps.user_id, workflow.id),
+            await _get_workflow_metadata(ctx.deps, workflow.id),
             full_workflow,
         )
         result = _augment_readiness_result(result, readiness, test_state=test_state)
@@ -993,8 +1157,20 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             return _waiting_for_user_input_result()
         await ctx.deps.emit_tool_call("update_workflow")
         started_at = perf_counter()
+        n8n = await _require_n8n_tool(ctx, "update this workflow")
+        if isinstance(n8n, dict):
+            _log_tool_finished("update_workflow", started_at, n8n)
+            return n8n
         try:
-            existing_workflow = await n8n_client.get_workflow(workflow_id)
+            existing_workflow = await n8n.get_workflow(workflow_id)
+            metadata = await _ensure_workflow_mutation_allowed(
+                ctx.deps,
+                workflow_id,
+                action="update",
+            )
+            drift_reason = _workflow_drift_reason(metadata, existing_workflow, ctx.deps)
+            if drift_reason:
+                raise RuntimeError(drift_reason)
         except Exception as exc:
             log.error("tool_error", tool="update_workflow", error=str(exc))
             result = {"error": _safe_error(exc)}
@@ -1022,7 +1198,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
 
         try:
             ctx.deps.mark_replay_unsafe("update_workflow")
-            workflow = await n8n_client.update_workflow(
+            workflow = await n8n.update_workflow(
                 workflow_id=workflow_id,
                 name=name,
                 nodes=node_dicts,
@@ -1053,7 +1229,8 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                 )
             )
         )
-        full_workflow = await n8n_client.get_workflow(workflow.id)
+        full_workflow = await n8n.get_workflow(workflow.id)
+        await _save_workflow_baseline(ctx.deps, full_workflow)
         readiness = await _emit_missing_credentials(ctx, full_workflow)
         workflow_timezone = _effective_workflow_timezone(full_workflow)
         result = _workflow_result_with_readiness(
@@ -1062,7 +1239,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             timezone=workflow_timezone,
         )
         test_state = _workflow_test_state(
-            await store.get_workflow_metadata(ctx.deps.user_id, workflow.id),
+            await _get_workflow_metadata(ctx.deps, workflow.id),
             full_workflow,
         )
         result = _augment_readiness_result(result, readiness, test_state=test_state)
@@ -1078,8 +1255,24 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             return _waiting_for_user_input_result()
         await ctx.deps.emit_tool_call("activate_workflow")
         started_at = perf_counter()
+        n8n = await _require_n8n_tool(ctx, "activate this workflow")
+        if isinstance(n8n, dict):
+            _log_tool_finished("activate_workflow", started_at, n8n)
+            return n8n
         try:
-            workflow = await _get_workflow_for_reference(workflow_id)
+            workflow = await _get_workflow_for_reference(
+                workflow_id,
+                n8n=n8n,
+                user_id=ctx.deps.user_id,
+            )
+            metadata = await _ensure_workflow_mutation_allowed(
+                ctx.deps,
+                workflow_id,
+                action="activate",
+            )
+            drift_reason = _workflow_drift_reason(metadata, workflow, ctx.deps)
+            if drift_reason:
+                raise RuntimeError(drift_reason)
             workflow_id = str(workflow.get("id") or workflow_id)
             readiness = await _emit_missing_credentials(
                 ctx, workflow, replay_unsafe_tool="activate_workflow"
@@ -1088,7 +1281,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             if block:
                 _log_tool_finished("activate_workflow", started_at, block)
                 return block
-            metadata = await store.get_workflow_metadata(ctx.deps.user_id, workflow_id)
+            metadata = await _get_workflow_metadata(ctx.deps, workflow_id)
             test_state = _workflow_test_state(metadata, workflow)
             if _needs_pretest(metadata, workflow):
                 gate = await _run_pretest_gate(ctx, workflow)
@@ -1107,7 +1300,8 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                 test_state["test_required"] = False
                 test_state["ready_for_activation"] = True
             ctx.deps.mark_replay_unsafe("activate_workflow")
-            await n8n_client.activate_workflow(workflow_id)
+            await n8n.activate_workflow(workflow_id)
+            await _save_workflow_baseline(ctx.deps, await n8n.get_workflow(workflow_id))
             ctx.deps.record_claim_evidence("workflow_activated", workflow_id=workflow_id)
             result = {
                 "success": True,
@@ -1139,9 +1333,23 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             return _waiting_for_user_input_result()
         await ctx.deps.emit_tool_call("deactivate_workflow")
         started_at = perf_counter()
+        n8n = await _require_n8n_tool(ctx, "deactivate this workflow")
+        if isinstance(n8n, dict):
+            _log_tool_finished("deactivate_workflow", started_at, n8n)
+            return n8n
         try:
+            workflow = await n8n.get_workflow(workflow_id)
+            metadata = await _ensure_workflow_mutation_allowed(
+                ctx.deps,
+                workflow_id,
+                action="deactivate",
+            )
+            drift_reason = _workflow_drift_reason(metadata, workflow, ctx.deps)
+            if drift_reason:
+                raise RuntimeError(drift_reason)
             ctx.deps.mark_replay_unsafe("deactivate_workflow")
-            await n8n_client.deactivate_workflow(workflow_id)
+            await n8n.deactivate_workflow(workflow_id)
+            await _save_workflow_baseline(ctx.deps, await n8n.get_workflow(workflow_id))
             result = {"success": True, "workflow_id": workflow_id}
             _log_tool_finished("deactivate_workflow", started_at, result)
             return result
@@ -1170,8 +1378,20 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             return _waiting_for_user_input_result()
         await ctx.deps.emit_tool_call("execute_workflow")
         started_at = perf_counter()
+        n8n = await _require_n8n_tool(ctx, "run this workflow")
+        if isinstance(n8n, dict):
+            _log_tool_finished("execute_workflow", started_at, n8n)
+            return n8n
         try:
-            workflow = await _get_workflow_for_reference(workflow_id)
+            workflow = await _get_workflow_for_reference(
+                workflow_id,
+                n8n=n8n,
+                user_id=ctx.deps.user_id,
+            )
+            metadata = await _ensure_workflow_mutation_allowed(ctx.deps, workflow_id, action="run")
+            drift_reason = _workflow_drift_reason(metadata, workflow, ctx.deps)
+            if drift_reason:
+                raise RuntimeError(drift_reason)
             workflow_id = str(workflow.get("id") or workflow_id)
             execution_policy = execution_policy_from_deps(ctx.deps)
             preview_token, preview_cancelled = _take_workflow_preview_decision(
@@ -1195,7 +1415,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                 _log_tool_finished("execute_workflow", started_at, block)
                 return block
 
-            metadata = await store.get_workflow_metadata(ctx.deps.user_id, workflow_id)
+            metadata = await _get_workflow_metadata(ctx.deps, workflow_id)
             input_schema = _workflow_input_schema_from_metadata(metadata)
             _validated, missing = _validated_workflow_input(input_schema, input)
             if missing:
@@ -1216,6 +1436,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                 _log_tool_finished("execute_workflow", started_at, result)
                 return result
 
+            from src.agent.sandbox import use_n8n_client as sandbox_use_n8n_client
             from src.agent.workflow_preview import (
                 consume_workflow_preview,
                 preview_workflow_run,
@@ -1224,13 +1445,15 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
 
             if workflow_requires_preview(workflow):
                 if not preview_token:
-                    preview = await preview_workflow_run(
-                        workflow,
-                        user_id=ctx.deps.user_id,
-                        input_payload=input,
-                        conversation_id=ctx.deps.conversation_id,
-                        execution_policy=execution_policy,
-                    )
+                    with sandbox_use_n8n_client(n8n):
+                        preview = await preview_workflow_run(
+                            workflow,
+                            user_id=ctx.deps.user_id,
+                            input_payload=input,
+                            conversation_id=ctx.deps.conversation_id,
+                            execution_policy=execution_policy,
+                            instance_id=_deps_instance_id(ctx.deps),
+                        )
                     if not preview.get("ready") or not preview.get("preview_token"):
                         result = await _gate_failed_workflow_preview(
                             ctx.deps,
@@ -1254,6 +1477,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                     preview_token=preview_token,
                     conversation_id=ctx.deps.conversation_id,
                     execution_policy=execution_policy,
+                    instance_id=_deps_instance_id(ctx.deps),
                 )
                 if not approved:
                     # A consumed, expired or stale approval is terminal for this
@@ -1283,7 +1507,9 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
                 workflow,
                 user_id=ctx.deps.user_id,
                 input_payload=input,
+                n8n=n8n,
             )
+            await _save_workflow_baseline(ctx.deps, await n8n.get_workflow(workflow_id))
             # Bound repeated real-execution failures: after the 2nd failure for the
             # same workflow, stop and surface the error instead of letting the model
             # thrash execute/rebuild until the request budget is exhausted.
@@ -1329,12 +1555,21 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
 
         await ctx.deps.emit_tool_call("analyze_workflow_readiness")
         started_at = perf_counter()
+        n8n = await _require_n8n_tool(ctx, "check workflow readiness")
+        if isinstance(n8n, dict):
+            _log_tool_finished("analyze_workflow_readiness", started_at, n8n)
+            return n8n
         try:
-            workflow = await _get_workflow_for_reference(workflow_id)
+            workflow = await _get_workflow_for_reference(
+                workflow_id,
+                n8n=n8n,
+                user_id=ctx.deps.user_id,
+            )
             readiness = await analyze_workflow_readiness_payload(
                 workflow,
                 user_id=ctx.deps.user_id,
                 before_mutation=lambda: ctx.deps.mark_replay_unsafe("analyze_workflow_readiness"),
+                n8n=n8n,
             )
             for attachment in readiness["missing_credentials"]:
                 await ctx.deps.emit_attachment(attachment)
@@ -1351,7 +1586,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             else:
                 instruction = "No missing credentials were found."
             test_state = _workflow_test_state(
-                await store.get_workflow_metadata(ctx.deps.user_id, workflow_id),
+                await _get_workflow_metadata(ctx.deps, workflow_id),
                 workflow,
             )
             if readiness["ready"] and test_state["test_required"]:
@@ -1384,8 +1619,12 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
 
         await ctx.deps.emit_tool_call("inspect_execution")
         started_at = perf_counter()
+        n8n = await _require_n8n_tool(ctx, "inspect this execution")
+        if isinstance(n8n, dict):
+            _log_tool_finished("inspect_execution", started_at, n8n)
+            return n8n
         try:
-            result = await executions.inspect_run(ctx.deps.user_id, execution_id)
+            result = await executions.inspect_run(ctx.deps.user_id, execution_id, n8n=n8n)
             payload = result.model_dump(exclude_none=True)
             verified_effects = [
                 item.verifier
@@ -1414,11 +1653,16 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
 
         await ctx.deps.emit_tool_call("list_executions")
         started_at = perf_counter()
+        n8n = await _require_n8n_tool(ctx, "list executions")
+        if isinstance(n8n, dict):
+            _log_tool_finished("list_executions", started_at, n8n)
+            return [n8n]
         try:
             page = await executions.list_runs(
                 ctx.deps.user_id,
                 workflow_id=workflow_id,
                 limit=10,
+                n8n=n8n,
             )
         except Exception as exc:
             log.error("tool_error", tool="list_executions", error=str(exc))
@@ -1437,9 +1681,31 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             return _waiting_for_user_input_result()
         await ctx.deps.emit_tool_call("delete_workflow")
         started_at = perf_counter()
+        n8n = await _require_n8n_tool(ctx, "delete this workflow")
+        if isinstance(n8n, dict):
+            _log_tool_finished("delete_workflow", started_at, n8n)
+            return n8n
         try:
+            workflow = await n8n.get_workflow(workflow_id)
+            metadata = await _ensure_workflow_mutation_allowed(
+                ctx.deps,
+                workflow_id,
+                action="delete",
+            )
+            drift_reason = _workflow_drift_reason(metadata, workflow, ctx.deps)
+            if drift_reason:
+                raise RuntimeError(drift_reason)
             ctx.deps.mark_replay_unsafe("delete_workflow")
-            await n8n_client.delete_workflow(workflow_id)
+            await n8n.delete_workflow(workflow_id)
+            instance_id = _deps_instance_id(ctx.deps)
+            if instance_id:
+                await store.delete_workflow_metadata(
+                    ctx.deps.user_id,
+                    workflow_id,
+                    instance_id=instance_id,
+                )
+            else:
+                await store.delete_workflow_metadata(ctx.deps.user_id, workflow_id)
             result = {"success": True, "workflow_id": workflow_id}
             _log_tool_finished("delete_workflow", started_at, result)
             return result
@@ -1482,6 +1748,10 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
 
         await ctx.deps.emit_tool_call("attach_credential")
         started_at = perf_counter()
+        guard = await _require_n8n_tool(ctx, "attach this credential")
+        if isinstance(guard, dict):
+            _log_tool_finished("attach_credential", started_at, guard)
+            return guard
         ctx.deps.mark_replay_unsafe("attach_credential")
         result = await attach_credential_payload(ctx.deps, workflow_id, node_name, credential_id)
         _log_tool_finished("attach_credential", started_at, result)

@@ -553,6 +553,7 @@ def execution_evidence_envelope(
     result: WorkflowRunResultData,
     *,
     source: Literal["workflow_run", "execution_inspect"],
+    instance_id: str | None = None,
 ) -> ExecutionEvidenceEnvelope:
     oracle_payload = (
         result.assessment.oracle.model_dump(exclude_none=True)
@@ -587,6 +588,7 @@ def execution_evidence_envelope(
         claim_states.append("POSTCONDITION_VERIFIED")
     return ExecutionEvidenceEnvelope(
         source=source,
+        instanceId=instance_id,
         workflowId=result.workflowId,
         executionId=result.executionId,
         workflowFingerprint=result.assessment.workflowFingerprint,

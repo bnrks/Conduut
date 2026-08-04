@@ -11,8 +11,18 @@ def _stub_execution_context_and_store(monkeypatch):
     async def fake_save_execution_evidence(*_args, **_kwargs):
         return None
 
+    async def fake_all_workflow_metadata(_user_id: str, **_kwargs):
+        return {
+            "wf_1": object(),
+            "wf_9": object(),
+            "wf_secret": object(),
+            "wf_missing": object(),
+            "wf_h1": object(),
+        }
+
     monkeypatch.setattr(executions.n8n_client, "get_workflow", fake_get_workflow)
     monkeypatch.setattr(executions.store, "save_execution_evidence", fake_save_execution_evidence)
+    monkeypatch.setattr(executions.store, "get_all_workflow_metadata", fake_all_workflow_metadata)
 
 
 @pytest.mark.asyncio

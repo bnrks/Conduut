@@ -8,9 +8,12 @@ from pydantic import BaseModel, ConfigDict
 from src import executions, n8n_client, store
 from src.agent import runner
 from src.auth import get_user_id
+from src.n8n_provider import N8nClientFactory, N8nInstanceResolver, N8nProviderError
 
 log = structlog.get_logger()
 router = APIRouter()
+resolver = N8nInstanceResolver()
+client_factory = N8nClientFactory()
 
 
 class ExecutionReference(BaseModel):
@@ -50,11 +53,30 @@ async def chat_send(request: Request, body: ChatRequest):
         conversation_id=body.conversation_id,
         content_length=len(body.content),
     )
+    resolved_n8n_context = None
+    resolved_n8n = None
+    resolved_n8n_error: Exception | None = None
+    try:
+        resolved_n8n_context = await resolver.resolve(user_id, request_id=request_id)
+        resolved_n8n = await client_factory.for_request_context(resolved_n8n_context)
+    except N8nProviderError as exc:
+        resolved_n8n_error = exc
 
     attachments: list[dict] = []
     if body.execution_reference:
         try:
-            run = await executions.get_run(user_id, body.execution_reference.execution_id)
+            if resolved_n8n is None:
+                raise HTTPException(
+                    status_code=getattr(resolved_n8n_error, "status_code", 404),
+                    detail={
+                        "message": str(resolved_n8n_error or "No active n8n instance is connected.")
+                    },
+                )
+            run = await executions.get_run(
+                user_id,
+                body.execution_reference.execution_id,
+                n8n=resolved_n8n,
+            )
         except executions.ExecutionNotFoundError as exc:
             raise HTTPException(status_code=404, detail={"message": "Run not found."}) from exc
         except n8n_client.N8nApiError as exc:
@@ -139,6 +161,9 @@ async def chat_send(request: Request, body: ChatRequest):
             messages,
             request_id=request_id,
             execution_policy=conv.execution_policy,
+            n8n_context=resolved_n8n_context,
+            n8n=resolved_n8n,
+            n8n_error=resolved_n8n_error,
         ),
         media_type="text/event-stream",
         headers={

@@ -95,7 +95,7 @@ def test_summarize_execution_skips_presentation_on_error():
 
 @pytest.mark.asyncio
 async def test_run_workflow_with_input_builds_presentation_from_output_schema(monkeypatch):
-    async def fake_get_workflow_metadata(_user_id, workflow_id):
+    async def fake_get_workflow_metadata(_user_id, workflow_id, **_kwargs):
         return store.WorkflowMetadata(
             workflow_id=workflow_id,
             input_schema=[],
@@ -140,6 +140,9 @@ async def test_run_workflow_with_input_builds_presentation_from_output_schema(mo
             "data": {"resultData": {"runData": {}}},
         }
 
+    async def fake_save_execution_evidence(*_args, **_kwargs):
+        return None
+
     monkeypatch.setattr("src.agent.tools.store.get_workflow_metadata", fake_get_workflow_metadata)
     monkeypatch.setattr("src.agent.tools.n8n_client.activate_workflow", fake_activate)
     monkeypatch.setattr("src.agent.tools.n8n_client.update_workflow", fake_update_workflow)
@@ -148,6 +151,9 @@ async def test_run_workflow_with_input_builds_presentation_from_output_schema(mo
     monkeypatch.setattr("src.agent.tools.n8n_client.list_executions", fake_list_executions)
     monkeypatch.setattr(
         "src.agent.tools.n8n_client.get_execution_detail", fake_get_execution_detail
+    )
+    monkeypatch.setattr(
+        "src.agent.tools.store.save_execution_evidence", fake_save_execution_evidence
     )
     monkeypatch.setattr("src.agent.tools.registry.get_node_schema", lambda _t: None)
 

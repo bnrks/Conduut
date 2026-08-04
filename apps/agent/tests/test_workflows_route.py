@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -11,6 +12,27 @@ from src.agent.schemas import (
     WorkflowRunResultData,
 )
 from src.routes import workflows as workflows_route
+
+
+@pytest.fixture(autouse=True)
+def _request_scoped_shared_n8n(monkeypatch):
+    """Keep legacy route tests focused while exercising the new request boundary."""
+    context = SimpleNamespace(
+        target=SimpleNamespace(instance_id="shared_dev", ownership="shared_dev")
+    )
+
+    async def fake_request_n8n(_request, _user_id):
+        return context, workflows_route.n8n_client
+
+    async def fake_metadata(*_args, **_kwargs):
+        return None
+
+    async def fake_refresh(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(workflows_route, "_request_n8n", fake_request_n8n)
+    monkeypatch.setattr(workflows_route, "_get_workflow_metadata", fake_metadata)
+    monkeypatch.setattr(workflows_route, "_refresh_workflow_baseline", fake_refresh)
 
 
 async def _stream_events(response):
@@ -63,9 +85,9 @@ async def test_list_workflows_does_not_fetch_each_workflow(monkeypatch):
 
     metadata_calls: list[str] = []
 
-    async def fake_all_metadata(user_id: str):
+    async def fake_all_metadata(user_id: str, **_kwargs):
         metadata_calls.append(user_id)
-        return {}
+        return {"wf_1": None, "wf_2": None}
 
     monkeypatch.setattr(workflows_route.n8n_client, "list_workflows", fake_list_workflows)
     monkeypatch.setattr(workflows_route.n8n_client, "get_workflow", fail_get_workflow)
@@ -92,7 +114,7 @@ async def test_run_workflow_persists_returned_artifacts(monkeypatch):
         assert workflow_id == "wf_1"
         return {"id": "wf_1", "name": "Runtime workflow", "nodes": []}
 
-    async def fake_readiness(_workflow: dict, *, user_id: str):
+    async def fake_readiness(_workflow: dict, *, user_id: str, **_kwargs):
         assert user_id == "user_1"
         return {"missing_credentials": []}
 
@@ -107,7 +129,9 @@ async def test_run_workflow_persists_returned_artifacts(monkeypatch):
         ),
     )
 
-    async def fake_run_workflow_with_input(_workflow: dict, *, user_id: str, input_payload: dict):
+    async def fake_run_workflow_with_input(
+        _workflow: dict, *, user_id: str, input_payload: dict, **_kwargs
+    ):
         assert user_id == "user_1"
         assert input_payload == {"to": "person@example.com"}
         return WorkflowRunResultData(
@@ -159,6 +183,7 @@ async def test_run_workflow_persists_returned_artifacts(monkeypatch):
                 "kind": "workflow_run",
                 "workflowId": "wf_1",
                 "executionId": "exec_1",
+                "instanceId": "shared_dev",
             },
         }
     ]
@@ -171,11 +196,13 @@ async def test_run_workflow_returns_domain_failure_details(monkeypatch):
     async def fake_get_workflow(_workflow_id: str):
         return {"id": "wf_1", "name": "Broken workflow", "nodes": []}
 
-    async def fake_readiness(_workflow: dict, *, user_id: str):
+    async def fake_readiness(_workflow: dict, *, user_id: str, **_kwargs):
         assert user_id == "user_1"
         return {"missing_credentials": []}
 
-    async def fake_run_workflow_with_input(_workflow: dict, *, user_id: str, input_payload: dict):
+    async def fake_run_workflow_with_input(
+        _workflow: dict, *, user_id: str, input_payload: dict, **_kwargs
+    ):
         assert user_id == "user_1"
         assert input_payload == {}
         return WorkflowRunResultData(
@@ -221,7 +248,7 @@ async def test_side_effect_run_requires_matching_preview_token(monkeypatch):
     async def fake_get_workflow(_workflow_id):
         return workflow
 
-    async def fake_readiness(_workflow, *, user_id):
+    async def fake_readiness(_workflow, *, user_id, **_kwargs):
         return {"missing_credentials": []}
 
     async def fake_consume(*args, **kwargs):
@@ -262,7 +289,7 @@ async def test_activation_assurance_uses_generated_sample_input(monkeypatch):
     async def fake_get_workflow(_workflow_id):
         return workflow
 
-    async def fake_readiness(_workflow, *, user_id):
+    async def fake_readiness(_workflow, *, user_id, **_kwargs):
         return {"missing_credentials": []}
 
     async def fake_preview(_workflow, **kwargs):
@@ -302,7 +329,7 @@ async def test_activation_rejects_partial_coverage_assurance(monkeypatch):
     async def fake_get_workflow(_workflow_id):
         return workflow
 
-    async def fake_readiness(_workflow, *, user_id):
+    async def fake_readiness(_workflow, *, user_id, **_kwargs):
         return {"missing_credentials": []}
 
     async def fake_preview(_workflow, **kwargs):
@@ -337,7 +364,7 @@ async def test_preview_route_returns_safe_approval(monkeypatch):
     async def fake_get_workflow(_workflow_id):
         return workflow
 
-    async def fake_readiness(_workflow, *, user_id):
+    async def fake_readiness(_workflow, *, user_id, **_kwargs):
         return {"missing_credentials": []}
 
     async def fake_preview(*args, **kwargs):
@@ -367,7 +394,7 @@ async def test_batch_run_workflow_persists_row_artifacts(monkeypatch):
         assert workflow_id == "wf_1"
         return {"id": "wf_1", "name": "Runtime workflow", "nodes": []}
 
-    async def fake_readiness(_workflow: dict, *, user_id: str):
+    async def fake_readiness(_workflow: dict, *, user_id: str, **_kwargs):
         assert user_id == "user_1"
         return {"missing_credentials": []}
 
@@ -377,7 +404,7 @@ async def test_batch_run_workflow_persists_row_artifacts(monkeypatch):
         source={"messageId": "msg_1"},
     )
 
-    async def fake_run_batch(_workflow: dict, *, user_id: str, rows: list[dict]):
+    async def fake_run_batch(_workflow: dict, *, user_id: str, rows: list[dict], **_kwargs):
         assert user_id == "user_1"
         assert rows == [{"rowNumber": 2, "input": {"to": "person@example.com"}}]
         return WorkflowBatchRunResultData(
@@ -445,6 +472,7 @@ async def test_batch_run_workflow_persists_row_artifacts(monkeypatch):
                 "batchRunId": "batch_1",
                 "rowNumber": 2,
                 "executionId": "exec_1",
+                "instanceId": "shared_dev",
             },
         }
     ]
@@ -458,7 +486,7 @@ async def test_stream_batch_run_workflow_emits_progress_and_persists_artifacts(m
         assert workflow_id == "wf_1"
         return {"id": "wf_1", "name": "Runtime workflow", "nodes": []}
 
-    async def fake_readiness(_workflow: dict, *, user_id: str):
+    async def fake_readiness(_workflow: dict, *, user_id: str, **_kwargs):
         assert user_id == "user_1"
         return {"missing_credentials": []}
 
@@ -468,7 +496,7 @@ async def test_stream_batch_run_workflow_emits_progress_and_persists_artifacts(m
         source={"messageId": "msg_1"},
     )
 
-    async def fake_iter_batch(_workflow: dict, *, user_id: str, rows: list[dict]):
+    async def fake_iter_batch(_workflow: dict, *, user_id: str, rows: list[dict], **_kwargs):
         assert user_id == "user_1"
         assert rows == [{"rowNumber": 2, "input": {"to": "person@example.com"}}]
         yield "started", {"workflowId": "wf_1", "batchRunId": "batch_1", "totalRows": 1}
@@ -546,6 +574,7 @@ async def test_stream_batch_run_workflow_emits_progress_and_persists_artifacts(m
                 "batchRunId": "batch_1",
                 "rowNumber": 2,
                 "executionId": "exec_1",
+                "instanceId": "shared_dev",
             },
         }
     ]
@@ -558,7 +587,7 @@ async def test_batch_run_workflow_stops_before_run_when_credentials_missing(monk
     async def fake_get_workflow(_workflow_id: str):
         return {"id": "wf_1", "name": "Runtime workflow", "nodes": []}
 
-    async def fake_readiness(_workflow: dict, *, user_id: str):
+    async def fake_readiness(_workflow: dict, *, user_id: str, **_kwargs):
         assert user_id == "user_1"
         return {"missing_credentials": [{"type": "oauth_prompt"}]}
 
@@ -597,7 +626,7 @@ async def test_stream_batch_run_workflow_stops_before_stream_when_credentials_mi
     async def fake_get_workflow(_workflow_id: str):
         return {"id": "wf_1", "name": "Runtime workflow", "nodes": []}
 
-    async def fake_readiness(_workflow: dict, *, user_id: str):
+    async def fake_readiness(_workflow: dict, *, user_id: str, **_kwargs):
         assert user_id == "user_1"
         return {"missing_credentials": [{"type": "oauth_prompt"}]}
 
@@ -642,10 +671,10 @@ async def test_run_workflow_returns_presentation(monkeypatch):
     async def fake_get_workflow(workflow_id: str):
         return {"id": "wf_1", "name": "W", "nodes": []}
 
-    async def fake_readiness(_workflow: dict, *, user_id: str):
+    async def fake_readiness(_workflow: dict, *, user_id: str, **_kwargs):
         return {"missing_credentials": []}
 
-    async def fake_run_workflow_with_input(_workflow, *, user_id, input_payload):
+    async def fake_run_workflow_with_input(_workflow, *, user_id, input_payload, **_kwargs):
         return WorkflowRunResultData(
             workflowId="wf_1",
             executionId="exec_1",
@@ -677,10 +706,10 @@ async def test_run_workflow_presentation_is_none_when_absent(monkeypatch):
     async def fake_get_workflow(workflow_id: str):
         return {"id": "wf_1", "name": "W", "nodes": []}
 
-    async def fake_readiness(_workflow: dict, *, user_id: str):
+    async def fake_readiness(_workflow: dict, *, user_id: str, **_kwargs):
         return {"missing_credentials": []}
 
-    async def fake_run_workflow_with_input(_workflow, *, user_id, input_payload):
+    async def fake_run_workflow_with_input(_workflow, *, user_id, input_payload, **_kwargs):
         return WorkflowRunResultData(workflowId="wf_1", status="success", summary="ok")
 
     monkeypatch.setattr(workflows_route.n8n_client, "get_workflow", fake_get_workflow)
@@ -701,10 +730,10 @@ async def test_run_workflow_does_not_claim_raw_success_without_functional_eviden
     async def fake_get_workflow(_workflow_id: str):
         return {"id": "wf_1", "name": "W", "nodes": []}
 
-    async def fake_readiness(_workflow: dict, *, user_id: str):
+    async def fake_readiness(_workflow: dict, *, user_id: str, **_kwargs):
         return {"missing_credentials": []}
 
-    async def fake_run_workflow_with_input(_workflow, *, user_id, input_payload):
+    async def fake_run_workflow_with_input(_workflow, *, user_id, input_payload, **_kwargs):
         return WorkflowRunResultData(
             workflowId="wf_1",
             executionId="exec_1",
@@ -737,10 +766,10 @@ async def test_run_workflow_claims_clean_no_action(monkeypatch):
     async def fake_get_workflow(_workflow_id: str):
         return {"id": "wf_1", "name": "W", "nodes": []}
 
-    async def fake_readiness(_workflow: dict, *, user_id: str):
+    async def fake_readiness(_workflow: dict, *, user_id: str, **_kwargs):
         return {"missing_credentials": []}
 
-    async def fake_run_workflow_with_input(_workflow, *, user_id, input_payload):
+    async def fake_run_workflow_with_input(_workflow, *, user_id, input_payload, **_kwargs):
         return WorkflowRunResultData(
             workflowId="wf_1",
             executionId="exec_2",
@@ -761,3 +790,135 @@ async def test_run_workflow_claims_clean_no_action(monkeypatch):
     assert response["success"] is True
     assert response["functional_status"] == "no_action"
     assert response["claimable_outcome"] == "no_action"
+
+
+@pytest.mark.asyncio
+async def test_customer_owned_external_workflow_requires_adoption_before_mutation(monkeypatch):
+    context = SimpleNamespace(
+        target=SimpleNamespace(instance_id="inst_1", ownership="customer_owned")
+    )
+    client = SimpleNamespace()
+
+    async def fake_request_n8n(_request, _user_id):
+        return context, client
+
+    async def fake_metadata(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
+    monkeypatch.setattr(workflows_route, "_request_n8n", fake_request_n8n)
+    monkeypatch.setattr(workflows_route, "_get_workflow_metadata", fake_metadata)
+
+    with pytest.raises(HTTPException) as exc:
+        await workflows_route.activate_workflow("external_1", object())
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "workflow_adoption_required"
+
+
+@pytest.mark.asyncio
+async def test_adopt_imports_remote_baseline_without_mutating_remote(monkeypatch):
+    workflow = {
+        "id": "external_1",
+        "name": "External",
+        "updatedAt": "2026-08-03T10:00:00Z",
+        "nodes": [],
+        "connections": {},
+        "settings": {},
+    }
+    remote_calls: list[str] = []
+
+    class _Client:
+        async def get_workflow(self, workflow_id):
+            remote_calls.append(f"get:{workflow_id}")
+            return workflow
+
+    context = SimpleNamespace(
+        target=SimpleNamespace(instance_id="inst_1", ownership="customer_owned")
+    )
+
+    async def fake_request_n8n(_request, _user_id):
+        return context, _Client()
+
+    async def fake_metadata(*_args, **_kwargs):
+        return None
+
+    async def fake_save(user_id, workflow_id, **kwargs):
+        assert (user_id, workflow_id) == ("user_1", "external_1")
+        assert kwargs["instance_id"] == "inst_1"
+        return workflows_route.store.WorkflowMetadata(
+            workflow_id=workflow_id,
+            input_schema=[],
+            resources=kwargs["resources"],
+            created_at="now",
+            updated_at="now",
+            instance_id="inst_1",
+        )
+
+    monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
+    monkeypatch.setattr(workflows_route, "_request_n8n", fake_request_n8n)
+    monkeypatch.setattr(workflows_route, "_get_workflow_metadata", fake_metadata)
+    monkeypatch.setattr(workflows_route.store, "save_workflow_metadata", fake_save)
+
+    result = await workflows_route.adopt_workflow("external_1", object())
+
+    assert result["adopted"] is True
+    assert result["instanceId"] == "inst_1"
+    assert result["baseline"]["instance_id"] == "inst_1"
+    assert remote_calls == ["get:external_1"]
+
+
+@pytest.mark.asyncio
+async def test_customer_owned_workflow_drift_blocks_remote_mutation(monkeypatch):
+    workflow = {
+        "id": "wf_1",
+        "name": "Changed remotely",
+        "updatedAt": "new",
+        "nodes": [],
+        "connections": {},
+        "settings": {},
+    }
+    activated = False
+
+    class _Client:
+        async def get_workflow(self, _workflow_id):
+            return workflow
+
+        async def activate_workflow(self, _workflow_id):
+            nonlocal activated
+            activated = True
+
+    metadata = workflows_route.store.WorkflowMetadata(
+        workflow_id="wf_1",
+        input_schema=[],
+        resources={
+            "workflow_baseline": {
+                "instance_id": "inst_1",
+                "workflow_fingerprint": "old-fingerprint",
+                "workflow_updated_at": "old",
+            }
+        },
+        created_at="now",
+        updated_at="now",
+        instance_id="inst_1",
+    )
+    context = SimpleNamespace(
+        target=SimpleNamespace(instance_id="inst_1", ownership="customer_owned")
+    )
+
+    async def fake_request_n8n(_request, _user_id):
+        return context, _Client()
+
+    async def fake_metadata(*_args, **_kwargs):
+        return metadata
+
+    monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
+    monkeypatch.setattr(workflows_route, "_request_n8n", fake_request_n8n)
+    monkeypatch.setattr(workflows_route, "_get_workflow_metadata", fake_metadata)
+
+    with pytest.raises(HTTPException) as exc:
+        await workflows_route.activate_workflow("wf_1", object())
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "workflow_drift_detected"
+    assert activated is False

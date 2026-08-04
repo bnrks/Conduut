@@ -9,6 +9,8 @@ unit-test edilebilir; gerçek LLM çağrısı ``_run_judge_llm`` arkasındadır.
 
 import json
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
@@ -32,6 +34,7 @@ from src.agent.tools.workflow_helpers import _webhook_type_version
 from src.config import settings
 
 log = structlog.get_logger()
+_current_n8n_client: ContextVar[Any | None] = ContextVar("sandbox_n8n_client", default=None)
 
 _SAMPLE_BY_TYPE = {
     "email": "test@example.com",
@@ -115,6 +118,21 @@ _JSON_FIELD_SUFFIX = re.compile(
     """,
     re.IGNORECASE | re.VERBOSE,
 )
+
+
+@contextmanager
+def use_n8n_client(n8n: Any):
+    token = _current_n8n_client.set(n8n)
+    try:
+        yield
+    finally:
+        _current_n8n_client.reset(token)
+
+
+def _resolve_n8n(n8n: Any | None):
+    return n8n or _current_n8n_client.get() or n8n_client
+
+
 _STATUS_CODE_EXPR = re.compile(
     r"\$json(?:\s*(?:\.|\?\.)\s*statusCode|\s*\[\s*['\"]statusCode['\"]\s*\])",
     re.IGNORECASE,
@@ -1495,7 +1513,9 @@ async def run_sandbox_test(
     input_schema: list[WorkflowInputField],
     intent: str,
     input_payload: dict[str, Any] | None = None,
+    n8n: Any | None = None,
 ) -> SandboxTestResult:
+    n8n_ops = _resolve_n8n(n8n)
     name = str(workflow.get("name") or "Workflow")
     clone = _build_test_clone(workflow)
     if clone is None:
@@ -1515,7 +1535,7 @@ async def run_sandbox_test(
         else (_sample_input_for_schema(input_schema) or {"source": "conduut_test"})
     )
 
-    created = await n8n_client.create_workflow(
+    created = await n8n_ops.create_workflow(
         name=f"[conduut-test] {name}"[:120],
         nodes=clone_nodes,
         connections=clone_connections,
@@ -1528,14 +1548,14 @@ async def run_sandbox_test(
     }
     detail: dict[str, Any] | None = None
     try:
-        await n8n_client.activate_workflow(created.id)
-        await n8n_client.call_webhook(path, sample)
-        executions = await n8n_client.list_executions(workflow_id=created.id, limit=1)
+        await n8n_ops.activate_workflow(created.id)
+        await n8n_ops.call_webhook(path, sample)
+        executions = await n8n_ops.list_executions(workflow_id=created.id, limit=1)
         if executions:
-            detail = await n8n_client.get_execution_detail(executions[0].id)
+            detail = await n8n_ops.get_execution_detail(executions[0].id)
     finally:
         try:
-            await n8n_client.delete_workflow(created.id)
+            await n8n_ops.delete_workflow(created.id)
         except Exception as exc:  # noqa: BLE001 - cleanup must never raise
             log.warning("sandbox_clone_delete_failed", clone_id=created.id, error=str(exc))
 

@@ -21,6 +21,7 @@ class WorkflowRunPreview:
     execution_policy: str | None
     preview_basis: str | None
     payload: dict[str, Any]
+    instance_id: str = ""
 
 
 def workflow_input_hash(payload: dict[str, Any] | None) -> str:
@@ -39,6 +40,7 @@ async def save_workflow_run_preview(
     execution_policy: str | None = None,
     preview_basis: str | None = None,
     ttl_seconds: int = 600,
+    instance_id: str = "",
 ) -> WorkflowRunPreview:
     token = uuid4().hex
     now = datetime.now(timezone.utc)
@@ -46,6 +48,7 @@ async def save_workflow_run_preview(
     input_hash = workflow_input_hash(input_payload)
     data = {
         "workflow_id": workflow_id,
+        "instance_id": instance_id,
         "workflow_fingerprint": workflow_fingerprint,
         "input_hash": input_hash,
         "created_at": now.isoformat(),
@@ -67,6 +70,7 @@ async def save_workflow_run_preview(
         execution_policy=execution_policy,
         preview_basis=preview_basis,
         payload=dict(payload),
+        instance_id=instance_id,
     )
 
 
@@ -80,6 +84,7 @@ async def consume_workflow_run_preview(
     conversation_id: str | None = None,
     execution_policy: str | None = None,
     preview_basis: str | None = None,
+    instance_id: str = "",
 ) -> WorkflowRunPreview | None:
     ref = _pkg_store._user_ref(user_id).collection("workflow_run_previews").document(token)
     expected_input_hash = workflow_input_hash(input_payload)
@@ -117,6 +122,7 @@ async def consume_workflow_run_preview(
                 return None
             if (
                 data.get("workflow_id") != workflow_id
+                or str(data.get("instance_id") or "") != instance_id
                 or data.get("workflow_fingerprint") != workflow_fingerprint
                 or data.get("input_hash") != expected_input_hash
                 or not _matches_optional(data.get("conversation_id"), conversation_id)
@@ -140,6 +146,7 @@ async def consume_workflow_run_preview(
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     if (
         data.get("workflow_id") != workflow_id
+        or str(data.get("instance_id") or "") != instance_id
         or data.get("workflow_fingerprint") != workflow_fingerprint
         or data.get("input_hash") != expected_input_hash
         or not _matches_optional(data.get("conversation_id"), conversation_id)
@@ -157,4 +164,5 @@ async def consume_workflow_run_preview(
         execution_policy=str(data.get("execution_policy") or "") or None,
         preview_basis=str(data.get("preview_basis") or "") or None,
         payload=dict(data.get("payload") or {}),
+        instance_id=str(data.get("instance_id") or ""),
     )

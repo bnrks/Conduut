@@ -734,7 +734,11 @@ async def test_runner_persists_artifact_preview_attachments(monkeypatch):
                     "truncated": False,
                 },
             },
-            "origin": {"kind": "chat", "conversationId": "conv_1"},
+            "origin": {
+                "kind": "chat",
+                "conversationId": "conv_1",
+                "instanceId": "shared_dev",
+            },
         }
     ]
 

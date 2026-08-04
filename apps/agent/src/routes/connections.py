@@ -9,12 +9,15 @@ from pydantic import BaseModel
 
 from src import n8n_client, store
 from src.auth import get_user_id
+from src.n8n_provider import N8nClientFactory, N8nInstanceResolver, N8nProviderError, error_detail
 from src.oauth import google
 from src.platforms import capabilities as platform_capabilities
 from src.platforms.crypto import can_encrypt_connection_secrets, encrypt_connection_secret
 
 router = APIRouter()
 log = structlog.get_logger()
+resolver = N8nInstanceResolver()
+client_factory = N8nClientFactory()
 
 GOOGLE_GMAIL_CONNECTION_ID = "google_gmail"
 GOOGLE_GMAIL_CREDENTIAL_TYPE = "gmailOAuth2"
@@ -114,15 +117,37 @@ def _oauth_http_error(exc: httpx.HTTPStatusError, fallback: str) -> HTTPExceptio
     return HTTPException(status_code=502, detail={"message": message})
 
 
+def _provider_http_error(exc: N8nProviderError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=error_detail(exc))
+
+
+async def _request_n8n(request: Request, user_id: str):
+    request_state = getattr(request, "state", None)
+    request_headers = getattr(request, "headers", {})
+    request_id = getattr(request_state, "request_id", None) or request_headers.get("x-request-id")
+    context = await resolver.resolve(user_id, request_id=request_id)
+    client = await client_factory.for_request_context(context)
+    return context, client
+
+
 @router.get("/connections")
 async def list_connections(request: Request):
     user_id = get_user_id(request)
-    connections = await store.list_connections(user_id)
+    instance = await store.get_active_n8n_instance(user_id)
+    connections = (
+        await store.list_connections(user_id, instance_id=instance.id)
+        if instance is not None
+        else await store.list_connections(user_id)
+    )
     return {"connections": [_connection_payload(item) for item in connections]}
 
 
 async def _authorize_google_service(request: Request, body: AuthorizeIn, service: str):
     user_id = get_user_id(request)
+    try:
+        context, _client = await _request_n8n(request, user_id)
+    except N8nProviderError as exc:
+        raise _provider_http_error(exc) from exc
     config = _google_connection_config(service)
     log.info(
         "oauth_authorize_started",
@@ -159,6 +184,8 @@ async def _authorize_google_service(request: Request, body: AuthorizeIn, service
             expires_at=google.expires_at(),
             requested_capabilities=requested_capabilities,
             permission_pack=permission_pack,
+            instance_id=context.target.instance_id,
+            ownership=context.target.ownership,
         )
         log.info(
             "oauth_authorize_created",
@@ -239,6 +266,33 @@ async def _google_callback(body: GoogleCallbackIn, *, expected_service: str | No
         raise HTTPException(status_code=400, detail={"message": "OAuth state has expired."})
 
     config = _google_connection_config(state.service)
+    expected_instance_id = state.instance_id
+    expected_ownership = state.ownership
+    try:
+        current_context = await resolver.resolve(state.user_id, request_id=f"oauth:{state.id}")
+        current_client = await client_factory.for_request_context(current_context)
+    except N8nProviderError as exc:
+        raise _provider_http_error(exc) from exc
+    if (
+        (current_context.target.ownership == "customer_owned" and not expected_instance_id)
+        or (expected_instance_id and current_context.target.instance_id != expected_instance_id)
+        or (expected_ownership and current_context.target.ownership != expected_ownership)
+    ):
+        log.warning(
+            "oauth_callback_rejected",
+            provider="google",
+            service=config["service"],
+            reason="instance_changed",
+            expected_instance_id=expected_instance_id,
+            current_instance_id=current_context.target.instance_id,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "n8n_instance_changed",
+                "message": "The active n8n instance changed during OAuth. Reconnect and try again.",
+            },
+        )
     await store.mark_oauth_state_used(state.id)
 
     try:
@@ -320,7 +374,11 @@ async def _google_callback(body: GoogleCallbackIn, *, expected_service: str | No
         default_scopes=config["scopes"],
     )
     capabilities = google.capabilities_for_scopes(granted_scopes)
-    existing = await store.get_connection(state.user_id, connection_id)
+    existing = await store.get_connection(
+        state.user_id,
+        connection_id,
+        instance_id=current_context.target.instance_id,
+    )
     permission_packs = platform_capabilities.permission_packs_for_scopes(granted_scopes)
     if state.permission_pack and state.permission_pack not in permission_packs:
         permission_packs.append(state.permission_pack)
@@ -336,7 +394,7 @@ async def _google_callback(body: GoogleCallbackIn, *, expected_service: str | No
         direct_api_enabled = True
 
     try:
-        credential = await n8n_client.create_credential(
+        credential = await current_client.create_credential(
             credential_name,
             credential_type,
             credential_data,
@@ -356,6 +414,7 @@ async def _google_callback(body: GoogleCallbackIn, *, expected_service: str | No
             permission_packs=permission_packs,
             direct_api_enabled=direct_api_enabled,
             encrypted_refresh_token=encrypted_refresh_token,
+            instance_id=current_context.target.instance_id,
         )
         log.info(
             "oauth_connection_saved",
@@ -380,7 +439,7 @@ async def _google_callback(body: GoogleCallbackIn, *, expected_service: str | No
     except Exception as exc:
         if "credential" in locals():
             try:
-                await n8n_client.delete_credential(credential.id)
+                await current_client.delete_credential(credential.id)
                 log.info(
                     "oauth_orphan_credential_deleted",
                     user_id=state.user_id,
@@ -403,7 +462,7 @@ async def _google_callback(body: GoogleCallbackIn, *, expected_service: str | No
 
     if existing and existing.n8n_credential_id != connection.n8n_credential_id:
         try:
-            await n8n_client.delete_credential(existing.n8n_credential_id)
+            await current_client.delete_credential(existing.n8n_credential_id)
             log.info(
                 "oauth_replaced_old_credential_deleted",
                 user_id=state.user_id,
@@ -438,12 +497,20 @@ async def google_sheets_callback(body: GoogleCallbackIn):
 @router.delete("/connections/{connection_id}")
 async def delete_connection(connection_id: str, request: Request):
     user_id = get_user_id(request)
-    connection = await store.delete_connection(user_id, connection_id)
+    try:
+        context, client = await _request_n8n(request, user_id)
+    except N8nProviderError as exc:
+        raise _provider_http_error(exc) from exc
+    connection = await store.delete_connection(
+        user_id,
+        connection_id,
+        instance_id=context.target.instance_id,
+    )
     if connection is None:
         raise HTTPException(status_code=404, detail={"message": "Connection not found."})
 
     try:
-        await n8n_client.delete_credential(connection.n8n_credential_id)
+        await client.delete_credential(connection.n8n_credential_id)
     except Exception:
         pass
 

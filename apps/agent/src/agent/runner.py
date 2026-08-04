@@ -46,9 +46,12 @@ from src.agent.tool_safety import CONDUUT_TOOL_NAMES
 from src.agent.tools import create_agent
 from src.config import key_for_provider, settings
 from src.logging_config import bind_log_context, clear_log_context
+from src.n8n_provider import N8nClientFactory, N8nInstanceResolver, N8nProviderError
 from src.run_logging import note_run_attempt, set_run_final_preview, start_run_log
 
 log = structlog.get_logger()
+_n8n_resolver = N8nInstanceResolver()
+_n8n_client_factory = N8nClientFactory()
 
 
 async def _cancel_background_task(task: asyncio.Task) -> None:
@@ -242,6 +245,9 @@ async def run(
     *,
     request_id: str | None = None,
     execution_policy: str = "safe",
+    n8n_context=None,
+    n8n=None,
+    n8n_error: Exception | None = None,
 ) -> AsyncIterator[str]:
     """Run the Conduut agent and stream events compatible with the existing frontend."""
 
@@ -267,6 +273,10 @@ async def run(
             message_history=message_history,
             run_id=usage_run_id,
             execution_policy=execution_policy,
+            n8n_context=n8n_context,
+            n8n=n8n,
+            n8n_error=n8n_error,
+            request_id=request_id,
         ):
             yield event
         completed = True
@@ -300,6 +310,10 @@ async def _run_agent_stream(
     message_history: list[ModelMessage],
     run_id: str,
     execution_policy: str,
+    n8n_context=None,
+    n8n=None,
+    n8n_error: Exception | None = None,
+    request_id: str | None = None,
 ) -> AsyncIterator[str]:
     """Internal stream implementation owned by the outer run-log lifecycle."""
 
@@ -310,10 +324,27 @@ async def _run_agent_stream(
     workflow_preview_approvals, workflow_preview_cancellations = (
         _workflow_preview_decisions_from_messages(messages)
     )
+    resolved_n8n_context = n8n_context
+    resolved_n8n = n8n
+    resolved_n8n_error = n8n_error
+    if resolved_n8n_context is None and resolved_n8n is None and resolved_n8n_error is None:
+        try:
+            resolved_n8n_context = await _n8n_resolver.resolve(user_id, request_id=request_id)
+            resolved_n8n = await _n8n_client_factory.for_request_context(resolved_n8n_context)
+        except N8nProviderError as exc:
+            resolved_n8n_error = exc
 
     tier, platform_state = await asyncio.gather(
         classify_tier(user_prompt, message_history),
-        gather_user_state(user_id),
+        gather_user_state(
+            user_id,
+            n8n=resolved_n8n,
+            ownership=(
+                getattr(getattr(resolved_n8n_context, "target", None), "ownership", None)
+                if resolved_n8n_context is not None
+                else None
+            ),
+        ),
     )
     choice = resolve(tier)
     bind_log_context(
@@ -351,6 +382,9 @@ async def _run_agent_stream(
             execution_policy=execution_policy,
             event_queue=asyncio.Queue(),
             attempt_id=attempt_id,
+            n8n_context=resolved_n8n_context,
+            n8n=resolved_n8n,
+            n8n_error=resolved_n8n_error,
             platform_resources=platform_resources,
             conversation_workflows=conversation_workflows,
             workflow_preview_approvals=dict(workflow_preview_approvals),
@@ -652,7 +686,13 @@ async def _persist_and_done(
         await _persist_artifact_previews(
             user_id,
             deps.attachments,
-            origin={"kind": "chat", "conversationId": conv_id},
+            origin={
+                "kind": "chat",
+                "conversationId": conv_id,
+                "instanceId": str(
+                    getattr(getattr(deps.n8n_context, "target", None), "instance_id", "") or ""
+                ),
+            },
         )
 
     yield _sse(

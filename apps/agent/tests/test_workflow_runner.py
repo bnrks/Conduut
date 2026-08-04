@@ -29,7 +29,7 @@ def _stub_execution_evidence_store(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_external_trigger_run_reports_conduut_limit_and_editor_alternative(monkeypatch):
-    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str):
+    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str, **_kwargs):
         return store.WorkflowMetadata(
             workflow_id=workflow_id,
             input_schema=[],
@@ -69,7 +69,7 @@ async def test_external_trigger_run_reports_conduut_limit_and_editor_alternative
 async def test_run_workflow_with_input_sends_payload_to_webhook(monkeypatch):
     sent: dict = {}
 
-    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str):
+    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str, **_kwargs):
         return store.WorkflowMetadata(
             workflow_id=workflow_id,
             input_schema=[
@@ -141,7 +141,7 @@ async def test_run_workflow_with_input_sends_payload_to_webhook(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_workflow_with_input_summarizes_execution_after_webhook_error(monkeypatch):
-    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str):
+    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str, **_kwargs):
         return store.WorkflowMetadata(
             workflow_id=workflow_id,
             input_schema=[
@@ -225,7 +225,7 @@ async def test_run_workflow_with_input_summarizes_execution_after_webhook_error(
 
 @pytest.mark.asyncio
 async def test_run_workflow_with_input_normalizes_no_item_webhook_as_no_action(monkeypatch):
-    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str):
+    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str, **_kwargs):
         return store.WorkflowMetadata(
             workflow_id=workflow_id,
             input_schema=[],
@@ -389,7 +389,7 @@ async def test_run_workflow_with_input_normalizes_no_item_webhook_as_no_action(m
 async def test_run_workflow_batch_with_input_continues_after_row_errors(monkeypatch):
     sent_payloads: list[dict] = []
 
-    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str):
+    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str, **_kwargs):
         return store.WorkflowMetadata(
             workflow_id=workflow_id,
             input_schema=[
@@ -462,7 +462,7 @@ async def test_run_workflow_batch_with_input_continues_after_row_errors(monkeypa
 
 @pytest.mark.asyncio
 async def test_iter_workflow_batch_with_input_streams_row_progress(monkeypatch):
-    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str):
+    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str, **_kwargs):
         return store.WorkflowMetadata(
             workflow_id=workflow_id,
             input_schema=[
@@ -536,7 +536,7 @@ async def test_iter_workflow_batch_with_input_streams_row_progress(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_workflow_with_input_returns_sheets_artifact(monkeypatch):
-    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str):
+    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str, **_kwargs):
         return store.WorkflowMetadata(
             workflow_id=workflow_id,
             input_schema=[],
@@ -621,7 +621,7 @@ async def test_run_workflow_with_input_returns_sheets_artifact(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_workflow_with_input_returns_gmail_artifact(monkeypatch):
-    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str):
+    async def fake_get_workflow_metadata(_user_id: str, workflow_id: str, **_kwargs):
         return store.WorkflowMetadata(
             workflow_id=workflow_id,
             input_schema=[],

@@ -22,6 +22,7 @@ class CustomCredential:
     n8n_credential_name: str
     created_at: str
     updated_at: str
+    instance_id: str = ""
     # Draft support: an agent-prepared credential whose secret the user fills
     # later. status="draft" -> no n8n credential yet; "ready" -> finalized.
     status: str = "ready"
@@ -50,6 +51,7 @@ def _custom_credential_from_data(credential_id: str, data: dict) -> CustomCreden
         n8n_credential_name=data.get("n8n_credential_name", ""),
         created_at=data.get("created_at", ""),
         updated_at=data.get("updated_at", ""),
+        instance_id=str(data.get("instance_id") or ""),
         status=data.get("status", "ready"),
         auth_config=dict(data.get("auth_config") or {}),
         secret_fields=list(data.get("secret_fields") or []),
@@ -74,6 +76,7 @@ async def save_custom_credential(
     n8n_credential_id: str,
     n8n_credential_name: str,
     match_kind: str = "host",
+    instance_id: str = "",
 ) -> CustomCredential:
     credential_id = str(uuid4())
     now = _pkg_store._now_iso()
@@ -83,6 +86,7 @@ async def save_custom_credential(
         "host": host,
         "n8n_credential_id": n8n_credential_id,
         "n8n_credential_name": n8n_credential_name,
+        "instance_id": instance_id,
         "status": "ready",
         "match_kind": match_kind,
         "created_at": now,
@@ -106,6 +110,7 @@ async def save_draft_credential(
     confidence: str,
     pending_workflow_id: str = "",
     pending_node_name: str = "",
+    instance_id: str = "",
 ) -> CustomCredential:
     credential_id = str(uuid4())
     now = _pkg_store._now_iso()
@@ -115,6 +120,7 @@ async def save_draft_credential(
         "host": host,
         "n8n_credential_id": "",
         "n8n_credential_name": "",
+        "instance_id": instance_id,
         "status": "draft",
         "auth_config": dict(auth_config),
         "secret_fields": list(secret_fields),
@@ -137,6 +143,7 @@ async def finalize_draft_credential(
     *,
     n8n_credential_id: str,
     n8n_credential_name: str,
+    instance_id: str | None = None,
 ) -> CustomCredential | None:
     ref = _custom_credentials_ref(user_id).document(credential_id)
     doc = await _pkg_store._run(lambda: ref.get())
@@ -145,6 +152,15 @@ async def finalize_draft_credential(
     data = doc.to_dict() or {}
     if data.get("status") != "draft":
         return None
+    stored_instance_id = str(data.get("instance_id") or "")
+    if (
+        instance_id is not None
+        and stored_instance_id != instance_id
+        and not (instance_id == "shared_dev" and not stored_instance_id)
+    ):
+        return None
+    if instance_id is not None:
+        data["instance_id"] = instance_id
     data["status"] = "ready"
     data["n8n_credential_id"] = n8n_credential_id
     data["n8n_credential_name"] = n8n_credential_name
@@ -153,19 +169,52 @@ async def finalize_draft_credential(
     return _custom_credential_from_data(credential_id, data)
 
 
-async def list_custom_credentials(user_id: str) -> list[CustomCredential]:
+async def list_custom_credentials(
+    user_id: str,
+    *,
+    instance_id: str | None = None,
+) -> list[CustomCredential]:
     docs = await _pkg_store._run(lambda: list(_custom_credentials_ref(user_id).stream()))
-    return [_custom_credential_from_doc(doc) for doc in docs]
+    credentials = [_custom_credential_from_doc(doc) for doc in docs]
+    if instance_id is not None:
+        credentials = [
+            item
+            for item in credentials
+            if item.instance_id == instance_id
+            or (instance_id == "shared_dev" and not item.instance_id)
+        ]
+    return credentials
 
 
-async def get_custom_credential(user_id: str, credential_id: str) -> CustomCredential | None:
+async def get_custom_credential(
+    user_id: str,
+    credential_id: str,
+    *,
+    instance_id: str | None = None,
+) -> CustomCredential | None:
     doc = await _pkg_store._run(
         lambda: _custom_credentials_ref(user_id).document(credential_id).get()
     )
     if not doc.exists:
         return None
-    return _custom_credential_from_doc(doc)
+    credential = _custom_credential_from_doc(doc)
+    if (
+        instance_id is not None
+        and credential.instance_id != instance_id
+        and not (instance_id == "shared_dev" and not credential.instance_id)
+    ):
+        return None
+    return credential
 
 
-async def delete_custom_credential(user_id: str, credential_id: str) -> None:
+async def delete_custom_credential(
+    user_id: str,
+    credential_id: str,
+    *,
+    instance_id: str | None = None,
+) -> None:
+    if instance_id is not None:
+        existing = await get_custom_credential(user_id, credential_id, instance_id=instance_id)
+        if existing is None:
+            return
     await _pkg_store._run(lambda: _custom_credentials_ref(user_id).document(credential_id).delete())

@@ -36,6 +36,8 @@ def _normalize_artifact_origin(origin: dict[str, Any]) -> dict[str, Any]:
         ("workflowId", "workflowId"),
         ("execution_id", "executionId"),
         ("executionId", "executionId"),
+        ("instance_id", "instanceId"),
+        ("instanceId", "instanceId"),
     ):
         value = origin.get(source_key)
         if value:
@@ -66,6 +68,7 @@ def _artifact_document_id(artifact: dict[str, Any], origin: dict[str, Any]) -> s
         origin.get("conversationId"),
         origin.get("workflowId"),
         origin.get("executionId"),
+        origin.get("instanceId"),
     ]
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"), default=str)
     return "art_" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:32]

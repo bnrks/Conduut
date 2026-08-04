@@ -49,7 +49,17 @@ from src.registry import registry
 
 log = structlog.get_logger()
 
+
+def _instance_id_from_n8n(n8n: Any | None) -> str | None:
+    instance_id = getattr(n8n, "instance_id", None)
+    return str(instance_id) if instance_id else None
+
+
 _HTTP_REQUEST_NODE_TYPE = "n8n-nodes-base.httpRequest"
+
+
+def _resolve_n8n(n8n: Any | None):
+    return n8n or n8n_client
 
 
 def _is_http_request_node(node: dict[str, Any]) -> bool:
@@ -202,12 +212,22 @@ async def _attach_managed_connection_if_available(
     node: dict[str, Any],
     credential_type: str,
     before_mutation: Callable[[], None] | None = None,
+    n8n: Any | None = None,
 ) -> bool:
     config = _managed_google_connection_for_node(node, credential_type)
     if not user_id or not workflow_id or not config:
         return False
 
-    connection = await store.get_connection(user_id, config["connection_id"])
+    instance_id = _instance_id_from_n8n(n8n)
+    connection = (
+        await store.get_connection(
+            user_id,
+            config["connection_id"],
+            instance_id=instance_id,
+        )
+        if instance_id
+        else await store.get_connection(user_id, config["connection_id"])
+    )
     if not connection or connection.status != "connected":
         return False
     if connection.credential_type != credential_type or not connection.n8n_credential_id:
@@ -228,7 +248,7 @@ async def _attach_managed_connection_if_available(
 
     if before_mutation:
         before_mutation()
-    await n8n_client.attach_credential_to_workflow(
+    await _resolve_n8n(n8n).attach_credential_to_workflow(
         workflow_id,
         node_name,
         credential_type,
@@ -256,7 +276,7 @@ _MANAGED_CREDENTIAL_TYPES = {"gmailOAuth2", "googleSheetsOAuth2"}
 
 
 async def _discover_existing_credential(
-    credential_type: str, skip_workflow_id: str
+    credential_type: str, skip_workflow_id: str, *, n8n: Any | None = None
 ) -> tuple[str, str] | None:
     """Find a credential of this type already bound to some other workflow.
 
@@ -269,7 +289,7 @@ async def _discover_existing_credential(
     # n8n list cevabı her workflow'un node'larını (credentials dahil) zaten
     # döndürür → tek çağrıyla tara, per-workflow get_workflow (N+1) atma.
     try:
-        workflows = await n8n_client.list_workflows_raw()
+        workflows = await _resolve_n8n(n8n).list_workflows_raw()
     except Exception:
         return None
     for full in workflows:
@@ -289,19 +309,20 @@ async def _attach_existing_credential_if_available(
     node: dict[str, Any],
     credential_type: str,
     before_mutation: Callable[[], None] | None = None,
+    n8n: Any | None = None,
 ) -> bool:
     if not workflow_id or credential_type in _MANAGED_CREDENTIAL_TYPES:
         return False
     node_name = str(node.get("name") or "")
     if not node_name:
         return False
-    found = await _discover_existing_credential(credential_type, workflow_id)
+    found = await _discover_existing_credential(credential_type, workflow_id, n8n=n8n)
     if not found:
         return False
     credential_id, credential_name = found
     if before_mutation:
         before_mutation()
-    await n8n_client.attach_credential_to_workflow(
+    await _resolve_n8n(n8n).attach_credential_to_workflow(
         workflow_id,
         node_name,
         credential_type,
@@ -400,6 +421,8 @@ async def _credential_request_for_node(
     workflow_name: str | None,
     node: dict[str, Any],
     credential_type: str,
+    *,
+    n8n: Any | None = None,
 ) -> AgentAttachment:
     node_name = node.get("name", "Workflow node")
     managed_connection = _managed_google_connection_for_node(node, credential_type)
@@ -427,7 +450,7 @@ async def _credential_request_for_node(
         icon_url = definition.icon_url or None
     else:
         try:
-            schema = await n8n_client.get_credential_schema(credential_type)
+            schema = await _resolve_n8n(n8n).get_credential_schema(credential_type)
             if schema_is_oauth(schema):
                 return _unsupported_oauth_request(node_name, credential_type)
             fields = _fields_from_schema(schema)
@@ -461,7 +484,9 @@ async def analyze_workflow_readiness_payload(
     *,
     user_id: str | None = None,
     before_mutation: Callable[[], None] | None = None,
+    n8n: Any | None = None,
 ) -> dict[str, Any]:
+    n8n_ops = _resolve_n8n(n8n)
     missing: list[AgentAttachment] = []
     reuse_candidates: list[dict[str, Any]] = []
     research_candidates: list[dict[str, Any]] = []
@@ -487,6 +512,7 @@ async def analyze_workflow_readiness_payload(
                     node,
                     credential_type,
                     before_mutation,
+                    n8n=n8n_ops,
                 )
                 if managed_connection
                 else False
@@ -513,6 +539,7 @@ async def analyze_workflow_readiness_payload(
                     workflow.get("name"),
                     node,
                     credential_type,
+                    n8n=n8n_ops,
                 )
             )
             continue
@@ -522,7 +549,14 @@ async def analyze_workflow_readiness_payload(
         # cross-workflow reuse bridge here.
         if is_supported_http_type(credential_type) and _is_http_request_node(node):
             if http_credentials is None:
-                http_credentials = await store.list_custom_credentials(user_id) if user_id else []
+                instance_id = _instance_id_from_n8n(n8n_ops)
+                http_credentials = (
+                    await store.list_custom_credentials(user_id, instance_id=instance_id)
+                    if user_id and instance_id
+                    else await store.list_custom_credentials(user_id)
+                    if user_id
+                    else []
+                )
             generic = str(node.get("parameters", {}).get("genericAuthType") or "").strip() or None
             url = node.get("parameters", {}).get("url")
             # Only READY credentials can be attached; drafts have no n8n credential.
@@ -561,7 +595,14 @@ async def analyze_workflow_readiness_payload(
 
         # Predefined credential library (type-matched), before the reuse bridge.
         if http_credentials is None:
-            http_credentials = await store.list_custom_credentials(user_id) if user_id else []
+            instance_id = _instance_id_from_n8n(n8n_ops)
+            http_credentials = (
+                await store.list_custom_credentials(user_id, instance_id=instance_id)
+                if user_id and instance_id
+                else await store.list_custom_credentials(user_id)
+                if user_id
+                else []
+            )
         type_matches = match_credentials_by_type(credential_type, http_credentials)
         if type_matches:
             for credential in type_matches:
@@ -580,7 +621,7 @@ async def analyze_workflow_readiness_payload(
         # Non-HTTP, managed-less types (e.g. openAiApi): cross-workflow reuse bridge.
         try:
             attached = await _attach_existing_credential_if_available(
-                workflow_id, node, credential_type, before_mutation
+                workflow_id, node, credential_type, before_mutation, n8n=n8n_ops
             )
         except Exception as exc:
             log.warning(
@@ -607,6 +648,7 @@ async def analyze_workflow_readiness_payload(
                 workflow.get("name"),
                 node,
                 credential_type,
+                n8n=n8n_ops,
             )
         )
 
@@ -627,6 +669,8 @@ async def attach_unambiguous_reuse_candidates(
     workflow_id: str,
     user_id: str | None,
     reuse_candidates: list[dict[str, Any]],
+    *,
+    n8n: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Attach reuse candidates for nodes with exactly one host match.
 
@@ -637,6 +681,7 @@ async def attach_unambiguous_reuse_candidates(
 
     if not user_id or not workflow_id or not reuse_candidates:
         return []
+    n8n_ops = _resolve_n8n(n8n)
     by_node: dict[str, list[dict[str, Any]]] = {}
     for candidate in reuse_candidates:
         by_node.setdefault(str(candidate.get("nodeName") or ""), []).append(candidate)
@@ -646,7 +691,19 @@ async def attach_unambiguous_reuse_candidates(
         if not node_name or len(candidates) != 1:
             continue
         candidate = candidates[0]
-        credential = await store.get_custom_credential(user_id, str(candidate.get("credentialId")))
+        instance_id = _instance_id_from_n8n(n8n_ops)
+        credential = (
+            await store.get_custom_credential(
+                user_id,
+                str(candidate.get("credentialId")),
+                instance_id=instance_id,
+            )
+            if instance_id
+            else await store.get_custom_credential(
+                user_id,
+                str(candidate.get("credentialId")),
+            )
+        )
         if not credential:
             continue
         generic = (
@@ -655,7 +712,7 @@ async def attach_unambiguous_reuse_candidates(
             else None
         )
         try:
-            await n8n_client.attach_credential_to_workflow(
+            await n8n_ops.attach_credential_to_workflow(
                 workflow_id,
                 node_name,
                 credential.credential_type,
@@ -701,6 +758,7 @@ async def _emit_missing_credentials(
         workflow,
         user_id=ctx.deps.user_id,
         before_mutation=before_mutation,
+        n8n=ctx.deps.n8n,
     )
     missing = readiness["missing_credentials"]
     for attachment in missing:
@@ -714,9 +772,28 @@ async def _emit_missing_credentials(
     }
 
 
-async def _get_workflow_for_reference(workflow_ref: str) -> dict[str, Any]:
+async def _get_workflow_for_reference(
+    workflow_ref: str,
+    *,
+    n8n: Any | None = None,
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    n8n_ops = _resolve_n8n(n8n)
     try:
-        return await n8n_client.get_workflow(workflow_ref)
+        workflow = await n8n_ops.get_workflow(workflow_ref)
+        if (
+            user_id
+            and str(getattr(n8n_ops, "ownership", "shared_dev") or "shared_dev") == "shared_dev"
+        ):
+            metadata = await store.get_workflow_metadata(user_id, str(workflow.get("id") or ""))
+            if metadata is None:
+                raise n8n_client.N8nApiError(
+                    404,
+                    "Workflow not found.",
+                    method="GET",
+                    path=f"/workflows/{workflow_ref}",
+                )
+        return workflow
     except n8n_client.N8nApiError as exc:
         if exc.status_code != 404:
             raise
@@ -724,7 +801,10 @@ async def _get_workflow_for_reference(workflow_ref: str) -> dict[str, Any]:
         if normalized_ref not in {"1", "current", "latest", "last", "the workflow"}:
             raise
 
-    workflows = await n8n_client.list_workflows()
+    workflows = await n8n_ops.list_workflows()
+    if user_id and str(getattr(n8n_ops, "ownership", "shared_dev") or "shared_dev") == "shared_dev":
+        owned_ids = set((await store.get_all_workflow_metadata(user_id)).keys())
+        workflows = [workflow for workflow in workflows if workflow.id in owned_ids]
     if not workflows:
         raise n8n_client.N8nApiError(
             404,
@@ -734,4 +814,4 @@ async def _get_workflow_for_reference(workflow_ref: str) -> dict[str, Any]:
         )
 
     workflows.sort(key=lambda item: item.updated_at or item.created_at, reverse=True)
-    return await n8n_client.get_workflow(workflows[0].id)
+    return await n8n_ops.get_workflow(workflows[0].id)

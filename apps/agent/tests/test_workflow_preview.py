@@ -58,6 +58,34 @@ async def test_preview_issues_token_after_safe_probe(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_preview_token_consumption_is_bound_to_instance(monkeypatch):
+    captured: dict = {}
+
+    async def fake_metadata(user_id, workflow_id, **kwargs):
+        captured["metadata"] = (user_id, workflow_id, kwargs)
+        return None
+
+    async def fake_consume(user_id, token, **kwargs):
+        captured["consume"] = (user_id, token, kwargs)
+        return SimpleNamespace(token=token)
+
+    monkeypatch.setattr(preview.store, "get_workflow_metadata", fake_metadata)
+    monkeypatch.setattr(preview.store, "consume_workflow_run_preview", fake_consume)
+
+    accepted = await preview.consume_workflow_preview(
+        _WORKFLOW,
+        user_id="user_1",
+        input_payload={},
+        preview_token="token-1",
+        instance_id="inst_a",
+    )
+
+    assert accepted is True
+    assert captured["metadata"][2]["instance_id"] == "inst_a"
+    assert captured["consume"][2]["instance_id"] == "inst_a"
+
+
+@pytest.mark.asyncio
 async def test_failed_probe_does_not_issue_token(monkeypatch):
     async def fake_metadata(user_id, workflow_id):
         return None

@@ -9,6 +9,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src import n8n_client, store
+from src.agent.assurance import workflow_fingerprint
+from src.agent.sandbox import use_n8n_client as sandbox_use_n8n_client
 from src.agent.schemas import (
     WorkflowBatchRowResultData,
     WorkflowBatchRunResultData,
@@ -29,9 +31,12 @@ from src.agent.workflow_preview import (
     workflow_requires_preview,
 )
 from src.auth import get_user_id
+from src.n8n_provider import N8nClientFactory, N8nInstanceResolver, N8nProviderError, error_detail
 
 router = APIRouter()
 log = structlog.get_logger()
+resolver = N8nInstanceResolver()
+client_factory = N8nClientFactory()
 
 
 class WorkflowRunRequest(BaseModel):
@@ -56,8 +61,130 @@ class WorkflowBatchRunRequest(BaseModel):
     previewToken: str | None = None
 
 
+class WorkflowAdoptRequest(BaseModel):
+    inputSchema: list[dict[str, Any]] = Field(default_factory=list)
+
+
 def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _provider_http_error(exc: N8nProviderError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=error_detail(exc))
+
+
+async def _request_n8n(request: Request, user_id: str):
+    request_state = getattr(request, "state", None)
+    request_headers = getattr(request, "headers", {})
+    request_id = getattr(request_state, "request_id", None) or request_headers.get("x-request-id")
+    context = await resolver.resolve(user_id, request_id=request_id)
+    client = await client_factory.for_request_context(context)
+    return context, client
+
+
+async def _ensure_workflow_mutation_allowed(
+    user_id: str,
+    workflow_id: str,
+    *,
+    instance_id: str,
+    ownership: str,
+    action: str,
+) -> store.WorkflowMetadata | None:
+    metadata = await _get_workflow_metadata(
+        user_id,
+        workflow_id,
+        instance_id=instance_id,
+    )
+    if ownership == "customer_owned" and metadata is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "workflow_adoption_required",
+                "message": (
+                    f"This workflow exists in your n8n instance but has not been adopted into "
+                    f"Conduut yet. It is read-only until you adopt it, so it can't be {action}."
+                ),
+            },
+        )
+    return metadata
+
+
+def _workflow_drift_reason(
+    metadata: store.WorkflowMetadata | None,
+    workflow: dict[str, Any],
+    *,
+    instance_id: str,
+) -> str | None:
+    if metadata is None:
+        return None
+    baseline = metadata.resources.get("workflow_baseline")
+    if not isinstance(baseline, dict):
+        return None
+    expected_instance_id = str(baseline.get("instance_id") or "")
+    if expected_instance_id and expected_instance_id != instance_id:
+        return "This workflow baseline belongs to a different n8n instance."
+    expected_updated_at = str(baseline.get("workflow_updated_at") or "")
+    current_updated_at = str(workflow.get("updatedAt") or "")
+    if expected_updated_at and current_updated_at and expected_updated_at != current_updated_at:
+        return "This workflow changed in n8n after Conduut last synced it."
+    expected_fingerprint = str(baseline.get("workflow_fingerprint") or "")
+    current_fingerprint = workflow_fingerprint(workflow)
+    if expected_fingerprint and expected_fingerprint != current_fingerprint:
+        return "This workflow structure changed in n8n after Conduut last synced it."
+    return None
+
+
+def _workflow_drift_error(drift_reason: str) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "workflow_drift_detected",
+            "message": drift_reason,
+        },
+    )
+
+
+async def _get_workflow_metadata(
+    user_id: str,
+    workflow_id: str,
+    *,
+    instance_id: str,
+) -> store.WorkflowMetadata | None:
+    return await store.get_workflow_metadata(
+        user_id,
+        workflow_id,
+        instance_id=instance_id,
+    )
+
+
+async def _refresh_workflow_baseline(
+    user_id: str,
+    workflow_id: str,
+    *,
+    instance_id: str,
+    client,
+) -> None:
+    metadata = await _get_workflow_metadata(
+        user_id,
+        workflow_id,
+        instance_id=instance_id,
+    )
+    if metadata is None:
+        return
+    workflow = await client.get_workflow(workflow_id)
+    resources = dict(metadata.resources)
+    resources["workflow_baseline"] = {
+        "instance_id": instance_id,
+        "workflow_fingerprint": workflow_fingerprint(workflow),
+        "workflow_updated_at": str(workflow.get("updatedAt") or ""),
+    }
+    await store.save_workflow_metadata(
+        user_id,
+        workflow_id,
+        input_schema=metadata.input_schema,
+        resources=resources,
+        instance_id=instance_id,
+    )
 
 
 def _assessment_payload(assessment: WorkflowRunAssessment) -> dict[str, Any]:
@@ -157,6 +284,8 @@ async def _persist_batch_row_artifacts(
     workflow_id: str,
     batch_run_id: str,
     row: WorkflowBatchRowResultData,
+    *,
+    instance_id: str,
 ) -> None:
     for artifact in row.artifacts:
         try:
@@ -169,6 +298,7 @@ async def _persist_batch_row_artifacts(
                     "batchRunId": batch_run_id,
                     "rowNumber": row.rowNumber,
                     "executionId": row.executionId,
+                    "instanceId": instance_id,
                 },
             )
         except Exception as exc:
@@ -185,16 +315,19 @@ async def _persist_batch_row_artifacts(
 
 @router.get("/workflows")
 async def list_workflows(request: Request):
-    # TODO: MVP'de tek paylaşık n8n instance kullanılıyor.
-    # Per-user container izolasyonu gelince user_id ile filtreleme eklenecek.
     user_id = get_user_id(request)
+    try:
+        context, client = await _request_n8n(request, user_id)
+    except N8nProviderError as exc:
+        raise _provider_http_error(exc) from exc
 
-    # Düz 2 çağrı (workflow sayısından bağımsız): n8n list + tek Firestore
-    # metadata sorgusu. nodeCount n8n list cevabından (N8nWorkflow.node_count)
-    # gelir — listede ayrı get_workflow (N+1, ~1-2.4sn/çağrı) ATMAYIZ; metadata
-    # da workflow-başına değil tek sorguda toplanır.
-    workflows = await n8n_client.list_workflows()
-    metadata_by_id = await store.get_all_workflow_metadata(user_id)
+    workflows = await client.list_workflows()
+    metadata_by_id = await store.get_all_workflow_metadata(
+        user_id,
+        instance_id=context.target.instance_id,
+    )
+    if context.target.ownership == "shared_dev":
+        workflows = [workflow for workflow in workflows if workflow.id in metadata_by_id]
 
     def _serialize(w: n8n_client.N8nWorkflow) -> dict:
         input_schema = _workflow_input_schema_from_metadata(metadata_by_id.get(w.id))
@@ -207,30 +340,99 @@ async def list_workflows(request: Request):
             "updatedAt": w.updated_at,
             "executionCount": 0,
             "inputSchema": _input_schema_payload(input_schema),
+            "managedByConduut": w.id in metadata_by_id,
+            "readOnly": context.target.ownership == "customer_owned" and w.id not in metadata_by_id,
         }
 
     return {"workflows": [_serialize(w) for w in workflows]}
+
+
+@router.post("/workflows/{workflow_id}/adopt")
+async def adopt_workflow(
+    workflow_id: str,
+    request: Request,
+    body: WorkflowAdoptRequest | None = None,
+):
+    user_id = get_user_id(request)
+    try:
+        context, client = await _request_n8n(request, user_id)
+        workflow = await client.get_workflow(workflow_id)
+    except N8nProviderError as exc:
+        raise _provider_http_error(exc) from exc
+    except n8n_client.N8nApiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"message": exc.message}) from exc
+    existing = await _get_workflow_metadata(
+        user_id,
+        workflow_id,
+        instance_id=context.target.instance_id,
+    )
+    resources = dict(existing.resources) if existing else {}
+    resources["adopted_from_external"] = True
+    resources["adopted_at"] = store._now_iso()
+    resources["workflow_baseline"] = {
+        "instance_id": context.target.instance_id,
+        "workflow_fingerprint": workflow_fingerprint(workflow),
+        "workflow_updated_at": str(workflow.get("updatedAt") or ""),
+    }
+    resources["external_workflow_baseline"] = dict(resources["workflow_baseline"])
+    saved = await store.save_workflow_metadata(
+        user_id,
+        workflow_id,
+        input_schema=(
+            body.inputSchema if body is not None else (existing.input_schema if existing else [])
+        ),
+        resources=resources,
+        instance_id=context.target.instance_id,
+    )
+    return {
+        "workflow_id": workflow_id,
+        "adopted": True,
+        "instanceId": context.target.instance_id,
+        "inputSchema": _input_schema_payload(saved.input_schema),
+        "baseline": resources["workflow_baseline"],
+    }
 
 
 @router.patch("/workflows/{workflow_id}/activate")
 async def activate_workflow(workflow_id: str, request: Request):
     user_id = get_user_id(request)
     try:
-        workflow = await n8n_client.get_workflow(workflow_id)
-        readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id)
+        context, client = await _request_n8n(request, user_id)
+        await _ensure_workflow_mutation_allowed(
+            user_id,
+            workflow_id,
+            instance_id=context.target.instance_id,
+            ownership=context.target.ownership,
+            action="activated",
+        )
+        workflow = await client.get_workflow(workflow_id)
+        drift_reason = _workflow_drift_reason(
+            await _get_workflow_metadata(
+                user_id,
+                workflow_id,
+                instance_id=context.target.instance_id,
+            ),
+            workflow,
+            instance_id=context.target.instance_id,
+        )
+        if drift_reason:
+            raise _workflow_drift_error(drift_reason)
+        readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id, n8n=client)
         if readiness["missing_credentials"]:
             raise HTTPException(
                 status_code=409,
                 detail={"message": "Workflow has missing credentials."},
             )
         if workflow_requires_preview(workflow):
-            assurance = await preview_workflow_run(
-                workflow,
-                user_id=user_id,
-                input_payload=None,
-                execution_policy="safe",
-                issue_token=False,
-            )
+            with sandbox_use_n8n_client(client):
+                assurance = await preview_workflow_run(
+                    workflow,
+                    user_id=user_id,
+                    input_payload=None,
+                    execution_policy="safe",
+                    issue_token=False,
+                    instance_id=context.target.instance_id,
+                )
             if not assurance.get("ready") or assurance.get("coverage") != "full":
                 raise HTTPException(
                     status_code=409,
@@ -240,7 +442,15 @@ async def activate_workflow(workflow_id: str, request: Request):
                         "assurance": assurance,
                     },
                 )
-        await n8n_client.activate_workflow(workflow_id)
+        await client.activate_workflow(workflow_id)
+        await _refresh_workflow_baseline(
+            user_id,
+            workflow_id,
+            instance_id=context.target.instance_id,
+            client=client,
+        )
+    except N8nProviderError as exc:
+        raise _provider_http_error(exc) from exc
     except n8n_client.N8nApiError as e:
         raise HTTPException(status_code=e.status_code, detail={"message": e.message}) from e
     return {"success": True, "workflow_id": workflow_id}
@@ -248,9 +458,37 @@ async def activate_workflow(workflow_id: str, request: Request):
 
 @router.patch("/workflows/{workflow_id}/deactivate")
 async def deactivate_workflow(workflow_id: str, request: Request):
-    get_user_id(request)
+    user_id = get_user_id(request)
     try:
-        await n8n_client.deactivate_workflow(workflow_id)
+        context, client = await _request_n8n(request, user_id)
+        await _ensure_workflow_mutation_allowed(
+            user_id,
+            workflow_id,
+            instance_id=context.target.instance_id,
+            ownership=context.target.ownership,
+            action="deactivated",
+        )
+        workflow = await client.get_workflow(workflow_id)
+        drift_reason = _workflow_drift_reason(
+            await _get_workflow_metadata(
+                user_id,
+                workflow_id,
+                instance_id=context.target.instance_id,
+            ),
+            workflow,
+            instance_id=context.target.instance_id,
+        )
+        if drift_reason:
+            raise _workflow_drift_error(drift_reason)
+        await client.deactivate_workflow(workflow_id)
+        await _refresh_workflow_baseline(
+            user_id,
+            workflow_id,
+            instance_id=context.target.instance_id,
+            client=client,
+        )
+    except N8nProviderError as exc:
+        raise _provider_http_error(exc) from exc
     except n8n_client.N8nApiError as e:
         raise HTTPException(status_code=e.status_code, detail={"message": e.message}) from e
     return {"success": True, "workflow_id": workflow_id}
@@ -260,8 +498,27 @@ async def deactivate_workflow(workflow_id: str, request: Request):
 async def run_workflow(workflow_id: str, request: Request, body: WorkflowRunRequest | None = None):
     user_id = get_user_id(request)
     try:
-        workflow = await n8n_client.get_workflow(workflow_id)
-        readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id)
+        context, client = await _request_n8n(request, user_id)
+        await _ensure_workflow_mutation_allowed(
+            user_id,
+            workflow_id,
+            instance_id=context.target.instance_id,
+            ownership=context.target.ownership,
+            action="run",
+        )
+        workflow = await client.get_workflow(workflow_id)
+        drift_reason = _workflow_drift_reason(
+            await _get_workflow_metadata(
+                user_id,
+                workflow_id,
+                instance_id=context.target.instance_id,
+            ),
+            workflow,
+            instance_id=context.target.instance_id,
+        )
+        if drift_reason:
+            raise _workflow_drift_error(drift_reason)
+        readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id, n8n=client)
         if readiness["missing_credentials"]:
             raise HTTPException(
                 status_code=409,
@@ -274,6 +531,7 @@ async def run_workflow(workflow_id: str, request: Request, body: WorkflowRunRequ
             input_payload=input_payload,
             preview_token=body.previewToken if body else None,
             execution_policy="safe",
+            instance_id=context.target.instance_id,
         ):
             raise HTTPException(
                 status_code=409,
@@ -286,6 +544,13 @@ async def run_workflow(workflow_id: str, request: Request, body: WorkflowRunRequ
             workflow,
             user_id=user_id,
             input_payload=input_payload,
+            n8n=client,
+        )
+        await _refresh_workflow_baseline(
+            user_id,
+            workflow_id,
+            instance_id=context.target.instance_id,
+            client=client,
         )
         for artifact in result.artifacts:
             try:
@@ -296,6 +561,7 @@ async def run_workflow(workflow_id: str, request: Request, body: WorkflowRunRequ
                         "kind": "workflow_run",
                         "workflowId": workflow_id,
                         "executionId": result.executionId,
+                        "instanceId": context.target.instance_id,
                     },
                 )
             except Exception as exc:
@@ -325,6 +591,8 @@ async def run_workflow(workflow_id: str, request: Request, body: WorkflowRunRequ
         }
     except ValueError as e:
         raise HTTPException(status_code=422, detail={"message": str(e)}) from e
+    except N8nProviderError as exc:
+        raise _provider_http_error(exc) from exc
     except n8n_client.N8nApiError as e:
         raise HTTPException(status_code=e.status_code, detail={"message": e.message}) from e
 
@@ -336,8 +604,30 @@ async def preview_run_workflow(
     """Resolve a side-effect-free preview and return a short-lived approval token."""
 
     user_id = get_user_id(request)
-    workflow = await n8n_client.get_workflow(workflow_id)
-    readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id)
+    try:
+        context, client = await _request_n8n(request, user_id)
+        await _ensure_workflow_mutation_allowed(
+            user_id,
+            workflow_id,
+            instance_id=context.target.instance_id,
+            ownership=context.target.ownership,
+            action="previewed",
+        )
+        workflow = await client.get_workflow(workflow_id)
+        drift_reason = _workflow_drift_reason(
+            await _get_workflow_metadata(
+                user_id,
+                workflow_id,
+                instance_id=context.target.instance_id,
+            ),
+            workflow,
+            instance_id=context.target.instance_id,
+        )
+        if drift_reason:
+            raise _workflow_drift_error(drift_reason)
+    except N8nProviderError as exc:
+        raise _provider_http_error(exc) from exc
+    readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id, n8n=client)
     if readiness["missing_credentials"]:
         raise HTTPException(
             status_code=409,
@@ -350,12 +640,14 @@ async def preview_run_workflow(
             "status": "not_required",
             "coverage": "full",
         }
-    result = await preview_workflow_run(
-        workflow,
-        user_id=user_id,
-        input_payload=body.input if body else {},
-        execution_policy="safe",
-    )
+    with sandbox_use_n8n_client(client):
+        result = await preview_workflow_run(
+            workflow,
+            user_id=user_id,
+            input_payload=body.input if body else {},
+            execution_policy="safe",
+            instance_id=context.target.instance_id,
+        )
     if not result.get("ready"):
         raise HTTPException(status_code=409, detail=result)
     return result
@@ -371,8 +663,27 @@ async def batch_run_workflow(
 
     user_id = get_user_id(request)
     try:
-        workflow = await n8n_client.get_workflow(workflow_id)
-        readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id)
+        context, client = await _request_n8n(request, user_id)
+        await _ensure_workflow_mutation_allowed(
+            user_id,
+            workflow_id,
+            instance_id=context.target.instance_id,
+            ownership=context.target.ownership,
+            action="run",
+        )
+        workflow = await client.get_workflow(workflow_id)
+        drift_reason = _workflow_drift_reason(
+            await _get_workflow_metadata(
+                user_id,
+                workflow_id,
+                instance_id=context.target.instance_id,
+            ),
+            workflow,
+            instance_id=context.target.instance_id,
+        )
+        if drift_reason:
+            raise _workflow_drift_error(drift_reason)
+        readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id, n8n=client)
         if readiness["missing_credentials"]:
             raise HTTPException(
                 status_code=409,
@@ -385,6 +696,7 @@ async def batch_run_workflow(
             input_payload={"rows": rows},
             preview_token=body.previewToken,
             execution_policy="safe",
+            instance_id=context.target.instance_id,
         ):
             raise HTTPException(
                 status_code=409,
@@ -397,12 +709,27 @@ async def batch_run_workflow(
             workflow,
             user_id=user_id,
             rows=rows,
+            n8n=client,
+        )
+        await _refresh_workflow_baseline(
+            user_id,
+            workflow_id,
+            instance_id=context.target.instance_id,
+            client=client,
         )
         for row in result.results:
-            await _persist_batch_row_artifacts(user_id, workflow_id, result.batchRunId, row)
+            await _persist_batch_row_artifacts(
+                user_id,
+                workflow_id,
+                result.batchRunId,
+                row,
+                instance_id=context.target.instance_id,
+            )
         return _batch_result_payload(result)
     except ValueError as e:
         raise HTTPException(status_code=422, detail={"message": str(e)}) from e
+    except N8nProviderError as exc:
+        raise _provider_http_error(exc) from exc
     except n8n_client.N8nApiError as e:
         raise HTTPException(status_code=e.status_code, detail={"message": e.message}) from e
 
@@ -414,8 +741,30 @@ async def preview_batch_run_workflow(
     body: WorkflowBatchRunRequest,
 ):
     user_id = get_user_id(request)
-    workflow = await n8n_client.get_workflow(workflow_id)
-    readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id)
+    try:
+        context, client = await _request_n8n(request, user_id)
+        await _ensure_workflow_mutation_allowed(
+            user_id,
+            workflow_id,
+            instance_id=context.target.instance_id,
+            ownership=context.target.ownership,
+            action="previewed",
+        )
+        workflow = await client.get_workflow(workflow_id)
+        drift_reason = _workflow_drift_reason(
+            await _get_workflow_metadata(
+                user_id,
+                workflow_id,
+                instance_id=context.target.instance_id,
+            ),
+            workflow,
+            instance_id=context.target.instance_id,
+        )
+        if drift_reason:
+            raise _workflow_drift_error(drift_reason)
+    except N8nProviderError as exc:
+        raise _provider_http_error(exc) from exc
+    readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id, n8n=client)
     if readiness["missing_credentials"]:
         raise HTTPException(
             status_code=409,
@@ -429,12 +778,14 @@ async def preview_batch_run_workflow(
             "coverage": "full",
         }
     rows = [row.model_dump() for row in body.rows]
-    result = await preview_workflow_batch(
-        workflow,
-        user_id=user_id,
-        rows=rows,
-        execution_policy="safe",
-    )
+    with sandbox_use_n8n_client(client):
+        result = await preview_workflow_batch(
+            workflow,
+            user_id=user_id,
+            rows=rows,
+            execution_policy="safe",
+            instance_id=context.target.instance_id,
+        )
     if not result.get("ready"):
         raise HTTPException(status_code=409, detail=result)
     return result
@@ -450,8 +801,27 @@ async def stream_batch_run_workflow(
 
     user_id = get_user_id(request)
     try:
-        workflow = await n8n_client.get_workflow(workflow_id)
-        readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id)
+        context, client = await _request_n8n(request, user_id)
+        await _ensure_workflow_mutation_allowed(
+            user_id,
+            workflow_id,
+            instance_id=context.target.instance_id,
+            ownership=context.target.ownership,
+            action="run",
+        )
+        workflow = await client.get_workflow(workflow_id)
+        drift_reason = _workflow_drift_reason(
+            await _get_workflow_metadata(
+                user_id,
+                workflow_id,
+                instance_id=context.target.instance_id,
+            ),
+            workflow,
+            instance_id=context.target.instance_id,
+        )
+        if drift_reason:
+            raise _workflow_drift_error(drift_reason)
+        readiness = await analyze_workflow_readiness_payload(workflow, user_id=user_id, n8n=client)
         if readiness["missing_credentials"]:
             raise HTTPException(
                 status_code=409,
@@ -464,6 +834,7 @@ async def stream_batch_run_workflow(
             input_payload={"rows": rows},
             preview_token=body.previewToken,
             execution_policy="safe",
+            instance_id=context.target.instance_id,
         ):
             raise HTTPException(
                 status_code=409,
@@ -472,6 +843,8 @@ async def stream_batch_run_workflow(
                     "message": "Review and confirm the safe batch preview before running.",
                 },
             )
+    except N8nProviderError as exc:
+        raise _provider_http_error(exc) from exc
     except n8n_client.N8nApiError as e:
         raise HTTPException(status_code=e.status_code, detail={"message": e.message}) from e
 
@@ -482,6 +855,7 @@ async def stream_batch_run_workflow(
                 workflow,
                 user_id=user_id,
                 rows=rows,
+                n8n=client,
             ):
                 if event == "started":
                     if isinstance(payload, dict):
@@ -500,11 +874,18 @@ async def stream_batch_run_workflow(
                             workflow_id,
                             batch_run_id,
                             payload,
+                            instance_id=context.target.instance_id,
                         )
                     yield _sse(event, _batch_row_payload(payload))
                     continue
 
                 if event == "completed" and isinstance(payload, WorkflowBatchRunResultData):
+                    await _refresh_workflow_baseline(
+                        user_id,
+                        workflow_id,
+                        instance_id=context.target.instance_id,
+                        client=client,
+                    )
                     yield _sse(event, _batch_result_payload(payload))
         except ValueError as exc:
             yield _sse("error", {"message": str(exc)})
@@ -531,7 +912,29 @@ async def stream_batch_run_workflow(
 async def delete_workflow(workflow_id: str, request: Request):
     user_id = get_user_id(request)
     try:
-        await n8n_client.delete_workflow(workflow_id)
+        context, client = await _request_n8n(request, user_id)
+        await _ensure_workflow_mutation_allowed(
+            user_id,
+            workflow_id,
+            instance_id=context.target.instance_id,
+            ownership=context.target.ownership,
+            action="deleted",
+        )
+        workflow = await client.get_workflow(workflow_id)
+        drift_reason = _workflow_drift_reason(
+            await _get_workflow_metadata(
+                user_id,
+                workflow_id,
+                instance_id=context.target.instance_id,
+            ),
+            workflow,
+            instance_id=context.target.instance_id,
+        )
+        if drift_reason:
+            raise _workflow_drift_error(drift_reason)
+        await client.delete_workflow(workflow_id)
         await store.delete_workflow_metadata(user_id, workflow_id)
+    except N8nProviderError as exc:
+        raise _provider_http_error(exc) from exc
     except n8n_client.N8nApiError as e:
         raise HTTPException(status_code=e.status_code, detail={"message": e.message}) from e

@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -7,6 +8,32 @@ from src import n8n_client, store
 from src.config import settings
 from src.oauth import google
 from src.routes import connections as connections_route
+
+
+@pytest.fixture(autouse=True)
+def _request_scoped_shared_n8n(monkeypatch):
+    context = SimpleNamespace(
+        target=SimpleNamespace(instance_id="shared_dev", ownership="shared_dev")
+    )
+
+    async def fake_request_n8n(_request, _user_id):
+        return context, connections_route.n8n_client
+
+    async def fake_active_instance(_user_id):
+        return None
+
+    async def fake_resolve(_user_id, **_kwargs):
+        return context
+
+    async def fake_factory(_context):
+        return connections_route.n8n_client
+
+    monkeypatch.setattr(connections_route, "_request_n8n", fake_request_n8n)
+    monkeypatch.setattr(connections_route.store, "get_active_n8n_instance", fake_active_instance)
+    monkeypatch.setattr(connections_route, "resolver", SimpleNamespace(resolve=fake_resolve))
+    monkeypatch.setattr(
+        connections_route, "client_factory", SimpleNamespace(for_request_context=fake_factory)
+    )
 
 
 def _oauth_state(
@@ -278,7 +305,7 @@ async def test_google_callback_creates_n8n_credential_and_connection(monkeypatch
         assert access_token == "access_token"
         return {"email": "user@example.com", "sub": "google_sub"}
 
-    async def fake_get_connection(_user_id: str, _connection_id: str):
+    async def fake_get_connection(_user_id: str, _connection_id: str, **_kwargs):
         return None
 
     created: dict[str, object] = {}
@@ -369,7 +396,7 @@ async def test_google_callback_creates_sheets_n8n_credential_and_connection(monk
         assert access_token == "access_token"
         return {"email": "user@example.com", "sub": "google_sub"}
 
-    async def fake_get_connection(_user_id: str, _connection_id: str):
+    async def fake_get_connection(_user_id: str, _connection_id: str, **_kwargs):
         return None
 
     created: dict[str, object] = {}
@@ -455,7 +482,7 @@ async def test_google_callback_cleans_up_n8n_credential_after_store_failure(monk
     async def fake_fetch_userinfo(_access_token: str):
         return {"email": "user@example.com", "sub": "google_sub"}
 
-    async def fake_get_connection(_user_id: str, _connection_id: str):
+    async def fake_get_connection(_user_id: str, _connection_id: str, **_kwargs):
         return None
 
     async def fake_create_credential(name: str, credential_type: str, _data: dict):
@@ -485,3 +512,38 @@ async def test_google_callback_cleans_up_n8n_credential_after_store_failure(monk
 
     assert exc.value.status_code == 400
     assert deleted == ["cred_1"]
+
+
+@pytest.mark.asyncio
+async def test_google_callback_fails_closed_when_active_instance_changed(monkeypatch):
+    state = _oauth_state()
+    state = store.OAuthState(
+        **{
+            **state.__dict__,
+            "instance_id": "inst_started",
+            "ownership": "customer_owned",
+        }
+    )
+
+    async def fake_get_state(_state_id):
+        return state
+
+    async def fake_resolve(_user_id, **_kwargs):
+        return SimpleNamespace(
+            target=SimpleNamespace(instance_id="inst_current", ownership="customer_owned")
+        )
+
+    async def fail_exchange(**_kwargs):
+        raise AssertionError("OAuth code must not be exchanged after an instance change")
+
+    monkeypatch.setattr(connections_route.store, "get_oauth_state", fake_get_state)
+    monkeypatch.setattr(connections_route, "resolver", SimpleNamespace(resolve=fake_resolve))
+    monkeypatch.setattr(connections_route.google, "exchange_code", fail_exchange)
+
+    with pytest.raises(HTTPException) as exc:
+        await connections_route.google_gmail_callback(
+            connections_route.GoogleCallbackIn(code="code", state="state_1")
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "n8n_instance_changed"

@@ -101,9 +101,17 @@ def _normalized_status(value: object) -> str:
     return "error" if status in {"error", "failed", "crashed"} else status
 
 
-async def _workflow_names() -> dict[str, str]:
+def _ownership_value(n8n: object) -> str:
+    return str(getattr(n8n, "ownership", "shared_dev") or "shared_dev")
+
+
+async def _owned_workflow_ids(user_id: str) -> set[str]:
+    return set((await store.get_all_workflow_metadata(user_id)).keys())
+
+
+async def _workflow_names(n8n=n8n_client) -> dict[str, str]:
     try:
-        workflows = await n8n_client.list_workflows()
+        workflows = await n8n.list_workflows()
     except n8n_client.N8nApiError as exc:
         # Execution history remains useful if a workflow was deleted between
         # the two reads or the name lookup fails independently.
@@ -120,13 +128,14 @@ async def _execution_workflow_context(
     raw: dict[str, object],
     *,
     workflow_id: str,
+    n8n=n8n_client,
 ) -> tuple[dict[str, object] | None, str]:
     workflow_data = raw.get("workflowData")
     if isinstance(workflow_data, dict) and isinstance(workflow_data.get("nodes"), list):
         return workflow_data, "embedded"
     if workflow_id:
         try:
-            workflow = await n8n_client.get_workflow(workflow_id)
+            workflow = await n8n.get_workflow(workflow_id)
         except n8n_client.N8nApiError as exc:
             log.warning(
                 "execution_workflow_context_unavailable",
@@ -147,6 +156,7 @@ async def list_runs(
     status: str | None = None,
     cursor: str | None = None,
     limit: int = 25,
+    n8n=n8n_client,
 ) -> RunPage:
     """List a sanitized execution page for one user.
 
@@ -156,33 +166,50 @@ async def list_runs(
 
     if not user_id:
         raise ValueError("user_id is required")
-    page = await n8n_client.list_executions_page(
-        workflow_id=workflow_id,
-        status=status,
-        cursor=cursor,
-        limit=limit,
-    )
-    names = await _workflow_names()
-    executions = [
-        RunListItem(
-            id=execution.id,
-            workflow_id=execution.workflow_id,
-            workflow_name=names.get(
-                execution.workflow_id,
-                _fallback_workflow_name(execution.workflow_id),
-            ),
-            status=_normalized_status(execution.status),
-            mode=execution.mode,
-            started_at=execution.started_at,
-            finished_at=execution.finished_at,
-            duration_ms=_duration_ms(execution.started_at, execution.finished_at),
+    owned_ids: set[str] | None = None
+    if _ownership_value(n8n) == "shared_dev":
+        owned_ids = await _owned_workflow_ids(user_id)
+        if workflow_id and workflow_id not in owned_ids:
+            return RunPage(executions=[], next_cursor=None)
+    names = await _workflow_names(n8n)
+    next_cursor = cursor
+    collected: list[RunListItem] = []
+    while len(collected) < limit:
+        page = await n8n.list_executions_page(
+            workflow_id=workflow_id,
+            status=status,
+            cursor=next_cursor,
+            limit=limit,
         )
-        for execution in page.executions
-    ]
-    return RunPage(executions=executions, next_cursor=page.next_cursor)
+        filtered_on_page = False
+        for execution in page.executions:
+            if owned_ids is not None and execution.workflow_id not in owned_ids:
+                filtered_on_page = True
+                continue
+            collected.append(
+                RunListItem(
+                    id=execution.id,
+                    workflow_id=execution.workflow_id,
+                    workflow_name=names.get(
+                        execution.workflow_id,
+                        _fallback_workflow_name(execution.workflow_id),
+                    ),
+                    status=_normalized_status(execution.status),
+                    mode=execution.mode,
+                    started_at=execution.started_at,
+                    finished_at=execution.finished_at,
+                    duration_ms=_duration_ms(execution.started_at, execution.finished_at),
+                )
+            )
+            if len(collected) >= limit:
+                break
+        next_cursor = page.next_cursor
+        if owned_ids is None or not filtered_on_page or len(collected) >= limit or not next_cursor:
+            break
+    return RunPage(executions=collected[:limit], next_cursor=next_cursor)
 
 
-async def get_run(user_id: str, execution_id: str) -> RunDetail:
+async def get_run(user_id: str, execution_id: str, *, n8n=n8n_client) -> RunDetail:
     """Return one sanitized execution detail without raw run/output data."""
 
     # Local import avoids a module cycle when the agent tool factory imports
@@ -192,7 +219,7 @@ async def get_run(user_id: str, execution_id: str) -> RunDetail:
     if not user_id:
         raise ValueError("user_id is required")
     try:
-        raw = await n8n_client.get_execution_detail(execution_id)
+        raw = await n8n.get_execution_detail(execution_id)
     except n8n_client.N8nApiError as exc:
         if exc.status_code == 404:
             raise ExecutionNotFoundError(execution_id) from exc
@@ -204,15 +231,20 @@ async def get_run(user_id: str, execution_id: str) -> RunDetail:
         or (workflow_data.get("id") if isinstance(workflow_data, dict) else "")
         or ""
     )
+    if _ownership_value(n8n) == "shared_dev" and workflow_id not in await _owned_workflow_ids(
+        user_id
+    ):
+        raise ExecutionNotFoundError(execution_id)
     workflow_name = None
     if isinstance(workflow_data, dict):
         workflow_name = _safe_text(workflow_data.get("name"), max_chars=200)
     if not workflow_name:
-        workflow_name = (await _workflow_names()).get(workflow_id)
+        workflow_name = (await _workflow_names(n8n)).get(workflow_id)
 
     workflow_context, context_source = await _execution_workflow_context(
         raw,
         workflow_id=workflow_id,
+        n8n=n8n,
     )
     summary = _summarize_execution(
         raw,
@@ -247,7 +279,12 @@ async def get_run(user_id: str, execution_id: str) -> RunDetail:
     )
 
 
-async def inspect_run(user_id: str, execution_id: str) -> WorkflowRunResultData:
+async def inspect_run(
+    user_id: str,
+    execution_id: str,
+    *,
+    n8n=n8n_client,
+) -> WorkflowRunResultData:
     """Return the richer agent-only execution summary behind the same provider boundary.
 
     Public HTTP routes deliberately use :func:`get_run`; this result may contain
@@ -258,7 +295,7 @@ async def inspect_run(user_id: str, execution_id: str) -> WorkflowRunResultData:
     if not user_id:
         raise ValueError("user_id is required")
     try:
-        raw = await n8n_client.get_execution_detail(execution_id)
+        raw = await n8n.get_execution_detail(execution_id)
     except n8n_client.N8nApiError as exc:
         if exc.status_code == 404:
             raise ExecutionNotFoundError(execution_id) from exc
@@ -269,9 +306,14 @@ async def inspect_run(user_id: str, execution_id: str) -> WorkflowRunResultData:
         or (workflow_data.get("id") if isinstance(workflow_data, dict) else "")
         or ""
     )
+    if _ownership_value(n8n) == "shared_dev" and workflow_id not in await _owned_workflow_ids(
+        user_id
+    ):
+        raise ExecutionNotFoundError(execution_id)
     workflow_context, context_source = await _execution_workflow_context(
         raw,
         workflow_id=workflow_id,
+        n8n=n8n,
     )
     result = _summarize_execution(
         raw,
@@ -287,7 +329,11 @@ async def inspect_run(user_id: str, execution_id: str) -> WorkflowRunResultData:
     try:
         await store.save_execution_evidence(
             user_id,
-            execution_evidence_envelope(result, source="execution_inspect"),
+            execution_evidence_envelope(
+                result,
+                source="execution_inspect",
+                instance_id=str(getattr(n8n, "instance_id", "") or "") or None,
+            ),
         )
     except Exception as exc:
         log.warning(

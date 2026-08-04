@@ -30,6 +30,30 @@ _LIST_CREDENTIALS_INSTRUCTION = (
     "This only lists credentials saved in Conduut's custom/service API credential library. "
     "It does not show managed Connected services such as Google Gmail or Google Sheets."
 )
+
+
+def _deps_instance_id(deps: AgentDeps) -> str:
+    return str(getattr(getattr(deps.n8n_context, "target", None), "instance_id", "") or "")
+
+
+async def _list_credentials_for_deps(deps: AgentDeps):
+    instance_id = _deps_instance_id(deps)
+    if instance_id:
+        return await store.list_custom_credentials(deps.user_id, instance_id=instance_id)
+    return await store.list_custom_credentials(deps.user_id)
+
+
+async def _get_credential_for_deps(deps: AgentDeps, credential_id: str):
+    instance_id = _deps_instance_id(deps)
+    if instance_id:
+        return await store.get_custom_credential(
+            deps.user_id,
+            credential_id,
+            instance_id=instance_id,
+        )
+    return await store.get_custom_credential(deps.user_id, credential_id)
+
+
 _SECRET_FIELD_LABELS = {
     "key": "API key / token",
     "value": "API key",
@@ -111,7 +135,7 @@ async def list_credentials_payload(
     matches (predefined service nodes, e.g. openAiApi).
     """
 
-    credentials = await store.list_custom_credentials(deps.user_id)
+    credentials = await _list_credentials_for_deps(deps)
     matched_ids = {c.id for c in match_credentials(url, credentials)} if url else set()
     type_ids = (
         {c.id for c in match_credentials_by_type(credential_type, credentials)}
@@ -156,7 +180,7 @@ async def attach_credential_payload(
     so n8n actually uses the credential.
     """
 
-    credential = await store.get_custom_credential(deps.user_id, credential_id)
+    credential = await _get_credential_for_deps(deps, credential_id)
     if not credential:
         return {"error": "Credential not found for this user."}
     try:
@@ -165,7 +189,8 @@ async def attach_credential_payload(
             if is_supported_http_type(credential.credential_type)
             else None
         )
-        await n8n_client.attach_credential_to_workflow(
+        n8n = deps.n8n or n8n_client
+        await n8n.attach_credential_to_workflow(
             workflow_id,
             node_name,
             credential.credential_type,
@@ -209,7 +234,7 @@ async def prepare_api_credential_payload(
     """
 
     host = normalize_host(api_or_url)
-    credentials = await store.list_custom_credentials(deps.user_id)
+    credentials = await _list_credentials_for_deps(deps)
     if host:
         for credential in credentials:
             if credential.status == "ready" and normalize_host(credential.host) == host:
@@ -255,17 +280,23 @@ async def prepare_api_credential_payload(
 
     secret_fields = result.secret_fields or _DEFAULT_SECRET_FIELDS.get(credential_type, ["key"])
     label = f"{host or api_or_url}".strip() or "API"
+    save_kwargs = {
+        "label": label,
+        "credential_type": credential_type,
+        "host": host or "",
+        "auth_config": {"field_name": result.field_name, "value_prefix": result.value_prefix},
+        "secret_fields": secret_fields,
+        "source_url": result.source_url,
+        "confidence": result.confidence,
+        "pending_workflow_id": workflow_id or "",
+        "pending_node_name": node_name or "",
+    }
+    instance_id = _deps_instance_id(deps)
+    if instance_id:
+        save_kwargs["instance_id"] = instance_id
     draft = await store.save_draft_credential(
         deps.user_id,
-        label=label,
-        credential_type=credential_type,
-        host=host or "",
-        auth_config={"field_name": result.field_name, "value_prefix": result.value_prefix},
-        secret_fields=secret_fields,
-        source_url=result.source_url,
-        confidence=result.confidence,
-        pending_workflow_id=workflow_id or "",
-        pending_node_name=node_name or "",
+        **save_kwargs,
     )
     log.info(
         "credential_draft_prepared",

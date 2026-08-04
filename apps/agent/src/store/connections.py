@@ -15,6 +15,8 @@ class OAuthState:
     return_to: str
     expires_at: str
     used: bool
+    instance_id: str = ""
+    ownership: str = ""
     requested_capabilities: list[str] = field(default_factory=list)
     permission_pack: str | None = None
 
@@ -33,14 +35,16 @@ class AppConnection:
     scopes: list[str]
     created_at: str
     updated_at: str
+    instance_id: str = ""
     capabilities: list[str] = field(default_factory=list)
     permission_packs: list[str] = field(default_factory=list)
     direct_api_enabled: bool = False
     encrypted_refresh_token: str = ""
 
 
-def _connection_ref(user_id: str, connection_id: str):
-    return _pkg_store._user_ref(user_id).collection("connections").document(connection_id)
+def _connection_ref(user_id: str, connection_id: str, instance_id: str = ""):
+    document_id = f"{instance_id}--{connection_id}" if instance_id else connection_id
+    return _pkg_store._user_ref(user_id).collection("connections").document(document_id)
 
 
 def _oauth_state_ref(state_id: str):
@@ -58,6 +62,8 @@ async def save_oauth_state(
     expires_at: str,
     requested_capabilities: list[str] | None = None,
     permission_pack: str | None = None,
+    instance_id: str = "",
+    ownership: str = "",
 ) -> OAuthState:
     data = {
         "user_id": user_id,
@@ -67,6 +73,8 @@ async def save_oauth_state(
         "return_to": return_to,
         "expires_at": expires_at,
         "used": False,
+        "instance_id": instance_id,
+        "ownership": ownership,
         "requested_capabilities": requested_capabilities or [],
         "permission_pack": permission_pack,
     }
@@ -88,6 +96,8 @@ async def get_oauth_state(state_id: str) -> OAuthState | None:
         return_to=data.get("return_to", "/dashboard/connections"),
         expires_at=data.get("expires_at", ""),
         used=bool(data.get("used", False)),
+        instance_id=str(data.get("instance_id") or ""),
+        ownership=str(data.get("ownership") or ""),
         requested_capabilities=list(data.get("requested_capabilities") or []),
         permission_pack=data.get("permission_pack"),
     )
@@ -99,13 +109,27 @@ async def mark_oauth_state_used(state_id: str) -> None:
     )
 
 
-async def get_connection(user_id: str, connection_id: str) -> AppConnection | None:
-    doc = await _pkg_store._run(lambda: _connection_ref(user_id, connection_id).get())
+async def get_connection(
+    user_id: str,
+    connection_id: str,
+    *,
+    instance_id: str | None = None,
+) -> AppConnection | None:
+    resolved_instance_id = instance_id
+    if resolved_instance_id is None:
+        active = await _pkg_store.get_active_n8n_instance(user_id)
+        resolved_instance_id = active.id if active is not None else ""
+    storage_instance_id = "" if resolved_instance_id == "shared_dev" else resolved_instance_id
+    doc = await _pkg_store._run(
+        lambda: _connection_ref(user_id, connection_id, storage_instance_id or "").get()
+    )
+    if not doc.exists and resolved_instance_id == "shared_dev":
+        doc = await _pkg_store._run(lambda: _connection_ref(user_id, connection_id).get())
     if not doc.exists:
         return None
     data = doc.to_dict() or {}
-    return AppConnection(
-        id=doc.id,
+    connection = AppConnection(
+        id=str(data.get("connection_id") or connection_id),
         provider=data.get("provider", ""),
         service=data.get("service", ""),
         account_email=data.get("account_email", ""),
@@ -117,14 +141,26 @@ async def get_connection(user_id: str, connection_id: str) -> AppConnection | No
         scopes=list(data.get("scopes") or []),
         created_at=data.get("created_at", ""),
         updated_at=data.get("updated_at", ""),
+        instance_id=str(data.get("instance_id") or ""),
         capabilities=list(data.get("capabilities") or []),
         permission_packs=list(data.get("permission_packs") or []),
         direct_api_enabled=bool(data.get("direct_api_enabled", False)),
         encrypted_refresh_token=str(data.get("encrypted_refresh_token") or ""),
     )
+    if (
+        resolved_instance_id is not None
+        and connection.instance_id != resolved_instance_id
+        and not (resolved_instance_id == "shared_dev" and not connection.instance_id)
+    ):
+        return None
+    return connection
 
 
-async def list_connections(user_id: str) -> list[AppConnection]:
+async def list_connections(
+    user_id: str,
+    *,
+    instance_id: str | None = None,
+) -> list[AppConnection]:
     docs = await _pkg_store._run(
         lambda: list(_pkg_store._user_ref(user_id).collection("connections").stream())
     )
@@ -133,7 +169,7 @@ async def list_connections(user_id: str) -> list[AppConnection]:
         data = doc.to_dict() or {}
         connections.append(
             AppConnection(
-                id=doc.id,
+                id=str(data.get("connection_id") or doc.id),
                 provider=data.get("provider", ""),
                 service=data.get("service", ""),
                 account_email=data.get("account_email", ""),
@@ -145,12 +181,20 @@ async def list_connections(user_id: str) -> list[AppConnection]:
                 scopes=list(data.get("scopes") or []),
                 created_at=data.get("created_at", ""),
                 updated_at=data.get("updated_at", ""),
+                instance_id=str(data.get("instance_id") or ""),
                 capabilities=list(data.get("capabilities") or []),
                 permission_packs=list(data.get("permission_packs") or []),
                 direct_api_enabled=bool(data.get("direct_api_enabled", False)),
                 encrypted_refresh_token=str(data.get("encrypted_refresh_token") or ""),
             )
         )
+    if instance_id is not None:
+        connections = [
+            item
+            for item in connections
+            if item.instance_id == instance_id
+            or (instance_id == "shared_dev" and not item.instance_id)
+        ]
     return connections
 
 
@@ -170,11 +214,18 @@ async def save_connection(
     permission_packs: list[str] | None = None,
     direct_api_enabled: bool = False,
     encrypted_refresh_token: str = "",
+    instance_id: str = "",
 ) -> AppConnection:
-    existing = await get_connection(user_id, connection_id)
+    lookup_instance_id = instance_id or "shared_dev"
+    existing = await get_connection(
+        user_id,
+        connection_id,
+        instance_id=lookup_instance_id,
+    )
     now = _pkg_store._now_iso()
     data = {
         "provider": provider,
+        "connection_id": connection_id,
         "service": service,
         "account_email": account_email,
         "google_sub": google_sub,
@@ -187,18 +238,33 @@ async def save_connection(
         "permission_packs": permission_packs or [],
         "direct_api_enabled": direct_api_enabled,
         "encrypted_refresh_token": encrypted_refresh_token,
+        "instance_id": instance_id,
         "created_at": existing.created_at if existing else now,
         "updated_at": now,
     }
-    await _pkg_store._run(lambda: _connection_ref(user_id, connection_id).set(data))
-    return AppConnection(id=connection_id, **data)
+    storage_instance_id = "" if lookup_instance_id == "shared_dev" else lookup_instance_id
+    await _pkg_store._run(
+        lambda: _connection_ref(user_id, connection_id, storage_instance_id).set(data)
+    )
+    return AppConnection(
+        id=connection_id,
+        **{key: value for key, value in data.items() if key != "connection_id"},
+    )
 
 
-async def delete_connection(user_id: str, connection_id: str) -> AppConnection | None:
-    existing = await get_connection(user_id, connection_id)
+async def delete_connection(
+    user_id: str,
+    connection_id: str,
+    *,
+    instance_id: str | None = None,
+) -> AppConnection | None:
+    existing = await get_connection(user_id, connection_id, instance_id=instance_id)
     if existing is None:
         return None
-    await _pkg_store._run(lambda: _connection_ref(user_id, connection_id).delete())
+    storage_instance_id = "" if instance_id in (None, "shared_dev") else instance_id
+    await _pkg_store._run(
+        lambda: _connection_ref(user_id, connection_id, storage_instance_id or "").delete()
+    )
     return existing
 
 

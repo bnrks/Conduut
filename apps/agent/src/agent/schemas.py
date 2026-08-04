@@ -213,6 +213,18 @@ class OAuthPromptAttachment(BaseModel):
     data: OAuthPromptData
 
 
+class N8nConnectionPromptData(BaseModel):
+    action: Literal["connect"] = "connect"
+    title: str = "Connect your n8n instance"
+    description: str
+    connectPath: str = "/dashboard/n8n"
+
+
+class N8nConnectionPromptAttachment(BaseModel):
+    type: Literal["n8n_connection_prompt"] = "n8n_connection_prompt"
+    data: N8nConnectionPromptData
+
+
 class UserInputChoice(BaseModel):
     label: str
     value: str | None = None
@@ -363,6 +375,7 @@ class WorkflowRunAssessment(BaseModel):
 
 class ExecutionEvidenceEnvelope(BaseModel):
     source: Literal["workflow_run", "execution_inspect"]
+    instanceId: str | None = None
     workflowId: str
     executionId: str | None = None
     workflowFingerprint: str | None = None
@@ -430,6 +443,7 @@ AgentAttachment = (
     | ArtifactPreviewAttachment
     | CredentialRequestAttachment
     | OAuthPromptAttachment
+    | N8nConnectionPromptAttachment
     | UserInputRequestAttachment
 )
 
@@ -446,6 +460,9 @@ class AgentDeps:
     event_queue: asyncio.Queue[AgentEvent]
     execution_policy: Literal["safe", "fast"] = "safe"
     attempt_id: str | None = None
+    n8n_context: Any = None
+    n8n: Any = None
+    n8n_error: Exception | None = None
     attachments: list[dict[str, Any]] = field(default_factory=list)
     platform_resources: dict[str, dict[str, Any]] = field(default_factory=dict)
     awaiting_user_input: bool = False

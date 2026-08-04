@@ -120,6 +120,7 @@ async def preview_workflow_run(
     conversation_id: str | None = None,
     execution_policy: ExecutionPolicy = "safe",
     issue_token: bool = True,
+    instance_id: str = "",
 ) -> dict[str, Any]:
     workflow_id = str(workflow.get("id") or "")
     fingerprint = workflow_fingerprint(workflow)
@@ -131,7 +132,11 @@ async def preview_workflow_run(
         "preview_basis": preview_basis_for_policy(policy),
     }
     if preview_requires_sandbox(policy):
-        metadata = await store.get_workflow_metadata(user_id, workflow_id)
+        metadata = (
+            await store.get_workflow_metadata(user_id, workflow_id, instance_id=instance_id)
+            if instance_id
+            else await store.get_workflow_metadata(user_id, workflow_id)
+        )
         input_schema = _workflow_input_schema_from_metadata(metadata)
         result = await run_sandbox_test(
             workflow,
@@ -179,6 +184,7 @@ async def preview_workflow_run(
         conversation_id=conversation_id,
         execution_policy=policy,
         preview_basis=preview_basis_for_policy(policy),
+        instance_id=instance_id,
     )
     payload["preview_token"] = preview.token
     payload["expires_at"] = preview.expires_at
@@ -193,12 +199,18 @@ async def consume_workflow_preview(
     preview_token: str | None,
     conversation_id: str | None = None,
     execution_policy: ExecutionPolicy = "safe",
+    instance_id: str = "",
 ) -> bool:
     if not workflow_requires_preview(workflow):
         return True
     if not preview_token:
         return False
-    metadata = await store.get_workflow_metadata(user_id, str(workflow.get("id") or ""))
+    workflow_id = str(workflow.get("id") or "")
+    metadata = (
+        await store.get_workflow_metadata(user_id, workflow_id, instance_id=instance_id)
+        if instance_id
+        else await store.get_workflow_metadata(user_id, workflow_id)
+    )
     input_schema = _workflow_input_schema_from_metadata(metadata)
     rows = input_payload.get("rows") if isinstance(input_payload, dict) else None
     if isinstance(rows, list):
@@ -228,6 +240,7 @@ async def consume_workflow_preview(
         conversation_id=conversation_id,
         execution_policy=normalize_execution_policy(execution_policy),
         preview_basis=preview_basis_for_policy(normalize_execution_policy(execution_policy)),
+        instance_id=instance_id,
     )
     return preview is not None
 
@@ -239,6 +252,7 @@ async def preview_workflow_batch(
     rows: list[dict[str, Any]],
     conversation_id: str | None = None,
     execution_policy: ExecutionPolicy = "safe",
+    instance_id: str = "",
 ) -> dict[str, Any]:
     """Probe every batch row without side effects and issue one aggregate approval."""
 
@@ -247,7 +261,11 @@ async def preview_workflow_batch(
         raise ValueError("Fast execution policy is not supported for batch previews in V1.")
     workflow_id = str(workflow.get("id") or "")
     fingerprint = workflow_fingerprint(workflow)
-    metadata = await store.get_workflow_metadata(user_id, workflow_id)
+    metadata = (
+        await store.get_workflow_metadata(user_id, workflow_id, instance_id=instance_id)
+        if instance_id
+        else await store.get_workflow_metadata(user_id, workflow_id)
+    )
     input_schema = _workflow_input_schema_from_metadata(metadata)
     findings: list[str] = []
     actions: list[dict[str, Any]] = []
@@ -314,6 +332,7 @@ async def preview_workflow_batch(
         conversation_id=conversation_id,
         execution_policy=policy,
         preview_basis=preview_basis_for_policy(policy),
+        instance_id=instance_id,
     )
     payload["preview_token"] = preview.token
     payload["expires_at"] = preview.expires_at
