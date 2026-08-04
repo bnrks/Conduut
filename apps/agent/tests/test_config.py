@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from src.config import (
+    Settings,
     _find_repo_root,
     canonical_n8n_version,
     key_for_provider,
@@ -67,6 +68,15 @@ def test_registry_n8n_url_falls_back_to_n8n_url(monkeypatch):
     monkeypatch.setattr(settings, "n8n_registry_url", "")
     monkeypatch.setattr(settings, "n8n_url", "http://localhost:6180")
     assert registry_n8n_url() == "http://localhost:6180"
+
+
+def test_settings_accepts_scoped_shared_dev_n8n_api_key(monkeypatch):
+    monkeypatch.setenv("CONDUUT_DEV_SHARED_N8N_API_KEY", "dev-key")
+    monkeypatch.delenv("CONDUUT_N8N_API_KEY", raising=False)
+
+    loaded = Settings(_env_file=None)
+
+    assert loaded.n8n_api_key == "dev-key"
 
 
 def test_canonical_n8n_version_reads_registry_manifest(tmp_path, monkeypatch):
