@@ -710,14 +710,20 @@ tarafindan ignore edilir.
 
 ## n8n Client
 
-`src/n8n_client.py` tek shared n8n instance REST API'siyle konusur. Workflow,
-credential create/delete/attach ve execution islemlerinde n8n hata body'lerini
-koruyan typed hata sinifi kullanir. Bu MVP davranisi
-[[adr-0001-shared-n8n-mvp]] icinde kayitlidir. Google Gmail connection karari
-[[adr-0003-google-oauth-broker-mvp]] icinde, platform capability katmani ise
-[[adr-0006-platform-capability-layer]] icinde kayitlidir.
+`src/n8n_client.py` instance-scoped `N8nClient` ile target'in base/webhook URL
+ve API key'ini kullanir. `N8nInstanceResolver` authenticated `user_id` icin
+aktif Firestore instance metadata'sini ve Secret Manager secret'ini cozer;
+`N8nClientFactory` ayni request context'ini route, agent tools, readiness,
+executions, sandbox ve platform state boyunca tasir. Shared global facade yalniz
+`shared_dev` geriye uyumluluk/test adapter'idir. Production resolver hatasinda
+shared fallback yoktur.
 
-2026-07-18 itibariyla workflow yazmalari `workflow_id` bazli ortak mutation
+Connect preflight ve her kritik transport, `src/n8n_security.py` uzerinden
+HTTPS/public-address kontrolu ve yeniden DNS cozumleme yapar; redirect izlemez.
+Canonical surum bundled registry manifest'indeki `1.121.3` ile eslesmelidir.
+Provider/secret/transport hatalari public typed detail contract'ina cevrilir.
+
+2026-08-03 itibariyla workflow yazmalari `(instance_id, workflow_id)` bazli ortak mutation
 primitive'inden gecer. Ayni agent process'i icinde ayni workflow'a eszamanli
 read-modify-write islemleri siralanir; farkli workflow'lar birbirini bekletmez.
 Normal `update_workflow` mevcut node `id` degerlerini ve credential baglarini
@@ -730,12 +736,12 @@ dedupe oldugunda da gecerlidir; eksik connections mevcut branched grafi lineer
 olarak yeniden kurmaz. Credential attach, committed n8n sonucunda istenen bagin
 gercekten bulundugunu; generic HTTP auth icin ayrica
 `authentication=genericCredentialType` ve dogru `genericAuthType` wiring'ini
-dogrulamadan basari donmez. Lock process-local'dir; gelecekte coklu agent replica
-veya dis n8n editor yazarlari icin distributed/optimistic concurrency ayrica
-gerekecektir.
+dogrulamadan basari donmez. Lock process-local'dir. Gelecekte coklu agent replica veya
+kullanicinin kendi n8n editor yazarlari icin distributed/optimistic concurrency
+ve drift tespiti ayrica gerekecektir.
 
 Ilgili notlar: [[n8n-registry]], [[chat-workflow-generation]],
-[[known-issues]].
+[[known-issues]], [[customer-owned-n8n]].
 
 ## Workflow Assurance V1 (2026-07-16)
 

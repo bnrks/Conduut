@@ -104,10 +104,12 @@ fields)` eklendi: n8n alanlarina gore duz-dil etiket olusturur. Chat karti
 - OAuth2 predefined tipler (Google, Slack OAuth, GitHub OAuth) dashboardda **gorunmez**;
   o tipler ADR-0003 / ADR-0006 kapsaminda kalir (Connections = servise n8n-disi
   dogrudan erisim, degismez).
-- Per-user container getirildiginde (ADR-0001 -> kontrol katmani) bu metadata->
-  credential haritas dogal olarak per-container store'a tasinir.
-- Shared n8n MVP'de type-matched credential tum kullanicilarin n8n'inde yaratilir;
-  per-user container oncesinde Firestore uid izolasyonu gecerli.
+- Customer-owned n8n gecisinde metadata->credential haritasi `instance_id` ile
+  scope edilir ve credential resolver'in sectigi kullanici n8n'inde yaratilir
+  ([[adr-0022-customer-owned-n8n]]).
+- Shared n8n MVP'de type-matched credential ayni n8n instance'inda yaratilir;
+  bu production izolasyonu degildir. BYO cutover oncesi Firestore uid metadata
+  izolasyonu tek basina yeterli kabul edilmez.
 - Tam test paketi: 336 backend birim testi gecti; frontend lint + tsc temiz.
   Canli uc-tan-uca dogrulama BEKLIYOR (manuel, task-12 Step 4).
 
@@ -169,3 +171,4 @@ merge hazır. Canlı uçtan-uca doğrulama BEKLIYOR (manuel). Spec/plan: `.super
   servislerin (Gmail/Sheets) ayrimi.
 - [[agent-service]] - agent mimarisi ve tool listesi.
 - [[known-issues]] - canli dogrulama bekleyen senaryolar.
+- [[customer-owned-n8n]] - BYO versioned registry ve credential instance scope.

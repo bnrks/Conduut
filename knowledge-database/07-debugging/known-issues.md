@@ -762,9 +762,12 @@ task olarak ele alinmali.
 
 ## Hardcoded Dev n8n Key
 
-`docker-compose.yml` icinde dev n8n API key/JWT benzeri degerler var. Lokal MVP
-icin kullaniliyor olabilir, fakat production icin uygun degil. Production'a
-gidilmeden once env/secret yonetimine alinmali.
+Kodda cozuldu (2026-08-03): tracked dev n8n API key/JWT literal'i
+`docker-compose.yml`, `start-local-dev.bat` ve local agent allow-list'inden
+kaldirildi. Local shared-dev anahtari untracked `.env` icindeki
+`CONDUUT_DEV_SHARED_N8N_API_KEY` ile verilir. Operasyonel takip: eski anahtar
+gercek n8n arayuzunden rotate/iptal edilmelidir; git degisikligi tek basina
+credential'i gecersiz kilmaz.
 
 ## Windows Port 8000 Exclusion
 
@@ -811,21 +814,34 @@ production guvenlik riskiydi.)
 
 Workflow credential metadata'si da Firestore'da tutuluyor; secret degerleri
 n8n credential store'a yaziliyor. Yine de gercek production icin Vault/Secret
-Manager ve per-user isolation gerekir.
+Manager, customer-owned n8n resolver ve instance-scoped ownership gerekir
+([[customer-owned-n8n]]).
 
 Google Gmail connection flow'u raw Google access/refresh token'i Firestore'a
 yazmaz; token data n8n `gmailOAuth2` credential store icinde kalir. n8n public
 API `gmailOAuth2` credential create icin `oauthTokenData` disinda `serverUrl`,
 `sendAdditionalBodyProperties` ve `additionalBodyProperties` alanlarini da
 ister. Buna ragmen shared n8n instance nedeniyle production izolasyonu
-sayilmaz. Public production icin per-user n8n veya secret isolation ve Google
-sensitive scope verification ayri ele alinmali.
+sayilmaz. Public production icin [[adr-0022-customer-owned-n8n]] BYO cutover'i,
+secret isolation ve Google sensitive scope verification ayri ele alinmali.
 
 ## Shared n8n Ownership Gap
 
-Workflow routes shared n8n instance uzerinden tum workflow'lari listeler ve user
-ownership filtrelemesi yapmaz. Bu [[adr-0001-shared-n8n-mvp]] kararinin dogrudan
-sonucudur.
+Kodda cozuldu (2026-08-03): production `customer_owned` resolver authenticated
+user'i yalniz aktif instance'ina cozer; workflow/credential/execution zinciri
+instance context tasir ve mutation lock `(instance_id, workflow_id)` ile
+ayrilir. Resolver hatasinda shared n8n fallback testi vardir. Shared listeleme
+yalniz `shared_dev` local MVP adapter'inda bilincli olarak korunur
+([[customer-owned-n8n]]).
+
+2026-08-03 final review takibi: credential submit/finalize attach yolunun
+adoption/drift guard'ini atlamasi, target'a zaten bagli credential/connection'in
+migration tarafindan legacy sayilmasi, Google connection dokumaninin instance
+degisiminde overwrite edilmesi ve DNS validation-connect TOCTOU penceresi kod ve
+regresyon testleriyle kapatildi. Uzak credential attach basarili olduktan sonra
+baseline metadata yazimi hata verirse route artik yanlis `400` dondurmez;
+`workflow_sync_status=needs_reconcile` ile basarili sonucu ve gerekli
+reconciliation durumunu ayirir.
 
 ## Credential Prompt After Workflow Create
 
@@ -1081,15 +1097,15 @@ Canli dogrulandi: throwaway workflow'da `openAiApi` -> `nk5cJsBDTXOt7134`
 ("OpenAi account") otomatik baglandi. Testler: `test_readiness.py` (4). Boylece
 agent-kurdugu AI workflow'lari elle credential baglamadan calisiyor.
 
-**Hala bekleyen (tam cozum):** per-user container + kullanici credential saklama
-gelince broker'a evrilecek (kullanicinin kendi sakladigi API key'ini kendi
-container'ina enjekte). _(Not 2026-06-30: eski BYO `ProviderConnection` modeli
-[[adr-0011-conduut-managed-tiered-models]] ile kaldirildi; bu pending kalem artik
-per-user-container faza ait kullanici credential saklamaya bagli, kaldirilan BYO
-koduna degil.)_ Secenekler: (A) credential broker'i API-key'lere genislet,
-(B) app provider key'ini n8n'e enjekte et, (C) n8n OpenAI node yerine Conduut LLM
-katmani. Bkz. [[issue-backlog]]; per-user container + credential saklama Claude
-memory'sinde (`per-user-container-credentials`).
+**Hala bekleyen (tam cozum):** [[adr-0022-customer-owned-n8n]] cutover'inda
+kullanicinin workflow credential'i resolver'in sectigi kendi n8n instance'ina
+enjekte edilmeli ve metadata `instance_id` ile scope edilmelidir. _(Not
+2026-06-30: eski BYO LLM `ProviderConnection` modeli
+[[adr-0011-conduut-managed-tiered-models]] ile kaldirildi; 2026-08-03 BYO n8n
+karari bundan farkli bir provider siniridir.)_ Secenekler: (A) credential
+broker'i API-key'lere genislet, (B) kullanicinin workflow-specific key'ini kendi
+n8n'ine enjekte et, (C) n8n OpenAI node yerine Conduut LLM katmani. Bkz.
+[[issue-backlog]] ve [[customer-owned-n8n]].
 
 ## Markdown tablo dark tema hover kontrastı (2026-07-13, çözüldü)
 

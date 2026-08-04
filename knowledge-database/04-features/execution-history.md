@@ -2,8 +2,9 @@
 
 Merkez: [[index]]
 
-`/dashboard/runs`, shared n8n'deki gercek workflow execution gecmisini gosteren
-Runs V1 ekranidir. Kaynak n8n'dir; Firestore'da ikinci bir execution kopyasi
+`/dashboard/runs`, authenticated kullanicinin aktif provider target'indaki gercek
+workflow execution gecmisini gosteren Runs V1 ekranidir. Kaynak n8n'dir;
+Firestore'da ikinci bir execution kopyasi
 tutulmaz. Bu nedenle Conduut dashboard'dan baslatilan run'lara ek olarak schedule,
 webhook ve diger external trigger run'lari da n8n retention penceresi icinde
 gorunur.
@@ -20,9 +21,10 @@ gorunur.
   contract'ina girmez.
 - Agent `inspect_execution`, ayni service sinirindaki agent-only bounded
   response/output preview'ini kullanir; bu zengin DTO HTTP route'larina baglanmaz.
-- `src/executions.py`, route ve agent tool'larinin ortak siniridir. Public
-  fonksiyonlar `user_id` ister; MVP'de shared client'a gider, production oncesi
-  per-user n8n resolver burada devreye alinacaktir.
+- `src/executions.py`, route ve agent tool'larinin ortak siniridir. Route bir
+  `N8nRequestContext` cozer ve ayni instance-scoped client'i kullanir. Execution
+  evidence internal olarak `instance_id` tasir; browser yalniz sanitize
+  contract'i gorur. Customer-owned modda target yoksa shared fallback yapilmaz.
 
 ## Dashboard
 
@@ -58,5 +60,9 @@ Docker Compose success/error execution data kaydini, pruning'i, varsayilan 30 gu
 Runs V1 retry/replay, execution delete, raw JSON download, billing usage ve direct
 platform action history'sini kapsamaz.
 
+Legacy migration yalniz son 30 gun/en fazla 10.000 execution icin status,
+timing ve redakte hata ozeti arsivler; raw input/output kopyalanmaz.
+
 Karar: [[adr-0018-execution-history-mvp]]. Ilgili: [[dashboard]],
-[[agent-service]], [[system-architecture]], [[adr-0001-shared-n8n-mvp]].
+[[agent-service]], [[system-architecture]], [[customer-owned-n8n]],
+[[adr-0001-shared-n8n-mvp]].

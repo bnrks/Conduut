@@ -131,6 +131,9 @@ detay paneli vardir. Hata detayindaki `Fix with Conduut`, exact execution id'yi
 structured chat handoff'uyla agente tasir. Ayrinti: [[execution-history]].
 
 MVP siniri: shared n8n nedeniyle workflow'lar user ownership ile filtrelenmez.
+BYO hedefinde Runs BFF contract'i korunur; backend authenticated user'i
+customer-owned n8n instance'a cozer ve liste/detail islemlerini yalniz o
+instance'ta yapar ([[customer-owned-n8n]]).
 
 ## Artifacts
 
@@ -236,17 +239,29 @@ gecmisi `/dashboard/runs` altinda kalir ([[execution-history]]).
 
 ## Settings
 
-`/dashboard/settings` dort tab icerir:
+`/dashboard/settings` bes tab icerir:
 
 - Profile: UI var, kaydetme backend'e bagli degil.
 - Security: UI var, password update backend'e bagli degil.
 - Preferences: theme local behavior var, email notification kaydi yok.
 - Assistant Connections: gercek LLM provider ekleme/listeleme/dogrulama akisi
   vardir.
+- Automation Server: customer-owned n8n connect formu, provider-independent
+  yeni kurulum rehberi, canonical version/health, stored-key check, key rotation
+  ve uzak n8n verisini silmeyen disconnect aksiyonlarini sunar.
+
+Next.js 16 route segment ayarlari statik analiz edildigi icin BYO BFF
+route'larinin `dynamic` ve `runtime` degerleri her `route.ts` icinde literal
+olarak export edilir; ortak helper'dan re-export edilmez.
 
 Assistant Connections, Firestore'daki provider ve LLM settings dokumanlarini
 kullanir. API key saklama sekli MVP icin yeterli kabul edilmis, production icin
 guvenli degildir.
+
+Chat, Workflows, Runs ve Credentials baglanti olmadan acilabilir. n8n gerektiren
+aksiyonlar Automation Server sekmesine yonlendiren soft gate gosterir; chat tool
+gereksiniminde `n8n_connection_prompt` attachment'i render eder. Metadata'siz
+remote workflow `External` ve read-only gorunur; `Adopt` sonrasinda yonetilir.
 
 Ilgili notlar: [[current-state]], [[chat-workflow-generation]],
 [[known-issues]].

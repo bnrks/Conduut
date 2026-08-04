@@ -127,6 +127,15 @@ CRUD: `save_draft_credential(...)`, `get_custom_credential` (mevcut, status okur
 - **Dashboard `/dashboard/credentials`:** taslaklar **"Tamamlanmamış"** rozetiyle
   + **"Tamamla"** butonu → secret formu → finalize. Mevcut liste + form genişler.
 
+**BYO tenancy uygulamasi (2026-08-03):** finalize oncesi draft'in authenticated
+`user_id` ile birlikte hedef `instance_id` ownership'i dogrulanir.
+`n8n_client.create_credential` global instance'a degil resolver'in sectigi
+customer-owned n8n'e gider; sonuc `n8n_credential_id` yalniz ayni
+`instance_id` icinde kullanilir. Target baglantisi yoksa veya draft baska
+instance'a aitse finalize fail-closed davranir; bu ownership kontrolu ve
+instance-scoped client V1 kodunda uygulanmistir. Bkz. [[customer-owned-n8n]] ve
+[[adr-0022-customer-owned-n8n]].
+
 ### 6. Conduut-farkındalığı (part 3)
 Büyük ölçüde prompt + taslak kartının/mesajının dili:
 - Agent: "X için **Header Auth** credential'ı hazırladım (kaynak: …). API anahtarını

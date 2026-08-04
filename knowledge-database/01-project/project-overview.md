@@ -23,13 +23,16 @@ azaltmayi hedefler.
 
 ## Urun Pozisyonu
 
-Kisa vadede Conduut bir MVP: kullanici Firebase ile giris yapar, LLM provider
-key'ini ekler, chat ekraninda agent ile konusur ve agent shared n8n instance
-uzerinde workflow olusturur.
+Bugun Conduut bir MVP: kullanici Firebase ile giris yapar, chat ekraninda
+Conduut-managed LLM agent ile konusur ve agent shared n8n instance uzerinde
+workflow olusturur.
 
-Uzun vadede hedef, her kullaniciya izole n8n container'i saglayan, OAuth
-credential akisini merkezi yoneten, usage/billing/monitoring iceren bir SaaS
-platformudur. Bkz. [[system-architecture]] ve `PROJECT.md`.
+Aktif production hedefi customer-owned n8n (BYO n8n) modelidir. Her kullanici
+kendi VPS/cloud hesabinda kendi n8n instance'ini satin alir ve yonetir;
+Conduut, iptal edilebilir public API erisimiyle AI workflow olusturma,
+dogrulama, calistirma ve izleme katmani olur. Managed per-user container modeli
+ertelenmistir. Bkz. [[customer-owned-n8n]],
+[[adr-0022-customer-owned-n8n]] ve [[system-architecture]].
 
 ## Marka Notlari
 
@@ -38,4 +41,5 @@ platformudur. Bkz. [[system-architecture]] ve `PROJECT.md`.
 - Ana renk: `#534AB7` Conduut Purple.
 - Tipografi: Inter; kod icin JetBrains Mono veya Geist Mono.
 
-Ilgili notlar: [[current-state]], [[dashboard]], [[chat-workflow-generation]].
+Ilgili notlar: [[current-state]], [[customer-owned-n8n]], [[dashboard]],
+[[chat-workflow-generation]].

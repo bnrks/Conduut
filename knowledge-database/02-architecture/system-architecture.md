@@ -2,7 +2,8 @@
 
 Merkez: [[index]]
 
-Conduut mimarisi iki katmanda dusunulmeli: mevcut MVP ve hedef platform.
+Conduut mimarisi iki provider modunda dusunulmeli: local gelistirme icin
+shared-n8n ve production icin customer-owned n8n (BYO).
 
 ## Mevcut MVP
 
@@ -43,25 +44,44 @@ process'ine aktarilir.
 token'i browser'dan Next API route'a, oradan agent servisine Authorization
 header olarak tasinir.
 
-## Hedef Platform
+## Hedef Platform: Customer-Owned n8n
 
-Uzun vadeli hedef, `PROJECT.md` icinde anlatilan cok servisli platformdur:
+Aktif production hedefinde her kullanici kendi VPS/cloud hesabinda kendi n8n
+instance'ini satin alir ve yonetir. Conduut n8n'i host etmez; authenticated
+`user_id` uzerinden kullanicinin HTTPS n8n origin'ini ve secret-store'daki API
+key referansini cozer, sonra public n8n API'sine tenant-scoped client ile
+baglanir.
 
-- Agent service.
-- Control plane.
-- OAuth proxy.
-- Her VPS uzerinde node-agent.
-- Her kullaniciya ayri n8n container.
-- PostgreSQL + pgvector, Redis, Vault, MinIO/S3.
-- Traefik, monitoring ve billing.
+```text
+Browser
+  -> Next.js BFF
+  -> FastAPI agent
+  -> N8nInstanceResolver(user_id)
+  -> Firestore instance metadata + secret store
+  -> customer's self-hosted n8n
+```
 
-Bu hedef henuz kodda yoktur. Yeni is planlanirken hedef mimariyle uyumlu
-olmak iyi, fakat mevcut MVP'nin gercek sinirlarini bozmamak daha onemlidir.
+V1'de uygulanan bilesenler:
+
+- Customer-owned n8n connect/deploy onboarding'i.
+- `N8nInstanceProvider` / `N8nTarget` / tenant-scoped client factory.
+- Firestore user-instance metadata ve production secret store.
+- HTTPS, SSRF, TLS, version ve capability preflight.
+- Instance-scoped workflow, credential, OAuth, sandbox ve execution lineage'i.
+- Remote health/diagnostics ve typed hata contract'i.
+
+Production deployment egress policy, iki public instance pilotu, billing ve
+monitoring halen operasyonel/urun takip maddeleridir.
+
+Control plane, node-agent ve Conduut-managed per-user container aktif hedeften
+ertelenmistir. `PROJECT.md` bu eski managed vizyonu tarihsel/deferred alternatif
+olarak korur. Ayrintili tasarim: [[customer-owned-n8n]]. Karar:
+[[adr-0022-customer-owned-n8n]].
 
 ## Ana Veri Akislari
 
-- Chat: [[web-app]] -> [[agent-service]] -> Pydantic AI tools -> direct
-  platform APIs veya shared n8n.
+- Chat: [[web-app]] -> [[agent-service]] -> request-scope target -> Pydantic AI
+  tools -> direct platform APIs veya secili n8n.
 - Conversation persistence: [[agent-service]] -> Firestore.
 - Workflow list/toggle/delete: [[web-app]] API route -> agent workflow route ->
   `n8n_client.py` -> n8n REST API.
@@ -79,7 +99,7 @@ olmak iyi, fakat mevcut MVP'nin gercek sinirlarini bozmamak daha onemlidir.
 - Workflow platform provisioning: [[agent-service]] `create_workflow`/
   `update_workflow` (native n8n JSON; eski `create_workflow_from_plan` IR tool'u
   ADR-0010 ile kaldirildi) -> gerekirse direct Sheets API ile eksik
-  spreadsheet'i bir kez olusturur -> workflow metadata `resources` -> shared n8n
+  spreadsheet'i bir kez olusturur -> workflow metadata `resources` -> secili n8n
   workflow create/update (`agent/repair.py` normalize/onarir).
 - Workflow run: dashboard run form veya agent tool -> Conduut run endpoint ->
   runtime input validation -> webhook-triggered workflow call -> n8n execution
@@ -95,8 +115,11 @@ olmak iyi, fakat mevcut MVP'nin gercek sinirlarini bozmamak daha onemlidir.
 ## Mimari Dikkat Noktalari
 
 - Shared n8n MVP karari icin bkz. [[adr-0001-shared-n8n-mvp]].
+- Customer-owned production provider karari ve migration plani icin bkz.
+  [[adr-0022-customer-owned-n8n]] ve [[customer-owned-n8n]].
 - Firestore MVP karari icin bkz. [[adr-0002-firestore-mvp]].
 - Platform capability/direct action karari icin bkz.
   [[adr-0006-platform-capability-layer]].
-- API-key credential injection'in ilk fazi chat uzerinden uygulanmistir. OAuth
-  proxy ve per-user isolation dokumanlarda gecse de henuz uygulanmamistir.
+- API-key credential injection resolver'in sectigi customer-owned instance'a
+  yonelir, metadata `instance_id` tasir ve raw n8n API key production'da Google
+  Secret Manager'da tutulur.

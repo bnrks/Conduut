@@ -110,12 +110,12 @@ Ornek format:
   kaldirildi) ayridir. Gmail/Sheets icin OAuth broker var (ADR-0003) ama LLM/API-key node'lari
   icin yok. Hedef: Conduut workflow kaydederken AI/API-key node'lari icin n8n
   credential'ini kullanicinin kayitli key'inden otomatik olusturup baglasin
-  (`POST /api/v1/credentials` + node'a referans). Mimari niyet (kullanici
-  2026-06-15): her kullanicinin kendi n8n container'i olacak, credential'lar o
-  container'da izole; agent yalniz konustugu kullanicinin container'ina baglanir.
-  Bu yuzden per-user container fazina (izolasyon) bagli; shared-n8n MVP'de pooled
-  Conduut-managed key ile gecici cozulebilir. Su an tekil calistigi icin
-  ertelendi. Bkz. [[known-issues]] "Acik feature".
+  (`POST /api/v1/credentials` + node'a referans). Aktif mimari karar
+  [[adr-0022-customer-owned-n8n]]: credential kullanicinin kendi n8n
+  instance'inda izole olur; agent yalniz resolver'in sectigi customer-owned
+  instance'a baglanir. BYO provider cutover'i ve `instance_id` scope'u
+  `codex/byo-n8n-v1` dalinda uygulanmistir; shared-n8n MVP'de pooled
+  Conduut-managed key yalniz gecici/local davranistir. Bkz. [[customer-owned-n8n]].
 
 - [ ] Takip mesajinda agent mevcut workflow'u kullanmak yerine duplicate
   workflow olusturabiliyor - Etkilenen alan: [[chat-workflow-generation]] /

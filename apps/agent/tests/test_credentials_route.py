@@ -119,6 +119,71 @@ async def test_customer_owned_submit_cannot_mutate_external_workflow(monkeypatch
     assert created is False
 
 
+async def test_customer_owned_submit_reports_reconcile_when_baseline_save_fails(monkeypatch):
+    _patch_user(monkeypatch)
+    context = SimpleNamespace(
+        target=SimpleNamespace(instance_id="inst_1", ownership="customer_owned")
+    )
+    metadata = store.WorkflowMetadata(
+        workflow_id="wf1",
+        input_schema=[],
+        created_at="now",
+        updated_at="now",
+        instance_id="inst_1",
+        resources={},
+    )
+
+    class _Client:
+        async def get_workflow(self, _workflow_id):
+            return {
+                "id": "wf1",
+                "name": "Workflow",
+                "nodes": [],
+                "connections": {},
+                "updatedAt": "2026-08-04T10:00:00Z",
+            }
+
+        async def create_credential(self, name, credential_type, _data):
+            return n8n_client.N8nCredential(id="n8n_1", name=name, type=credential_type)
+
+        async def attach_credential_to_workflow(self, *_args, **_kwargs):
+            return {}
+
+    async def fake_request_n8n(_request, _user_id):
+        return context, _Client()
+
+    async def fake_metadata(_user_id, _workflow_id, **_kwargs):
+        return metadata
+
+    async def fake_save_credential(_user_id, **kwargs):
+        return _custom_credential(
+            host=kwargs["host"],
+            label=kwargs["label"],
+            instance_id="inst_1",
+        )
+
+    async def fail_save_metadata(*_args, **_kwargs):
+        raise RuntimeError("firestore unavailable")
+
+    monkeypatch.setattr(credentials_route, "_request_n8n", fake_request_n8n)
+    monkeypatch.setattr(credentials_route.store, "get_workflow_metadata", fake_metadata)
+    monkeypatch.setattr(credentials_route.store, "save_custom_credential", fake_save_credential)
+    monkeypatch.setattr(credentials_route.store, "save_workflow_metadata", fail_save_metadata)
+
+    result = await credentials_route.submit_credential(
+        object(),
+        CredentialSubmitIn(
+            credential_type="httpHeaderAuth",
+            data={"name": "Authorization", "value": "Bearer x"},
+            host="api.example.com",
+            workflow_id="wf1",
+            node_name="HTTP Request",
+        ),
+    )
+
+    assert result["workflow_sync_status"] == "needs_reconcile"
+
+
 async def test_submit_requires_host_for_http_type(monkeypatch):
     _patch_user(monkeypatch)
 

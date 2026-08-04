@@ -1,4 +1,12 @@
-                                # Conduut
+# Conduut
+
+> **Mimari durum (2026-08-03):** Bu dokumandaki control-plane, node-agent ve
+> Conduut-managed per-user container tasarimi ertelenmis managed-hosting
+> vizyonudur; aktif production hedefi degildir. Aktif hedef, kullanicinin kendi
+> VPS/cloud hesabindaki self-hosted n8n instance'ina Conduut'un public API ile
+> baglandigi customer-owned/BYO modelidir. Guncel karar ve migration plani icin
+> `knowledge-database/03-decisions/adr-0022-customer-owned-n8n.md` ve
+> `knowledge-database/02-architecture/customer-owned-n8n.md` esas alinmalidir.
 
 **Konuşarak otomasyon kur.** Conduut, işletmelerin AI agent ile sohbet ederek n8n workflow'ları oluşturmasını, yapılandırmasını ve çalıştırmasını sağlayan bir platformdur.
 
@@ -30,7 +38,11 @@
 
 ---
 
-## Mimari Genel Bakış
+## Mimari Genel Bakış (Ertelenmiş Managed-Hosting Vizyonu)
+
+> Bu bölüm aktif BYO hedefini değil, ileride yeniden değerlendirilebilecek eski
+> managed-hosting tasarımını kaydeder. Güncel akış için
+> `knowledge-database/02-architecture/customer-owned-n8n.md` esas alınır.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -87,7 +99,7 @@ Platform 6 katmandan oluşur:
 
 ---
 
-## Çekirdek Servisler
+## Çekirdek Servisler (Tarihsel Managed-Hosting Taslağı)
 
 ### 1. Agent Servisi
 
@@ -141,6 +153,9 @@ NODE_REGISTRY = {
 
 ### 2. Kontrol Katmanı (Control Plane)
 
+> **Ertelendi:** Bu servis customer-owned/BYO V1 kapsamında uygulanmayacaktır.
+> Aşağıdaki kararlar yalnız managed-hosting seçeneği yeniden açılırsa geçerlidir.
+
 Kullanıcı container'larının tüm yaşam döngüsünü yönetir.
 
 **Alt servisler:**
@@ -149,7 +164,7 @@ Kullanıcı container'larının tüm yaşam döngüsünü yönetir.
 - **Health monitor** — Container sağlık kontrolleri (30sn aralık)
 - **Hibernation manager** — 30dk inaktif → uyku, kullanıcı gelince uyandır
 
-**Kilit tasarım kararı:** Kontrol katmanı VPS'lere doğrudan SSH yapmaz. Her VPS'te bir `node-agent` çalışır ve kontrol katmanıyla gRPC/WebSocket üzerinden haberleşir. Node-agent, Docker SDK ile container komutlarını yerel olarak çalıştırır.
+**Tarihsel managed-hosting tasarım kararı:** Kontrol katmanı VPS'lere doğrudan SSH yapmaz. Her VPS'te bir `node-agent` çalışır ve kontrol katmanıyla gRPC/WebSocket üzerinden haberleşir. Node-agent, Docker SDK ile container komutlarını yerel olarak çalıştırır.
 
 **Placement algoritması:**
 ```python
@@ -522,7 +537,10 @@ health:{container_id}          → { status, cpu, memory }          TTL: 30s
 
 ---
 
-## Dosya Yapısı (Planlanan)
+## Dosya Yapısı (Ertelenmiş Managed-Hosting Planı)
+
+> Aşağıdaki `control-plane`, `oauth-proxy` ve `node-agent` yolları mevcut repo
+> bileşenleri veya aktif BYO teslimat kapsamı değildir.
 
 ```
 conduut/

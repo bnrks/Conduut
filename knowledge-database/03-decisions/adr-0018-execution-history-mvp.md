@@ -14,9 +14,9 @@ gecer; katman bugun shared client kullansa da `user_id` contract'ini zorunlu
 tutar.
 
 Shared n8n production multi-tenant guvenlik siniri olarak kabul edilmez.
-Per-user n8n izolasyonu production'a cikis oncesi zorunlu release gate'tir ve
-ileride yalniz execution provider resolution degistirilerek Runs/chat contract'i
-korunacaktir.
+Customer-owned n8n provider resolution production'a cikis oncesi zorunlu
+release gate'tir ve ileride yalniz execution provider resolution degistirilerek
+Runs/chat contract'i korunacaktir ([[adr-0022-customer-owned-n8n]]).
 
 Web'e raw n8n execution payload'i verilmez. Detay contract'i yalniz status,
 timing, workflow kimligi/adi, kisa summary, failed node ve redakte hata tasir.
@@ -29,7 +29,9 @@ cozerek canonical attachment uretir.
 
 n8n source-of-truth, Conduut disinda schedule/webhook ile olusan run'lari da
 gosterir ve iki persistence sisteminin drift etmesini onler. Tek service siniri,
-per-user n8n gecisinde route, UI ve agent tool sozlesmelerinin degismesini onler.
+customer-owned n8n gecisinde route, UI ve agent tool sozlesmelerinin degismesini
+onler. `user_id`, hedef instance provider'ini cozer; internal execution lineage
+`instance_id` tasir.
 
 ## Sonuclar
 
@@ -40,4 +42,4 @@ per-user n8n gecisinde route, UI ve agent tool sozlesmelerinin degismesini onler
 - Shared ortam yalniz local/dev MVP icindir.
 
 Ilgili: [[execution-history]], [[adr-0001-shared-n8n-mvp]],
-[[system-architecture]], [[agent-service]].
+[[system-architecture]], [[customer-owned-n8n]], [[agent-service]].

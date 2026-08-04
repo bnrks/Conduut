@@ -20,7 +20,7 @@ Task-to-note routing:
 - Product, scope, roadmap, or project direction: read `project-overview` and
   `current-state`.
 - Architecture, service boundaries, data flow, or infra: read
-  `system-architecture` plus the relevant service note.
+  `system-architecture`, `customer-owned-n8n`, plus the relevant service note.
 - Web/frontend work: read `web-app`, `dashboard` or
   `chat-workflow-generation` as relevant, and `apps/web/AGENTS.md`.
 - Agent/backend work: read `agent-service`, `n8n-registry`, and relevant ADRs.
@@ -32,10 +32,12 @@ Task-to-note routing:
 ## Project Snapshot
 
 Conduut lets users build and manage n8n workflow automations by chatting with an
-AI agent. The long-term platform vision includes per-user n8n containers,
-control-plane orchestration, OAuth proxying, usage tracking, billing, and
-monitoring. The current repo is an MVP and differs from that target in several
-important ways.
+AI agent. The active production target is customer-owned n8n (BYO n8n): every
+user owns and administers their self-hosted n8n instance, while Conduut connects
+through the public API. Managed per-user containers/control-plane are deferred.
+The current repo is an MVP and still differs from that target in several
+important ways; see `knowledge-database/02-architecture/customer-owned-n8n.md`
+and ADR-0022.
 
 ## Current Reality
 
@@ -51,9 +53,12 @@ important ways.
   `conduut-agent`, and `conduut-web`. The agent listens on container port
   `8000` and is published on host port `8100` to avoid Windows port exclusion
   conflicts.
-- `apps/control-plane`, `apps/oauth-proxy`, `apps/node-agent`, PostgreSQL,
-  Redis, Vault, Stripe, monitoring, and real per-user container isolation are
-  not implemented yet.
+- Customer-owned n8n onboarding, tenant-aware n8n provider resolution, secure
+  per-user n8n API-key storage, supported-version checks, remote health
+  diagnostics, Stripe, and production monitoring are not implemented yet.
+- `apps/control-plane` and `apps/node-agent` are not implemented and are no
+  longer active BYO requirements; they belong to the deferred managed-hosting
+  alternative.
 
 ## Documentation Priority
 

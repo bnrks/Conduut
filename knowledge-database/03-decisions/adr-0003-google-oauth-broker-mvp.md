@@ -81,3 +81,13 @@ Sinirlar:
 
 Ilgili notlar: [[agent-service]], [[dashboard]], [[chat-workflow-generation]],
 [[known-issues]], [[adr-0001-shared-n8n-mvp]].
+
+## BYO Gecis Notu (2026-08-03)
+
+[[adr-0022-customer-owned-n8n]] sonrasi OAuth broker korunur; degisen hedef
+n8n'dir. Authorization baslatilirken `instance_id` signed OAuth state'e
+baglanmali, callback credential'i resolver'in sectigi customer-owned n8n'e
+enjekte etmelidir. Callback aninda kullanicinin aktif instance'i degisse bile
+credential baska instance'a yazilamaz. Firestore connection metadata'si ve
+`n8n_credential_id` de `instance_id` tasimalidir. Ayrinti:
+[[customer-owned-n8n]].

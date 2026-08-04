@@ -4,12 +4,14 @@ Merkez: [[index]]
 
 ## Durum
 
-Accepted for MVP.
+Accepted for local/dev MVP; production successor ADR-0022 (2026-08-03).
 
 ## Baglam
 
-`PROJECT.md` hedef mimaride her kullanici icin ayri n8n Docker container'i,
-control-plane ve node-agent ongorur. Mevcut kodda bu sistemler yok.
+Ilk hedef mimari her kullanici icin ayri Conduut-managed n8n Docker container'i,
+control-plane ve node-agent ongoruyordu. Bu hedef
+[[adr-0022-customer-owned-n8n]] ile customer-owned n8n production modeline
+degisti. Mevcut kod halen shared n8n kullanir.
 
 ## Karar
 
@@ -37,8 +39,10 @@ Riskler:
 
 ## Sonraki Adim
 
-Per-user isolation baslarken `n8n_client.py` kullanici/container context'i
-alacak sekilde genisletilmeli ve workflow route'lari user ownership bilgisini
-zorunlu kilmali.
+BYO gecisinde `n8n_client.py` global settings yerine `N8nTarget` alacak sekilde
+genisletilmeli; authenticated `user_id` customer-owned instance'a cozulmeli ve
+workflow/credential/execution route'lari `(instance_id, object_id)` ownership
+bilgisini zorunlu kilmalidir. Shared provider production fallback'i olamaz.
 
-Ilgili notlar: [[system-architecture]], [[agent-service]], [[known-issues]].
+Ilgili notlar: [[system-architecture]], [[customer-owned-n8n]],
+[[adr-0022-customer-owned-n8n]], [[agent-service]], [[known-issues]].

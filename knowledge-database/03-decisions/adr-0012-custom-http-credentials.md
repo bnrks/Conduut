@@ -106,8 +106,9 @@ degistirilir. Boylece yaygin durum sifir-friction, nadir durumlar Gelismis ile.
   (`_discover_existing_credential`) HTTP custom creds icin **kullanilmaz** (yeni
   vault yolu oncelikli); kopru yalniz non-HTTP tipler (orn. `openAiApi`) icin
   kalir. Bkz. [[known-issues]].
-- Per-user container gelince (bkz. memory `per-user-container-credentials`) bu
-  metadata->credential map'i dogal olarak per-container store'a tasinir.
+- Customer-owned n8n gecisinde metadata->credential map'i `instance_id` ile
+  scope edilir; secret resolver'in sectigi kullanici n8n credential store'unda
+  kalir ([[customer-owned-n8n]]).
 - Eski `workflow_credentials` koleksiyonu deprecate; yeni creds `credentials`
   koleksiyonuna yazilir (migrasyon yok, MVP).
 - HTTP credential attach basarisi yalniz credential id/name nesnesine bakmaz;
@@ -121,3 +122,5 @@ degistirilir. Boylece yaygin durum sifir-friction, nadir durumlar Gelismis ile.
 - [[adr-0010-json-surface-repair-normalizer]] - model intent + deterministik
   isleme felsefesi.
 - [[agent-service]], [[known-issues]].
+- [[adr-0022-customer-owned-n8n]], [[customer-owned-n8n]] - BYO instance ve
+  credential ownership siniri.

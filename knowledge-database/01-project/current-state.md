@@ -19,15 +19,19 @@ once bu not ve kaynak kod esas alinmalidir.
 - `start-local-dev.bat`: hizli Windows lokal gelistirme icin sadece n8n'i
   Docker Compose ile calistirir; agent'i lokal Uvicorn reload, web'i lokal
   `npm run dev` ile ayaga kaldirir.
+- Customer-owned n8n V1: authenticated kullaniciyi aktif instance'a cozen
+  request-scope provider/client, Secret Manager, guvenli connect/check/rotate/
+  disconnect, migration/adoption ve web onboarding yuzeyleri uygulanmistir.
+  Shared n8n yalniz `shared_dev` local gelistirme adapter'idir.
 
 ## Gercek Veriyle Bagli Olanlar
 
 - Chat mesajlari, conversation listesi, workflow metadata, credential metadata
   ve artifact'lar Firestore'a yaziliyor. (BYO provider ayarlari/favorites
   [[adr-0011-conduut-managed-tiered-models]] ile kaldirildi.)
-- Workflow dashboard shared n8n instance uzerinden workflow listeliyor,
+- Workflow dashboard secili provider target'i uzerinden workflow listeliyor,
   activate/deactivate/delete ve runtime input ile run islemleri yapiyor.
-- Runs dashboard shared n8n execution API'sinden gercek run gecmisini,
+- Runs dashboard secili n8n instance'inin execution API'sinden gercek run gecmisini,
   status/timing ve redakte hata detayini listeliyor; basarisiz run agent chat'ine
   structured `execution_reference` ile gonderilebiliyor ([[execution-history]]).
 - Agent, workflow olustururken `search_n8n_nodes`, `get_node_schema` ve
@@ -76,23 +80,34 @@ once bu not ve kaynak kod esas alinmalidir.
 
 ## Eksik Kritik Sistemler
 
-- Per-user n8n container izolasyonu.
-- Control plane.
-- Node agent.
+- Customer-owned n8n icin iki gerçek public instance pilotu ve production
+  rollout/observability kaniti.
+- Production deployment'ta application SSRF kontrolune ek ag-seviyesi egress
+  bloklari ve Google Secret Manager IAM kurulumu.
+- Canonical `1.121.3` disindaki n8n surumleri icin compatibility calismasi.
 - Genel amacli OAuth proxy ve production secret isolation.
 - PostgreSQL/pgvector, Redis, Vault.
 - Stripe/billing.
 - Monitoring: Prometheus, Grafana, Loki.
 
+Control plane, node-agent ve Conduut-managed per-user container aktif BYO
+roadmap'inin parcasi degildir; managed hosting alternatifi olarak ertelenmistir
+([[adr-0022-customer-owned-n8n]]).
+
 ## Dokuman Uyumsuzluklari
 
-- `PROJECT.md` hedef (uzun vadeli) mimariyi anlatir; mevcut MVP Firestore +
-  shared n8n kullanir — kod yazarken bu not ve kaynak esas alinir.
+- `PROJECT.md` icindeki control-plane/per-user-container plani ertelenmis managed
+  vizyonu anlatir. Aktif production hedefi [[customer-owned-n8n]] ve
+  [[adr-0022-customer-owned-n8n]] icindedir; mevcut MVP ise Firestore + shared
+  n8n kullanir.
 - Kanonik agent rehberi `AGENTS.md`; root `CLAUDE.md` ince pointer'dir. Copilot
   talimat dosyalari (root + `.github/`) Faz 2'de kaldirildi. (bkz.
   [[workspace-refactor]])
 
 ## Branch Durumu
+
+- 2026-08-03: `codex/byo-n8n-v1`, customer-owned n8n provider, migration,
+  onboarding ve tam n8n cagri zinciri cutover uygulama dalidir.
 
 - 2026-05-09: `codex-pydantic-ai-agent-backend` artik deney dali degil;
   Pydantic AI tabanli agent altyapisi ana gelistirme zemini olarak `main`
@@ -100,4 +115,5 @@ once bu not ve kaynak kod esas alinmalidir.
 
 Ilgili notlar: [[known-issues]], [[issue-backlog]],
 [[adr-0001-shared-n8n-mvp]], [[adr-0002-firestore-mvp]],
-[[adr-0003-google-oauth-broker-mvp]], [[adr-0006-platform-capability-layer]].
+[[adr-0003-google-oauth-broker-mvp]], [[adr-0006-platform-capability-layer]],
+[[customer-owned-n8n]], [[adr-0022-customer-owned-n8n]].

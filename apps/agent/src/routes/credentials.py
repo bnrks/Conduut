@@ -147,23 +147,35 @@ async def _refresh_attach_baseline(
     instance_id: str,
     metadata,
     client,
-) -> None:
+) -> bool:
     if metadata is None:
-        return
-    workflow = await client.get_workflow(workflow_id)
-    resources = dict(metadata.resources)
-    resources["workflow_baseline"] = {
-        "instance_id": instance_id,
-        "workflow_fingerprint": workflow_fingerprint(workflow),
-        "workflow_updated_at": str(workflow.get("updatedAt") or ""),
-    }
-    await store.save_workflow_metadata(
-        user_id,
-        workflow_id,
-        input_schema=metadata.input_schema,
-        resources=resources,
-        instance_id=instance_id,
-    )
+        return True
+    try:
+        workflow = await client.get_workflow(workflow_id)
+        resources = dict(metadata.resources)
+        resources["workflow_baseline"] = {
+            "instance_id": instance_id,
+            "workflow_fingerprint": workflow_fingerprint(workflow),
+            "workflow_updated_at": str(workflow.get("updatedAt") or ""),
+        }
+        await store.save_workflow_metadata(
+            user_id,
+            workflow_id,
+            input_schema=metadata.input_schema,
+            resources=resources,
+            instance_id=instance_id,
+        )
+    except Exception as exc:
+        # The remote attachment already committed. Do not turn a local baseline
+        # refresh failure into a retryable-looking 400 that could repeat it.
+        log.warning(
+            "credential_attach_baseline_refresh_failed",
+            workflow_id=workflow_id,
+            instance_id=instance_id,
+            error_type=type(exc).__name__,
+        )
+        return False
+    return True
 
 
 @router.get("/credentials")
@@ -298,6 +310,7 @@ async def submit_credential(request: Request, body: CredentialSubmitIn):
         or credential_type
     )
     attach_metadata = None
+    workflow_sync_status: str | None = None
     if body.workflow_id and body.node_name:
         attach_metadata = await _ensure_attach_allowed(
             user_id,
@@ -350,13 +363,14 @@ async def submit_credential(request: Request, body: CredentialSubmitIn):
                 credential.name,
                 generic_auth_type=generic,
             )
-            await _refresh_attach_baseline(
+            baseline_refreshed = await _refresh_attach_baseline(
                 user_id,
                 body.workflow_id,
                 instance_id=context.target.instance_id,
                 metadata=attach_metadata,
                 client=client,
             )
+            workflow_sync_status = "synced" if baseline_refreshed else "needs_reconcile"
     except n8n_client.N8nApiError as exc:
         raise HTTPException(status_code=exc.status_code, detail={"message": exc.message}) from exc
     except Exception as exc:
@@ -370,6 +384,7 @@ async def submit_credential(request: Request, body: CredentialSubmitIn):
             "host": saved.host,
         },
         "workflow_id": body.workflow_id,
+        "workflow_sync_status": workflow_sync_status,
     }
 
 
@@ -422,6 +437,7 @@ async def finalize_credential(request: Request, credential_id: str, body: Creden
         raise HTTPException(status_code=409, detail={"message": "Credential already completed."})
 
     attach_metadata = None
+    workflow_sync_status: str | None = None
     if credential.pending_workflow_id and credential.pending_node_name:
         attach_metadata = await _ensure_attach_allowed(
             user_id,
@@ -456,13 +472,14 @@ async def finalize_credential(request: Request, credential_id: str, body: Creden
                 created.name,
                 generic_auth_type=generic,
             )
-            await _refresh_attach_baseline(
+            baseline_refreshed = await _refresh_attach_baseline(
                 user_id,
                 credential.pending_workflow_id,
                 instance_id=context.target.instance_id,
                 metadata=attach_metadata,
                 client=client,
             )
+            workflow_sync_status = "synced" if baseline_refreshed else "needs_reconcile"
     except n8n_client.N8nApiError as exc:
         raise HTTPException(status_code=exc.status_code, detail={"message": exc.message}) from exc
     except Exception as exc:
@@ -477,4 +494,5 @@ async def finalize_credential(request: Request, credential_id: str, body: Creden
             "status": "ready",
         },
         "workflow_id": credential.pending_workflow_id or None,
+        "workflow_sync_status": workflow_sync_status,
     }

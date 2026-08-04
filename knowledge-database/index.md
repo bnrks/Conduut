@@ -24,6 +24,8 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
 - [[workspace-refactor]] - disardan-ice workspace refactor/temizlik turlari ve
   ertelenen kalemler (Faz 1: root dizin temizligi).
 - [[system-architecture]] - MVP mimarisi ve uzun vadeli hedef mimari.
+- [[customer-owned-n8n]] - aktif BYO n8n production mimarisi, onboarding,
+  guvenlik sinirlari ve shared MVP'den gecis plani.
 - [[web-app]] - Next.js frontend, route yapisi, auth ve BFF API route'lari.
 - [[agent-service]] - FastAPI agent, SSE chat flow, Pydantic AI ve Firestore.
 - [[agent-platform-self-awareness]] - agent'in platform oz-farkindaligi: statik
@@ -112,7 +114,7 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
   preview-kirpmasi degil). Frontend format-duyarli `WorkflowResultView`; ham JSON
   `<details>` fallback. Yeni `tools/output_schema.py` + `workflow-result-view.tsx`.
 - [[adr-0018-execution-history-mvp]] - Runs V1 n8n source-of-truth, sanitize
-  contract, structured repair handoff ve per-user n8n production gate karari.
+  contract, structured repair handoff ve provider-resolution siniri.
 - [[adr-0019-workflow-assurance-v1]] - Native n8n JSON uzerinde static semantic
   guard, Sandbox V2 probe'lari, functional execution assessment, preview token
   ve evidence-gated agent claim zinciri.
@@ -122,6 +124,9 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
 - [[adr-0021-chat-execution-policy]] - Chat basinda kilitlenen Safe/Fast
   execution policy; Safe tek runtime sandbox preview, Fast full static contract
   preview kullanir. Dashboard, batch ve activation safe-only kalir.
+- [[adr-0022-customer-owned-n8n]] - production'da kullanicinin kendi VPS/n8n
+  instance'ini yonettigi, Conduut'un public API ile baglandigi BYO provider
+  karari; managed container/control-plane ertelendi.
 
 ## Kaynak Dokumanlar
 
