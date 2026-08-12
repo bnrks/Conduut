@@ -766,6 +766,15 @@ def test_extract_n8n_version_prefers_version_cli():
     )
 
 
+def test_extract_n8n_version_reads_rest_response_data_wrapper():
+    assert (
+        n8n_client.extract_n8n_version(
+            {"data": {"versionCli": "1.121.3", "deploymentType": "default"}}
+        )
+        == "1.121.3"
+    )
+
+
 async def test_instance_client_uses_webhook_base_url(monkeypatch):
     captured: dict = {}
 

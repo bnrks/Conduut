@@ -852,6 +852,13 @@ kullanir ve legacy `CONDUUT_N8N_API_KEY` fallback'i korunur. Boylece
 `extra_forbidden` typo korumasi gevsetilmeden Docker Compose ve host Uvicorn ayni
 local shared-dev credential sozlesmesini kullanir.
 
+2026-08-12 ilk gercek BYO VPS pilotunda n8n `1.121.3` `/rest/settings` cevabi
+`data` envelope'u icinde `versionCli` dondurdu; preflight parser'i yalniz
+top-level alanlara baktigi icin bunu bundled registry eksigi gibi raporluyordu.
+Parser hem wrapped hem legacy unwrapped sekli kabul edecek sekilde duzeltildi;
+remote version okunamamasi ile canonical registry artifact eksigi artik farkli
+mesaj/action ile raporlanir.
+
 ## Credential Prompt After Workflow Create
 
 2026-05-09'da gorulen vaka: Chat ile Google Sheets append workflow'u

@@ -99,14 +99,17 @@ class N8nVersionUnsupportedError(N8nProviderError):
 
 
 class N8nVersionUnverifiableError(N8nProviderError):
-    def __init__(self):
+    def __init__(self, message: str | None = None, *, action: str = "rebuild_registry_artifacts"):
         super().__init__(
             "n8n_version_unverifiable",
-            "Conduut could not determine the canonical supported n8n version "
-            "from bundled registry artifacts.",
+            message
+            or (
+                "Conduut could not determine the canonical supported n8n version "
+                "from bundled registry artifacts."
+            ),
             status_code=500,
             retryable=False,
-            action="rebuild_registry_artifacts",
+            action=action,
         )
 
 
@@ -300,7 +303,10 @@ class N8nInstanceResolver:
 
         detected_version = n8n_client.extract_n8n_version(payload)
         if not detected_version:
-            raise N8nVersionUnverifiableError()
+            raise N8nVersionUnverifiableError(
+                "Conduut could not verify the connected n8n instance version.",
+                action="verify_n8n_version",
+            )
         canonical_version = canonical_n8n_version()
         if not canonical_version:
             raise N8nVersionUnverifiableError()

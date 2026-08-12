@@ -190,8 +190,10 @@ async def test_preflight_rejects_unverifiable_version(monkeypatch):
     monkeypatch.setattr("src.n8n_client.N8nClient.get_rest_settings", fake_settings)
     monkeypatch.setattr("src.n8n_client.N8nClient.request", fake_request)
 
-    with pytest.raises(N8nVersionUnverifiableError):
+    with pytest.raises(N8nVersionUnverifiableError) as exc:
         await resolver.preflight(base_url="https://automation.example.com", api_key="secret")
+    assert exc.value.action == "verify_n8n_version"
+    assert "connected n8n instance" in exc.value.message
 
 
 async def test_preflight_maps_missing_credential_capability(monkeypatch):

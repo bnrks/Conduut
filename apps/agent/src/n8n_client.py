@@ -1189,10 +1189,19 @@ def _execution_from_payload(payload: dict[str, Any]) -> N8nExecution:
 
 
 def extract_n8n_version(payload: dict[str, Any]) -> str:
-    for key in ("versionCli", "version", "n8nVersion"):
-        value = payload.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+    # n8n's REST response middleware wraps controller payloads in ``data``.
+    # Keep accepting the unwrapped shape for older/custom deployments and
+    # tests, but prefer the canonical CLI version in either shape.
+    candidates = [payload]
+    wrapped = payload.get("data")
+    if isinstance(wrapped, dict):
+        candidates.append(wrapped)
+
+    for candidate in candidates:
+        for key in ("versionCli", "version", "n8nVersion"):
+            value = candidate.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
     return ""
 
 
