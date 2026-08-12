@@ -22,8 +22,8 @@ ve shared n8n MVP'den gecis planini tanimlar. Mimari karar
 - `users/{uid}/n8n_instances/{instance_id}` ve user dokumanindaki
   `active_n8n_instance_id` aktif target'i tutar. Raw API key yalniz secret
   store'a gider; public API secret ref veya tam URL dondurmez.
-- Connect/check/key rotation/disconnect, migration ve workflow adoption
-  endpoint'leri FastAPI ile Next.js BFF tarafinda uygulanmistir.
+- Connect/check/key rotation/disconnect ve migration endpoint'leri FastAPI ile
+  Next.js BFF tarafinda uygulanmistir.
 - URL preflight'i HTTPS, public DNS/IP, redirect kapatma, kritik cagri oncesi
   yeniden DNS cozumleme, health, API auth, capability ve canonical `1.121.3`
   surum kontrolunu fail-closed uygular.
@@ -31,10 +31,12 @@ ve shared n8n MVP'den gecis planini tanimlar. Mimari karar
   olarak pinler; orijinal hostname'i HTTP `Host` ve TLS SNI icin korur. Boylece
   DNS kontrolu ile connect arasindaki rebinding penceresi kapanir.
 - Metadata, OAuth state, preview token, execution evidence ve mutation lock
-  instance kimligine baglanmistir. External workflow read-only baslar; adopt
-  sonrasi remote baseline/fingerprint ile yonetilir ve drift overwrite edilmez.
-- Credential submit/finalize icindeki workflow attach islemleri de ayni
-  adoption/drift mutation guard'ini kullanir. Google connection metadata'si
+  instance kimligine baglanmistir. Customer-owned instance sahiplik siniridir;
+  bu instance'taki tum workflow'lar ayrica `External/Adopt` durumuna girmeden
+  yonetilebilir. Mevcut baseline varsa drift overwrite edilmez.
+- Credential submit/finalize icindeki workflow attach islemleri de mevcut
+  metadata icin drift guard'ini kullanir; metadata yoklugu sahiplik engeli
+  degildir. Google connection metadata'si
   instance-scoped document kimligiyle legacy shared ve customer-owned kayitlari
   birlikte korur; migration hedef instance'a zaten bagli credential/connection'i
   `customer_owned` olarak siniflandirir.
@@ -51,7 +53,7 @@ ve shared n8n MVP'den gecis planini tanimlar. Mimari karar
 
 Otomatik kabul kapsami iki fake tenant/origin izolasyonu, SSRF/DNS rebinding,
 typed provider hatalari, OAuth ve preview binding, migration tekrar kosusu,
-adoption/drift ve production no-fallback senaryolarini kapsar. Gercek production
+instance ownership/drift ve production no-fallback senaryolarini kapsar. Gercek production
 acilisi icin asagidaki operasyonel maddeler tamamlanmalidir:
 
 - Google Secret Manager IAM ve production network egress kurallari private,

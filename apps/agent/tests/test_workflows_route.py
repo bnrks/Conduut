@@ -102,8 +102,57 @@ async def test_list_workflows_does_not_fetch_each_workflow(monkeypatch):
     assert [w["id"] for w in workflows] == ["wf_1", "wf_2"]
     assert [w["nodeCount"] for w in workflows] == [3, 7]
     assert [w["status"] for w in workflows] == ["active", "inactive"]
+    assert all(w["managedByConduut"] is True for w in workflows)
+    assert all(w["readOnly"] is False for w in workflows)
     # Metadata tek sorguda (batch) çekilmeli — workflow başına değil.
     assert metadata_calls == ["user_1"]
+
+
+@pytest.mark.asyncio
+async def test_customer_owned_list_does_not_mark_metadata_free_workflow_read_only(monkeypatch):
+    context = SimpleNamespace(
+        target=SimpleNamespace(instance_id="inst_1", ownership="customer_owned")
+    )
+
+    class _Client:
+        async def list_workflows(self):
+            return [
+                workflows_route.n8n_client.N8nWorkflow(
+                    id="remote_1",
+                    name="Customer workflow",
+                    active=False,
+                    created_at="",
+                    updated_at="",
+                    node_count=2,
+                )
+            ]
+
+    async def fake_request_n8n(_request, _user_id):
+        return context, _Client()
+
+    async def fake_all_metadata(_user_id, **_kwargs):
+        return {}
+
+    monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
+    monkeypatch.setattr(workflows_route, "_request_n8n", fake_request_n8n)
+    monkeypatch.setattr(workflows_route.store, "get_all_workflow_metadata", fake_all_metadata)
+
+    response = await workflows_route.list_workflows(object())
+
+    assert response["workflows"] == [
+        {
+            "id": "remote_1",
+            "name": "Customer workflow",
+            "status": "inactive",
+            "nodeCount": 2,
+            "createdAt": "",
+            "updatedAt": "",
+            "executionCount": 0,
+            "inputSchema": [],
+            "managedByConduut": True,
+            "readOnly": False,
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -793,79 +842,21 @@ async def test_run_workflow_claims_clean_no_action(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_customer_owned_external_workflow_requires_adoption_before_mutation(monkeypatch):
-    context = SimpleNamespace(
-        target=SimpleNamespace(instance_id="inst_1", ownership="customer_owned")
-    )
-    client = SimpleNamespace()
-
-    async def fake_request_n8n(_request, _user_id):
-        return context, client
-
+async def test_customer_owned_workflow_without_metadata_is_manageable(monkeypatch):
     async def fake_metadata(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
-    monkeypatch.setattr(workflows_route, "_request_n8n", fake_request_n8n)
     monkeypatch.setattr(workflows_route, "_get_workflow_metadata", fake_metadata)
 
-    with pytest.raises(HTTPException) as exc:
-        await workflows_route.activate_workflow("external_1", object())
-
-    assert exc.value.status_code == 409
-    assert exc.value.detail["code"] == "workflow_adoption_required"
-
-
-@pytest.mark.asyncio
-async def test_adopt_imports_remote_baseline_without_mutating_remote(monkeypatch):
-    workflow = {
-        "id": "external_1",
-        "name": "External",
-        "updatedAt": "2026-08-03T10:00:00Z",
-        "nodes": [],
-        "connections": {},
-        "settings": {},
-    }
-    remote_calls: list[str] = []
-
-    class _Client:
-        async def get_workflow(self, workflow_id):
-            remote_calls.append(f"get:{workflow_id}")
-            return workflow
-
-    context = SimpleNamespace(
-        target=SimpleNamespace(instance_id="inst_1", ownership="customer_owned")
+    metadata = await workflows_route._ensure_workflow_mutation_allowed(
+        "user_1",
+        "workflow_on_customer_server",
+        instance_id="inst_1",
+        ownership="customer_owned",
+        action="activated",
     )
 
-    async def fake_request_n8n(_request, _user_id):
-        return context, _Client()
-
-    async def fake_metadata(*_args, **_kwargs):
-        return None
-
-    async def fake_save(user_id, workflow_id, **kwargs):
-        assert (user_id, workflow_id) == ("user_1", "external_1")
-        assert kwargs["instance_id"] == "inst_1"
-        return workflows_route.store.WorkflowMetadata(
-            workflow_id=workflow_id,
-            input_schema=[],
-            resources=kwargs["resources"],
-            created_at="now",
-            updated_at="now",
-            instance_id="inst_1",
-        )
-
-    monkeypatch.setattr(workflows_route, "get_user_id", lambda _request: "user_1")
-    monkeypatch.setattr(workflows_route, "_request_n8n", fake_request_n8n)
-    monkeypatch.setattr(workflows_route, "_get_workflow_metadata", fake_metadata)
-    monkeypatch.setattr(workflows_route.store, "save_workflow_metadata", fake_save)
-
-    result = await workflows_route.adopt_workflow("external_1", object())
-
-    assert result["adopted"] is True
-    assert result["instanceId"] == "inst_1"
-    assert result["baseline"]["instance_id"] == "inst_1"
-    assert remote_calls == ["get:external_1"]
+    assert metadata is None
 
 
 @pytest.mark.asyncio

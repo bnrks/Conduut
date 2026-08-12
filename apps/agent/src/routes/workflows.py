@@ -61,10 +61,6 @@ class WorkflowBatchRunRequest(BaseModel):
     previewToken: str | None = None
 
 
-class WorkflowAdoptRequest(BaseModel):
-    inputSchema: list[dict[str, Any]] = Field(default_factory=list)
-
-
 def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
@@ -90,22 +86,16 @@ async def _ensure_workflow_mutation_allowed(
     ownership: str,
     action: str,
 ) -> store.WorkflowMetadata | None:
+    # The active n8n instance is customer-owned, so every workflow returned by
+    # that instance is already within the user's management boundary. Metadata
+    # enriches Conduut behavior (schemas, assurance and drift baselines); its
+    # absence must not turn the user's own workflow into a read-only object.
     metadata = await _get_workflow_metadata(
         user_id,
         workflow_id,
         instance_id=instance_id,
     )
-    if ownership == "customer_owned" and metadata is None:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "workflow_adoption_required",
-                "message": (
-                    f"This workflow exists in your n8n instance but has not been adopted into "
-                    f"Conduut yet. It is read-only until you adopt it, so it can't be {action}."
-                ),
-            },
-        )
+    del ownership, action
     return metadata
 
 
@@ -169,10 +159,8 @@ async def _refresh_workflow_baseline(
         workflow_id,
         instance_id=instance_id,
     )
-    if metadata is None:
-        return
     workflow = await client.get_workflow(workflow_id)
-    resources = dict(metadata.resources)
+    resources = dict(metadata.resources) if metadata else {}
     resources["workflow_baseline"] = {
         "instance_id": instance_id,
         "workflow_fingerprint": workflow_fingerprint(workflow),
@@ -181,7 +169,7 @@ async def _refresh_workflow_baseline(
     await store.save_workflow_metadata(
         user_id,
         workflow_id,
-        input_schema=metadata.input_schema,
+        input_schema=metadata.input_schema if metadata else [],
         resources=resources,
         instance_id=instance_id,
     )
@@ -340,57 +328,11 @@ async def list_workflows(request: Request):
             "updatedAt": w.updated_at,
             "executionCount": 0,
             "inputSchema": _input_schema_payload(input_schema),
-            "managedByConduut": w.id in metadata_by_id,
-            "readOnly": context.target.ownership == "customer_owned" and w.id not in metadata_by_id,
+            "managedByConduut": True,
+            "readOnly": False,
         }
 
     return {"workflows": [_serialize(w) for w in workflows]}
-
-
-@router.post("/workflows/{workflow_id}/adopt")
-async def adopt_workflow(
-    workflow_id: str,
-    request: Request,
-    body: WorkflowAdoptRequest | None = None,
-):
-    user_id = get_user_id(request)
-    try:
-        context, client = await _request_n8n(request, user_id)
-        workflow = await client.get_workflow(workflow_id)
-    except N8nProviderError as exc:
-        raise _provider_http_error(exc) from exc
-    except n8n_client.N8nApiError as exc:
-        raise HTTPException(status_code=exc.status_code, detail={"message": exc.message}) from exc
-    existing = await _get_workflow_metadata(
-        user_id,
-        workflow_id,
-        instance_id=context.target.instance_id,
-    )
-    resources = dict(existing.resources) if existing else {}
-    resources["adopted_from_external"] = True
-    resources["adopted_at"] = store._now_iso()
-    resources["workflow_baseline"] = {
-        "instance_id": context.target.instance_id,
-        "workflow_fingerprint": workflow_fingerprint(workflow),
-        "workflow_updated_at": str(workflow.get("updatedAt") or ""),
-    }
-    resources["external_workflow_baseline"] = dict(resources["workflow_baseline"])
-    saved = await store.save_workflow_metadata(
-        user_id,
-        workflow_id,
-        input_schema=(
-            body.inputSchema if body is not None else (existing.input_schema if existing else [])
-        ),
-        resources=resources,
-        instance_id=context.target.instance_id,
-    )
-    return {
-        "workflow_id": workflow_id,
-        "adopted": True,
-        "instanceId": context.target.instance_id,
-        "inputSchema": _input_schema_payload(saved.input_schema),
-        "baseline": resources["workflow_baseline"],
-    }
 
 
 @router.patch("/workflows/{workflow_id}/activate")

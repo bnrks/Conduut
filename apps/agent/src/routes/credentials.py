@@ -91,7 +91,7 @@ async def _request_n8n(request: Request, user_id: str):
 
 
 async def _ensure_attach_allowed(user_id: str, workflow_id: str, *, context, client):
-    """Credential attachment is a workflow mutation and must honor BYO ownership."""
+    """Reject drift when metadata exists; customer ownership needs no adoption step."""
 
     instance_id = context.target.instance_id
     if context.target.ownership != "customer_owned":
@@ -101,14 +101,6 @@ async def _ensure_attach_allowed(user_id: str, workflow_id: str, *, context, cli
         workflow_id,
         instance_id=instance_id,
     )
-    if metadata is None:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "workflow_adoption_required",
-                "message": "Adopt this external workflow before attaching a credential.",
-            },
-        )
     workflow = await client.get_workflow(workflow_id)
     if metadata is not None:
         baseline = metadata.resources.get("workflow_baseline")
@@ -148,11 +140,9 @@ async def _refresh_attach_baseline(
     metadata,
     client,
 ) -> bool:
-    if metadata is None:
-        return True
     try:
         workflow = await client.get_workflow(workflow_id)
-        resources = dict(metadata.resources)
+        resources = dict(metadata.resources) if metadata else {}
         resources["workflow_baseline"] = {
             "instance_id": instance_id,
             "workflow_fingerprint": workflow_fingerprint(workflow),
@@ -161,7 +151,7 @@ async def _refresh_attach_baseline(
         await store.save_workflow_metadata(
             user_id,
             workflow_id,
-            input_schema=metadata.input_schema,
+            input_schema=metadata.input_schema if metadata else [],
             resources=resources,
             instance_id=instance_id,
         )

@@ -513,7 +513,7 @@ export default function SettingsPage() {
                       <h2 className="text-[15px] font-medium text-foreground">Automation Server</h2>
                     </div>
                     <p className="mt-1 text-[13px] leading-6 text-muted-foreground">
-                      Connect your own n8n instance so Conduut can inspect workflows, adopt existing automations, and run jobs through your server.
+                      Connect your own n8n instance so Conduut can inspect and manage workflows, and run jobs through your server.
                     </p>
                     <p className="mt-1 text-[12px] leading-5 text-muted-foreground">
                       BYO V1 currently requires canonical n8n version {CANONICAL_N8N_VERSION}. Other versions fail closed during connection checks.
@@ -705,7 +705,7 @@ export default function SettingsPage() {
                   <div>
                     <p className="text-[15px] font-medium text-foreground">Legacy workflow migration</p>
                     <p className="mt-1 text-[13px] leading-6 text-muted-foreground">
-                      After you connect your own server, Conduut can help you confirm and advance any remaining workflow adoption steps.
+                      After you connect your own server, Conduut can help you confirm and advance any remaining legacy migration steps.
                     </p>
                   </div>
                   <Button variant="outline" size="sm" onClick={() => void loadMigration()} disabled={migrationLoading || migrationBusy}>
@@ -734,7 +734,7 @@ export default function SettingsPage() {
                         <p className="mt-1 text-[15px] font-medium text-foreground">{migration.migratedWorkflows ?? 0}</p>
                       </div>
                       <div className="rounded-lg border border-border bg-muted/20 p-3">
-                        <p className="text-[11px] uppercase text-muted-foreground">Adopted</p>
+                        <p className="text-[11px] uppercase text-muted-foreground">Imported</p>
                         <p className="mt-1 text-[15px] font-medium text-foreground">{migration.adoptedWorkflows ?? 0}</p>
                       </div>
                       <div className="rounded-lg border border-border bg-muted/20 p-3">
@@ -779,7 +779,7 @@ export default function SettingsPage() {
                   <div className="rounded-lg border border-border bg-muted/20 p-4 text-[13px] leading-6 text-muted-foreground">
                     {migrationLoading
                       ? "Loading migration status…"
-                      : "No migration status is available yet. Connect your server first, then refresh this section to confirm whether any legacy workflows need adoption."}
+                      : "No migration status is available yet. Connect your server first, then refresh this section to confirm whether any legacy workflows need migration."}
                   </div>
                 )}
               </CardContent>
@@ -803,7 +803,7 @@ export default function SettingsPage() {
               <ul className="space-y-2 text-[13px] leading-6 text-muted-foreground">
                 <li>Use a public HTTPS n8n URL that Conduut can reach from the server side.</li>
                 <li>Create a fresh API key in your n8n admin account and keep it write-only in this form.</li>
-                <li>After connecting, workflows that already live on your server can appear as read-only until you adopt them into Conduut metadata.</li>
+                <li>After connecting, workflows already on your server appear alongside workflows created through Conduut and can be managed directly.</li>
               </ul>
             </CardContent>
           </Card>

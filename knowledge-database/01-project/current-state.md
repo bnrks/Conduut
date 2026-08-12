@@ -21,7 +21,9 @@ once bu not ve kaynak kod esas alinmalidir.
   `npm run dev` ile ayaga kaldirir.
 - Customer-owned n8n V1: authenticated kullaniciyi aktif instance'a cozen
   request-scope provider/client, Secret Manager, guvenli connect/check/rotate/
-  disconnect, migration/adoption ve web onboarding yuzeyleri uygulanmistir.
+  disconnect, migration ve web onboarding yuzeyleri uygulanmistir. Aktif
+  customer-owned instance'taki workflow'lar ek `External/Adopt` adimi olmadan
+  dogrudan yonetilir.
   Shared n8n yalniz `shared_dev` local gelistirme adapter'idir.
 
 ## Gercek Veriyle Bagli Olanlar

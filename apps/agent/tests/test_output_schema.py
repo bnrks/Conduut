@@ -65,7 +65,8 @@ def test_merge_output_schema_into_resources_omits_key_when_empty():
 async def test_save_workflow_output_metadata_merges_and_preserves(monkeypatch):
     saved: dict = {}
 
-    async def fake_get(_user_id, _workflow_id):
+    async def fake_get(_user_id, _workflow_id, *, instance_id=None):
+        saved["get_instance_id"] = instance_id
         return store.WorkflowMetadata(
             workflow_id="wf_1",
             input_schema=[],
@@ -74,9 +75,17 @@ async def test_save_workflow_output_metadata_merges_and_preserves(monkeypatch):
             resources={"test_status": "passed"},
         )
 
-    async def fake_save(user_id, workflow_id, *, input_schema, resources=None):
+    async def fake_save(
+        user_id,
+        workflow_id,
+        *,
+        input_schema,
+        resources=None,
+        instance_id=None,
+    ):
         saved["input_schema"] = input_schema
         saved["resources"] = resources
+        saved["instance_id"] = instance_id
 
     monkeypatch.setattr("src.agent.tools.output_schema.store.get_workflow_metadata", fake_get)
     monkeypatch.setattr("src.agent.tools.output_schema.store.save_workflow_metadata", fake_save)
@@ -88,8 +97,11 @@ async def test_save_workflow_output_metadata_merges_and_preserves(monkeypatch):
         "wf_1",
         input_schema_payload=[{"name": "to", "label": "To", "type": "email", "required": True}],
         output_schema=[{"name": "price", "label": "Fiyat", "format": "currency"}],
+        instance_id="instance_1",
     )
 
+    assert saved["get_instance_id"] == "instance_1"
+    assert saved["instance_id"] == "instance_1"
     assert saved["input_schema"] == [
         {"name": "to", "label": "To", "type": "email", "required": True}
     ]
@@ -103,10 +115,17 @@ async def test_save_workflow_output_metadata_merges_and_preserves(monkeypatch):
 async def test_save_workflow_output_metadata_omits_empty_schema(monkeypatch):
     saved: dict = {}
 
-    async def fake_get(_user_id, _workflow_id):
+    async def fake_get(_user_id, _workflow_id, *, instance_id=None):
         return None
 
-    async def fake_save(user_id, workflow_id, *, input_schema, resources=None):
+    async def fake_save(
+        user_id,
+        workflow_id,
+        *,
+        input_schema,
+        resources=None,
+        instance_id=None,
+    ):
         saved["resources"] = resources
 
     monkeypatch.setattr("src.agent.tools.output_schema.store.get_workflow_metadata", fake_get)

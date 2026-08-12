@@ -133,12 +133,9 @@ async def _ensure_workflow_mutation_allowed(
     action: str,
 ) -> store.WorkflowMetadata | None:
     metadata = await _get_workflow_metadata(deps, workflow_id)
-    ownership = getattr(getattr(deps.n8n_context, "target", None), "ownership", "shared_dev")
-    if ownership == "customer_owned" and metadata is None:
-        raise RuntimeError(
-            f"This workflow already exists in your n8n instance but has not been adopted into "
-            f"Conduut yet. It is read-only until you adopt it, so I can't {action} it from chat."
-        )
+    # A resolved customer-owned instance is itself the ownership boundary.
+    # Conduut metadata is optional enrichment, not a second adoption gate.
+    del action
     return metadata
 
 
@@ -180,17 +177,15 @@ async def _save_workflow_baseline(deps: AgentDeps, workflow: dict[str, Any]) -> 
     if not workflow_id:
         return
     metadata = await _get_workflow_metadata(deps, workflow_id)
-    if metadata is None:
-        return
-    resources = dict(metadata.resources)
+    resources = dict(metadata.resources) if metadata else {}
     baseline = _workflow_baseline_payload(deps, workflow)
-    if resources.get("workflow_baseline") == baseline:
+    if metadata is not None and resources.get("workflow_baseline") == baseline:
         return
     resources["workflow_baseline"] = baseline
     await store.save_workflow_metadata(
         deps.user_id,
         workflow_id,
-        input_schema=metadata.input_schema,
+        input_schema=metadata.input_schema if metadata else [],
         resources=resources,
         instance_id=_deps_instance_id(deps),
     )
@@ -1099,6 +1094,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             workflow.id,
             input_schema_payload=_input_schema_payload(runtime_schema),
             output_schema=output_schema,
+            instance_id=_deps_instance_id(ctx.deps),
         )
         await _save_workflow_lookup_metadata(ctx.deps, workflow.id, lookup_patch)
 
@@ -1216,6 +1212,7 @@ def create_agent(model: Any) -> Agent[AgentDeps, str]:
             workflow.id,
             input_schema_payload=_input_schema_payload(runtime_schema),
             output_schema=output_schema,
+            instance_id=_deps_instance_id(ctx.deps),
         )
         await _save_workflow_lookup_metadata(ctx.deps, workflow.id, lookup_patch)
 

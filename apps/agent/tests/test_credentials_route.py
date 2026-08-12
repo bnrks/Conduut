@@ -83,40 +83,28 @@ async def test_submit_http_credential_creates_and_attaches(monkeypatch):
     assert result["workflow_id"] == "wf1"
 
 
-async def test_customer_owned_submit_cannot_mutate_external_workflow(monkeypatch):
-    _patch_user(monkeypatch)
+async def test_customer_owned_workflow_without_metadata_accepts_credential_attach(monkeypatch):
     context = SimpleNamespace(
         target=SimpleNamespace(instance_id="inst_1", ownership="customer_owned")
     )
-    created = False
 
     class _Client:
-        async def create_credential(self, *_args, **_kwargs):
-            nonlocal created
-            created = True
-
-    async def fake_request_n8n(_request, _user_id):
-        return context, _Client()
+        async def get_workflow(self, workflow_id):
+            return {"id": workflow_id, "nodes": [], "connections": {}}
 
     async def fake_metadata(_user_id, _workflow_id, **_kwargs):
         return None
 
-    monkeypatch.setattr(credentials_route, "_request_n8n", fake_request_n8n)
     monkeypatch.setattr(credentials_route.store, "get_workflow_metadata", fake_metadata)
 
-    body = CredentialSubmitIn(
-        credential_type="httpHeaderAuth",
-        data={"name": "Authorization", "value": "Bearer x"},
-        host="api.example.com",
-        workflow_id="external_wf",
-        node_name="HTTP Request",
+    metadata = await credentials_route._ensure_attach_allowed(
+        "user_1",
+        "workflow_on_customer_server",
+        context=context,
+        client=_Client(),
     )
-    with pytest.raises(HTTPException) as exc:
-        await credentials_route.submit_credential(object(), body)
 
-    assert exc.value.status_code == 409
-    assert exc.value.detail["code"] == "workflow_adoption_required"
-    assert created is False
+    assert metadata is None
 
 
 async def test_customer_owned_submit_reports_reconcile_when_baseline_save_fails(monkeypatch):

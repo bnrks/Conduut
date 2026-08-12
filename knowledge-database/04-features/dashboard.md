@@ -261,7 +261,9 @@ guvenli degildir.
 Chat, Workflows, Runs ve Credentials baglanti olmadan acilabilir. n8n gerektiren
 aksiyonlar Automation Server sekmesine yonlendiren soft gate gosterir; chat tool
 gereksiniminde `n8n_connection_prompt` attachment'i render eder. Metadata'siz
-remote workflow `External` ve read-only gorunur; `Adopt` sonrasinda yonetilir.
+Customer-owned instance'in kendisi kullanici sahiplik siniridir. Bu instance'ta
+listelenen workflow'lar Conduut metadata'si olmasa da `External`, read-only veya
+`Adopt` adimina dusmeden dogrudan yonetilir (2026-08-12).
 
 Ilgili notlar: [[current-state]], [[chat-workflow-generation]],
 [[known-issues]].

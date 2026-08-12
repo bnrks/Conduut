@@ -85,6 +85,7 @@ async def save_workflow_output_metadata(
     *,
     input_schema_payload: list[dict[str, Any]],
     output_schema: list[WorkflowOutputField | dict[str, Any]] | None,
+    instance_id: str | None = None,
 ) -> None:
     """Persist input + output schema, preserving any existing resources.
 
@@ -92,7 +93,11 @@ async def save_workflow_output_metadata(
     keys (e.g. test_status) instead of clobbering them.
     """
 
-    existing = await store.get_workflow_metadata(user_id, workflow_id)
+    existing = await store.get_workflow_metadata(
+        user_id,
+        workflow_id,
+        instance_id=instance_id,
+    )
     payload = _output_schema_payload(_normalized_output_schema(output_schema))
     resources = merge_output_schema_into_resources(existing.resources if existing else {}, payload)
     await store.save_workflow_metadata(
@@ -100,4 +105,5 @@ async def save_workflow_output_metadata(
         workflow_id,
         input_schema=input_schema_payload,
         resources=resources,
+        instance_id=instance_id,
     )

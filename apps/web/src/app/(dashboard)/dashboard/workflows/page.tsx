@@ -258,14 +258,6 @@ function readString(record: Record<string, unknown> | null, ...keys: string[]): 
   return undefined;
 }
 
-function readBoolean(record: Record<string, unknown> | null, ...keys: string[]): boolean | undefined {
-  for (const key of keys) {
-    const value = record?.[key];
-    if (typeof value === "boolean") return value;
-  }
-  return undefined;
-}
-
 function readNumber(record: Record<string, unknown> | null, ...keys: string[]): number | undefined {
   for (const key of keys) {
     const value = record?.[key];
@@ -280,9 +272,6 @@ function normalizeWorkflow(raw: unknown): Workflow {
   const source =
     readString(record, "source", "origin", "management_mode", "managementMode", "ownership") ??
     "conduut";
-  const readOnly =
-    readBoolean(record, "read_only", "readOnly") ??
-    ["external", "remote", "unmanaged"].includes(source);
 
   return {
     id: readString(record, "id") ?? crypto.randomUUID(),
@@ -302,14 +291,8 @@ function normalizeWorkflow(raw: unknown): Workflow {
     source,
     origin: readString(record, "origin"),
     managementMode: readString(record, "management_mode", "managementMode"),
-    readOnly,
-    adoptable: readBoolean(record, "adoptable") ?? readOnly,
     instanceId: readString(record, "instance_id", "instanceId"),
   };
-}
-
-function isReadOnlyWorkflow(workflow: Workflow): boolean {
-  return workflow.readOnly === true;
 }
 
 function parseSseEvent(raw: string): BatchStreamEvent | null {
@@ -794,7 +777,6 @@ export default function WorkflowsPage() {
     error: instanceError,
     connected: instanceConnected,
     connectionRequired,
-    refresh: refreshInstance,
   } = useN8nInstance();
   const confirm = useConfirm();
   const selection = useMultiSelect();
@@ -820,7 +802,6 @@ export default function WorkflowsPage() {
   const [batchResult, setBatchResult] = useState<WorkflowBatchRunResult | null>(null);
   const [expandedBatchRows, setExpandedBatchRows] = useState<Set<number>>(new Set());
   const [runningOverlay, setRunningOverlay] = useState<{ workflowName: string } | null>(null);
-  const [adoptingWorkflowId, setAdoptingWorkflowId] = useState<string | null>(null);
 
   const fetchWorkflows = useCallback(async () => {
     if (authLoading) return;
@@ -1264,7 +1245,6 @@ export default function WorkflowsPage() {
 
   const handleToggle = async (workflow: Workflow) => {
     if (!user) return;
-    if (isReadOnlyWorkflow(workflow)) return;
     const action = workflow.status === "active" ? "deactivate" : "activate";
     // Optimistic update
     setWorkflows((prev) =>
@@ -1341,32 +1321,6 @@ export default function WorkflowsPage() {
   };
 
   const handleDelete = (workflow: Workflow) => handleBulkDelete([workflow]);
-
-  const handleAdopt = async (workflow: Workflow) => {
-    if (!user) return;
-    setAdoptingWorkflowId(workflow.id);
-    try {
-      const token = await user.getIdToken();
-      const response = await fetch(`/api/workflows/${encodeURIComponent(workflow.id)}?action=adopt`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ source: "dashboard" }),
-      });
-      if (!response.ok) {
-        throw new Error(await getErrorMessage(response, "Workflow could not be adopted."));
-      }
-      toast.success(`"${workflow.name}" adopted.`);
-      await refreshInstance();
-      void fetchWorkflows();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Workflow could not be adopted.");
-    } finally {
-      setAdoptingWorkflowId(null);
-    }
-  };
 
   const submitWorkflowRun = async (workflow: Workflow, input: Record<string, string>) => {
     if (!user) return;
@@ -1678,7 +1632,7 @@ export default function WorkflowsPage() {
     const matchesStatus = statusFilter === "all" || wf.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-  const bulkSelectable = filtered.filter((workflow) => !isReadOnlyWorkflow(workflow));
+  const bulkSelectable = filtered;
 
   return (
     <div>
@@ -1700,7 +1654,7 @@ export default function WorkflowsPage() {
             statusLabel={instance?.connectionStatus ? instance.connectionStatus.replaceAll("_", " ") : undefined}
             description={
               instanceError ??
-              "Connect your own n8n server before Conduut can list workflows or adopt automations that already live there."
+              "Connect your own n8n server before Conduut can list and manage your workflows."
             }
           />
         </div>
@@ -1774,14 +1728,12 @@ export default function WorkflowsPage() {
               key={wf.id}
               workflow={wf}
               isRunning={runningWorkflowId === wf.id}
-              isAdopting={adoptingWorkflowId === wf.id}
               selectable={selection.selecting}
               selected={selection.isSelected(wf.id)}
               onToggleSelect={(w) => selection.toggle(w.id)}
               onRun={(w) => handleRun(w)}
               onToggle={(w) => void handleToggle(w)}
               onDelete={(w) => void handleDelete(w)}
-              onAdopt={(w) => void handleAdopt(w)}
             />
           ))}
         </div>
@@ -1799,7 +1751,7 @@ export default function WorkflowsPage() {
             {search || statusFilter !== "all"
               ? "Try adjusting your search or filter."
               : connectionRequired
-                ? "Connect your automation server first, then adopt or create workflows."
+                ? "Connect your automation server first, then create or manage workflows."
                 : "Start a conversation with the AI agent to create your first workflow."}
           </p>
           {!search && statusFilter === "all" && !connectionRequired && (

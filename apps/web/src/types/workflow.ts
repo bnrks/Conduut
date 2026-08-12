@@ -23,8 +23,6 @@ export interface Workflow {
   source?: string;
   origin?: string;
   managementMode?: string;
-  readOnly?: boolean;
-  adoptable?: boolean;
   instanceId?: string;
 }
 

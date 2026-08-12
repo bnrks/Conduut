@@ -859,6 +859,17 @@ Parser hem wrapped hem legacy unwrapped sekli kabul edecek sekilde duzeltildi;
 remote version okunamamasi ile canonical registry artifact eksigi artik farkli
 mesaj/action ile raporlanir.
 
+2026-08-12 ayni pilotta agent'in yeni olusturdugu workflow dashboard'da
+`External / Read only / Adopt` gorundu. Kok neden, create/update sonundaki
+`save_workflow_output_metadata` cagrisinin aktif `instance_id`'yi tasimayip
+metadata'yi legacy instance'siz dokumana yazmasiydi; listeleme ise dogru olarak
+`(instance_id, workflow_id)` metadata'sini ariyordu. Metadata yazimi artik
+request target'in `instance_id` degerini tasir. Ayrica customer-owned n8n zaten
+kullanici sahiplik siniri oldugu icin metadata yoklugu ayri adoption engeli
+sayilmaz; backend mutation/credential attach guard'lari ve web'deki External,
+read-only, Adopt yuzeyi kaldirildi. Mevcut baseline varsa drift korumasi devam
+eder. Ilgili: [[customer-owned-n8n]], [[dashboard]].
+
 ## Credential Prompt After Workflow Create
 
 2026-05-09'da gorulen vaka: Chat ile Google Sheets append workflow'u
