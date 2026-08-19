@@ -235,7 +235,17 @@ def _stub_platform_state(monkeypatch):
     async def _empty(*_a, **_k):
         return UserPlatformState()
 
+    async def _shared_dev_context(*_a, **_k):
+        return SimpleNamespace(
+            target=SimpleNamespace(instance_id="shared_dev", ownership="shared_dev")
+        )
+
+    async def _shared_dev_client(*_a, **_k):
+        return object()
+
     monkeypatch.setattr(runner, "gather_user_state", _empty)
+    monkeypatch.setattr(runner._n8n_resolver, "resolve", _shared_dev_context)
+    monkeypatch.setattr(runner._n8n_client_factory, "for_request_context", _shared_dev_client)
 
 
 @pytest.mark.asyncio

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import re
+import tempfile
 from collections.abc import MutableMapping
+from pathlib import Path
 from typing import Protocol
 
 import firebase_admin
+from cryptography.fernet import Fernet
 from google.api_core.exceptions import AlreadyExists
 
 from src.config import settings
@@ -37,6 +42,127 @@ class InMemorySecretStore:
 
     async def put_secret_version(self, secret_ref: str, secret_value: str) -> str:
         return await self.put_secret(secret_ref, secret_value)
+
+
+class EncryptedFileSecretStore:
+    def __init__(self, store_path: str | Path):
+        self._store_path = Path(store_path).expanduser().resolve()
+        self._key_path = self._store_path.with_suffix(".key")
+        self._lock = asyncio.Lock()
+
+    async def put_secret(self, secret_ref: str, secret_value: str) -> str:
+        async with self._lock:
+            payload = await asyncio.to_thread(self._read_payload)
+            payload[secret_ref] = self._encrypt(secret_value)
+            await asyncio.to_thread(self._write_payload, payload)
+        return secret_ref
+
+    async def get_secret(self, secret_ref: str) -> str | None:
+        async with self._lock:
+            payload = await asyncio.to_thread(self._read_payload)
+            encrypted = payload.get(secret_ref)
+            if encrypted is None:
+                return None
+            return self._decrypt(encrypted)
+
+    async def delete_secret(self, secret_ref: str) -> None:
+        async with self._lock:
+            payload = await asyncio.to_thread(self._read_payload)
+            payload.pop(secret_ref, None)
+            await asyncio.to_thread(self._write_payload, payload)
+
+    async def put_secret_version(self, secret_ref: str, secret_value: str) -> str:
+        return await self.put_secret(secret_ref, secret_value)
+
+    def _fernet(self) -> Fernet:
+        return Fernet(self._ensure_key())
+
+    def _encrypt(self, value: str) -> str:
+        return self._fernet().encrypt(value.encode("utf-8")).decode("utf-8")
+
+    def _decrypt(self, value: str) -> str:
+        return self._fernet().decrypt(value.encode("utf-8")).decode("utf-8")
+
+    def _ensure_key(self) -> bytes:
+        self._ensure_parent_dir()
+        if self._key_path.exists():
+            return self._key_path.read_bytes().strip()
+
+        key = Fernet.generate_key()
+        if self._write_new_file(self._key_path, key + b"\n"):
+            return key
+        return self._key_path.read_bytes().strip()
+
+    def _read_payload(self) -> dict[str, str]:
+        if not self._store_path.exists():
+            return {}
+        try:
+            payload = json.loads(self._store_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Encrypted secret store at '{self._store_path}' is not valid JSON."
+            ) from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError(
+                f"Encrypted secret store at '{self._store_path}' must contain a JSON object."
+            )
+        secrets: dict[str, str] = {}
+        for key, value in payload.items():
+            if isinstance(key, str) and isinstance(value, str):
+                secrets[key] = value
+        return secrets
+
+    def _write_payload(self, payload: dict[str, str]) -> None:
+        self._ensure_parent_dir()
+        encoded = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f"{self._store_path.name}.",
+            suffix=".tmp",
+            dir=self._store_path.parent,
+            text=False,
+        )
+        temp_path = Path(temp_name)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(encoded)
+            self._set_owner_only_permissions(temp_path)
+            os.replace(temp_path, self._store_path)
+            self._set_owner_only_permissions(self._store_path)
+        finally:
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    pass
+
+    def _write_new_file(self, path: Path, data: bytes, *, replace_existing: bool = False) -> bool:
+        flags = os.O_WRONLY | os.O_CREAT
+        if replace_existing:
+            flags |= os.O_TRUNC
+        else:
+            flags |= os.O_EXCL
+        try:
+            fd = os.open(path, flags, 0o600)
+        except FileExistsError:
+            if not replace_existing:
+                return False
+            raise
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+        finally:
+            self._set_owner_only_permissions(path)
+        return True
+
+    def _ensure_parent_dir(self) -> None:
+        self._store_path.parent.mkdir(parents=True, exist_ok=True)
+        self._set_owner_only_permissions(self._store_path.parent)
+
+    def _set_owner_only_permissions(self, path: Path) -> None:
+        try:
+            os.chmod(path, 0o600 if path.is_file() else 0o700)
+        except OSError:
+            return
 
 
 class GoogleSecretManagerSecretStore:
@@ -141,6 +267,8 @@ _secret_store_singleton: SecretStore | None = None
 
 def build_secret_store() -> SecretStore:
     backend = str(settings.n8n_secret_manager_backend or "memory").strip().lower()
+    if backend == "encrypted_file":
+        return EncryptedFileSecretStore(settings.n8n_local_secret_store_path)
     if backend == "google_secret_manager":
         project_id = str(settings.n8n_secret_manager_project_id or "").strip()
         if not project_id and firebase_admin._apps:
@@ -153,7 +281,9 @@ def build_secret_store() -> SecretStore:
             project_id=project_id,
             secret_prefix=str(settings.n8n_secret_manager_secret_prefix or "conduut-n8n"),
         )
-    return InMemorySecretStore()
+    if backend == "memory":
+        return InMemorySecretStore()
+    raise ValueError(f"Unsupported CONDUUT_N8N_SECRET_MANAGER_BACKEND '{backend}'.")
 
 
 def get_secret_store() -> SecretStore:

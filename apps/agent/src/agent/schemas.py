@@ -459,6 +459,8 @@ class AgentDeps:
     conversation_id: str
     event_queue: asyncio.Queue[AgentEvent]
     execution_policy: Literal["safe", "fast"] = "safe"
+    conversation_mode: Literal["default", "automation-server-setup"] = "default"
+    setup_stage_reply_available: bool = False
     attempt_id: str | None = None
     n8n_context: Any = None
     n8n: Any = None

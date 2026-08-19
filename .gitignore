@@ -26,6 +26,8 @@ pytest-cache-files-*/
 
 # Secrets / service accounts
 apps/agent/serviceAccount.json
+# Local encrypted n8n secret store and its machine-local key.
+apps/agent/.local/
 
 # Obsidian local workspace state
 knowledge-database/.obsidian/workspace.json

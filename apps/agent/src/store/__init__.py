@@ -55,6 +55,7 @@ from .conversations import (
     get_conversation_messages,
     get_or_create_conversation,
     list_conversations,
+    save_setup_stage_state,
 )
 from .credentials import (
     CustomCredential,
@@ -158,6 +159,7 @@ __all__ = [
     "get_conversation_messages",
     "get_or_create_conversation",
     "list_conversations",
+    "save_setup_stage_state",
     # credentials (includes private used by tests)
     "_custom_credential_from_data",
     "delete_custom_credential",

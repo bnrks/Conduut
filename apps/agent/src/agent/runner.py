@@ -43,7 +43,7 @@ from src.agent.router import classify_tier
 from src.agent.schemas import AgentDeps, AgentEvent
 from src.agent.step_assembler import StepAssembler
 from src.agent.tool_safety import CONDUUT_TOOL_NAMES
-from src.agent.tools import create_agent
+from src.agent.tools import create_agent, create_setup_agent
 from src.config import key_for_provider, settings
 from src.logging_config import bind_log_context, clear_log_context
 from src.n8n_provider import N8nClientFactory, N8nInstanceResolver, N8nProviderError
@@ -245,6 +245,8 @@ async def run(
     *,
     request_id: str | None = None,
     execution_policy: str = "safe",
+    conversation_mode: str = "default",
+    setup_stage_reply_available: bool = False,
     n8n_context=None,
     n8n=None,
     n8n_error: Exception | None = None,
@@ -273,6 +275,8 @@ async def run(
             message_history=message_history,
             run_id=usage_run_id,
             execution_policy=execution_policy,
+            conversation_mode=conversation_mode,
+            setup_stage_reply_available=setup_stage_reply_available,
             n8n_context=n8n_context,
             n8n=n8n,
             n8n_error=n8n_error,
@@ -310,6 +314,8 @@ async def _run_agent_stream(
     message_history: list[ModelMessage],
     run_id: str,
     execution_policy: str,
+    conversation_mode: str,
+    setup_stage_reply_available: bool,
     n8n_context=None,
     n8n=None,
     n8n_error: Exception | None = None,
@@ -327,7 +333,12 @@ async def _run_agent_stream(
     resolved_n8n_context = n8n_context
     resolved_n8n = n8n
     resolved_n8n_error = n8n_error
-    if resolved_n8n_context is None and resolved_n8n is None and resolved_n8n_error is None:
+    if (
+        conversation_mode != "automation-server-setup"
+        and resolved_n8n_context is None
+        and resolved_n8n is None
+        and resolved_n8n_error is None
+    ):
         try:
             resolved_n8n_context = await _n8n_resolver.resolve(user_id, request_id=request_id)
             resolved_n8n = await _n8n_client_factory.for_request_context(resolved_n8n_context)
@@ -380,6 +391,8 @@ async def _run_agent_stream(
             user_id=user_id,
             conversation_id=conv_id,
             execution_policy=execution_policy,
+            conversation_mode=conversation_mode,
+            setup_stage_reply_available=setup_stage_reply_available,
             event_queue=asyncio.Queue(),
             attempt_id=attempt_id,
             n8n_context=resolved_n8n_context,
@@ -441,7 +454,11 @@ async def _run_live(
     """Stream a single agent run live to the client (non-DeepSeek path)."""
 
     event_queue = deps.event_queue
-    agent = create_agent(model)
+    agent = (
+        create_setup_agent(model)
+        if deps.conversation_mode == "automation-server-setup"
+        else create_agent(model)
+    )
 
     # Akan görünür metni persist için biriktir (düşünce kaydedilmez).
     text_chunks: list[str] = []
@@ -781,7 +798,11 @@ async def _run_guarded_attempt(
     """Stream one attempt immediately and finish with an internal result marker."""
 
     queue = deps.event_queue
-    agent = create_agent(model)
+    agent = (
+        create_setup_agent(model)
+        if deps.conversation_mode == "automation-server-setup"
+        else create_agent(model)
+    )
     text_chunks: list[str] = []
     assembler = StepAssembler()
     guard = IncrementalReliabilityGuard()

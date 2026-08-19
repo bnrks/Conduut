@@ -28,6 +28,21 @@ Chat, Conduut MVP'nin ana urun akisi.
 mesajdan sonra agent conversation id dondurur. Web app `conversation-cache` ile
 yeni mesajlari gecici tutar ve `/chat/[conversationId]` sayfasina gecer.
 
+Automation Server Settings'ten gelen sabit
+`/chat?intent=automation-server-setup` intent'i composer'a yalniz Conduut'un
+tanidigi guided-setup prompt'unu bir kez doldurur; URL'den serbest prompt kabul
+edilmez ve mesaj otomatik gonderilmez. Sabit intent ilk request'te backend'e
+gonderilir ve conversation mode olarak saklanir; sonraki mesajlar mode'u
+conversation'dan alir. Eski pending execution-repair handoff'u setup intent'inde
+tuketilmez veya otomatik gonderilmez. Bu intent'te generic "once server bagla"
+callout'u gizlenir, cunku konusmanin amaci zaten server'i hazirlamaktir. Agent
+`get_automation_server_setup_step` ile tek canonical adimi alir, kullanicinin
+kendi VPS terminalinde calistirdigi komutlarin secret icermeyen ciktisini bekler
+ve sonra ilerler. Backend setup modunu normal workflow/action tool'larindan
+izole eder, stage sirasini server-side kilitler ve belirgin secret-bearing
+mesajlari kaydetmeden reddeder. Chat VPS'e baglanmaz veya komut calistirmaz
+(2026-08-17).
+
 ## Devam Conversation
 
 `/chat/[conversationId]` sayfasi conversation detayini yukler. Model secimi her

@@ -15,9 +15,12 @@ export interface UserInputResponse {
   decision: "approve" | "cancel";
 }
 
+export type ChatIntent = "automation-server-setup";
+
 export interface ChatSendRequest {
   content: string;
   conversation_id?: string;
+  intent?: ChatIntent;
   execution_policy?: ExecutionPolicy;
   execution_reference?: ExecutionReference;
   user_input_response?: UserInputResponse;

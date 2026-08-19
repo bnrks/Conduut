@@ -130,6 +130,10 @@ Baslica route handler'lar:
   ile pompalar; boylece Next response'u batch bitene kadar bufferlamaz.
 - `api/connections`: connection listeleme.
 - `api/connections/[connectionId]`: connection silme proxy.
+- `api/n8n/setup-guide`: authenticated agent `GET /api/n8n/setup-guide`
+  endpoint'ini no-store olarak proxy eder. Secret-free camelCase payload,
+  Settings icindeki embedded BYO kurulum rehberinin ve chat'teki canonical
+  setup kaynaginin ayni kalmasini saglar.
 - `api/oauth/google/authorize?service=gmail|sheets`: Firebase token ile agent
   Google Gmail veya Google Sheets authorize endpoint'ine proxy eder. Next 16
   dev ortaminda `api/connections/[connectionId]` dinamik route'u ile ayni dal
@@ -164,6 +168,16 @@ client bilgilerine ek olarak `CONDUUT_CONNECTION_ENCRYPTION_KEY` degerini de
 agent process'ine tasir; bu key yoksa Google connection n8n credential olarak
 kaydedilir ama direct Sheets/Gmail API aksiyonlari icin refresh token encrypted
 saklanamaz. Env veya port degisirse Next dev server yeniden baslatilmalidir.
+
+Settings `Automation Server` yuzeyi
+`components/settings/automation-server-section.tsx` icinde connection
+yonetimi ile embedded setup rehberini birlestirir. Rehber public hostname'i
+strict DNS etiketi olarak dogruladiktan sonra yalniz `<your-hostname>`
+placeholder'larina uygular ve HTTPS connection URL'ini prefill eder; API key
+rehber state'ine, URL'e veya browser storage'a yazilmaz. Rehber connected
+instance'ta kapali kalir; disconnected kullanici `Set up a new n8n` yolunu
+sectiginde acilir. Ilerleme state'i kalici tutulmaz; son provider preflight'i
+authoritative kabul edilir.
 
 ## Chat UI
 

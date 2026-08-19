@@ -22,6 +22,14 @@ ve shared n8n MVP'den gecis planini tanimlar. Mimari karar
 - `users/{uid}/n8n_instances/{instance_id}` ve user dokumanindaki
   `active_n8n_instance_id` aktif target'i tutar. Raw API key yalniz secret
   store'a gider; public API secret ref veya tam URL dondurmez.
+- Local customer-owned gelistirmede `encrypted_file` secret backend'i API
+  key'leri `apps/agent/.local/n8n-secrets.json` icinde Fernet ciphertext olarak
+  kalici tutar; adjacent machine-local `.key` dosyasi yeniden baslatmalarda
+  tekrar kullanilir ve tum `.local/` Git disindadir. Bu backend yalniz local
+  test kolayligi icindir. Production guard yalniz
+  `google_secret_manager` backend'ini kabul etmeye devam eder. Local
+  `customer_owned + memory` de restart-loss riskini geri getirmemesi icin
+  startup'ta reddedilir (2026-08-19).
 - Connect/check/key rotation/disconnect ve migration endpoint'leri FastAPI ile
   Next.js BFF tarafinda uygulanmistir.
 - URL preflight'i HTTPS, public DNS/IP, redirect kapatma, kritik cagri oncesi
@@ -48,8 +56,44 @@ ve shared n8n MVP'den gecis planini tanimlar. Mimari karar
   inactive yaratir, credential referanslarini temizler, read-back alir ve son
   30 gun/en fazla 10.000 sanitized execution ozetini arsivler.
 - Settings icinde `Automation Server` sekmesi, baglanti/health/key
-  rotation/disconnect ve provider-independent kurulum rehberi vardir. Baglanti
-  gerektiren ekranlar soft gate, chat ise `n8n_connection_prompt` kullanir.
+  rotation/disconnect ve chat'e gecen agent-guided kurulum girisi vardir.
+  Settings ayni canonical `apps/agent/src/agent/setup_guide.py` kaynagindan
+  beslenen read-only embedded kurulum rehberini de gosterir: desteklenen Ubuntu
+  22.04/24.04 + x86_64 hedef matrisi, public HTTPS zorunlulugu ve onerilen
+  2 vCPU/4 GB/40 GB + 2 GB swap baseline'i,
+  kopyalanabilir Docker install komutlari, `/opt/conduut-n8n` compose/Caddy
+  dosyalari, expected signals, troubleshooting ve safety notlari tek yerde
+  yayinlanir. Deploy adimi compose ve Caddy dosyalarini kullanicinin manuel
+  editor kullanmasini gerektirmeyen, sirayla calistirilabilir quoted-heredoc
+  komutlariyla VPS'e yazar; `docker compose config --quiet` basarili olmadan
+  stack baslatilmaz. HTTPS dogrulamasi HEAD istegi yerine n8n `/healthz` GET
+  endpoint'ini kullanir (2026-08-19). Public BFF/agent endpoint'i
+  `GET /api/n8n/setup-guide`
+  secret-free camelCase payload dondurur; chat stage-lock akisi ayni kaynagin
+  snake_case tek-adim payload'ini kullanmaya devam eder. Baglanti gerektiren
+  ekranlar soft gate, chat ise `n8n_connection_prompt` kullanir.
+- Guided setup V1, Ubuntu 22.04 LTS veya Ubuntu 24.04 LTS + x86_64/amd64 public
+  VPS, public DNS/80/443, Conduut destek baseline'i public HTTPS + onerilen
+  2 vCPU/4 GB RAM/40 GB SSD/2 GB swap ve pinned n8n `1.121.3` ile sinirlidir;
+  24.04 preferred target'tir. Agent
+  `setup_guide.py` canonical adimlarini okur; VPS'e SSH yapmaz ve komut
+  calistirmaz. Kullanici komutlari kendi terminalinde calistirip secret
+  icermeyen ciktiyi chat'e getirir. Deployment Docker Compose +
+  pinned `caddy:2.10.2`, `docker.n8n.io/n8nio/n8n:1.121.3`, `N8N_PROXY_HOPS=1`,
+  settings permission enforcement, runners, Istanbul timezone ve
+  `N8N_WEBHOOK_URL` kullanir; 5678 public'e publish edilmez. Docker kurulumu
+  official `docker.asc` + `.sources` akisini VPS'teki Ubuntu codename'ini
+  dinamik okuyarak uygular; temiz Ubuntu acilisinda `unattended-upgrades`
+  `dpkg` kilidini tutarsa apt install komutlari kilidi silmek veya prosesi
+  oldurmek yerine en fazla 10 dakika bekler. `N8N_ENCRYPTION_KEY` yalniz VPS'teki mode 600
+  `.env` icinde sessizce uretilir (2026-08-17).
+- Setup conversation'i server tarafinda immutable
+  `conversation_mode=automation-server-setup` olarak saklanir. Bu mod normal
+  workflow/platform action tool'larini almaz; yalniz canonical setup-step ve
+  safe clarification tool'lari aciktir. Stage sirasi Firestore conversation
+  state'i ile server tarafinda kilitlenir. Private-key block'u veya belirgin
+  password/API key/token/encryption-key assignment'i iceren mesaj, persist ya
+  da model cagrisindan once `422 setup_secret_not_allowed` ile reddedilir.
 
 Otomatik kabul kapsami iki fake tenant/origin izolasyonu, SSRF/DNS rebinding,
 typed provider hatalari, OAuth ve preview binding, migration tekrar kosusu,
@@ -186,8 +230,9 @@ yapar.
 ### Ilk baglanti akisi
 
 1. Kullanici `Connect existing n8n` veya `Set up a new n8n` yolunu secer.
-2. Yeni kurulum yolunda Conduut dogrulanmis bir hosting/provider kurulum
-   rehberine yonlendirir; satin alma ve sahiplik kullanicida kalir.
+2. Yeni kurulum yolunda Conduut chat'te canonical guided setup'i acar; agent
+   tek desteklenen adimi verir, kullanici terminal ciktisini geri getirir ve
+   satin alma, VPS sahipligi ve komut calistirma kullanicida kalir.
 3. Kullanici HTTPS n8n URL'sini ve n8n'de olusturdugu API key'i Conduut'a verir.
 4. Backend URL'yi normalize eder ve guvenlik kontrolunden gecirir.
 5. Backend TLS, public reachability, API auth, n8n version ve gerekli public API
@@ -611,8 +656,9 @@ pilot kullanicilar icin durdurmak veya onceki customer-owned surume donmektir.
 
 ## Acik Kararlar
 
-- V1 secret backend: Google Secret Manager, Vault veya baska managed secret
-  store.
+- Production V1 secret backend'i Google Secret Manager'dir; IAM ve gercek
+  deployment kurulumu pilot oncesi tamamlanmalidir. `encrypted_file` yalniz
+  local development adapter'idir.
 - Ilk supported n8n minimum/maximum surumu.
 - Ilk desteklenen hosting/provider rehberleri.
 - Tek kullanici icin birden fazla n8n instance UI'i ne zaman acilacak?

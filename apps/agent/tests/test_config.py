@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from src.config import (
+    _DEFAULT_LOCAL_SECRET_STORE_PATH,
     Settings,
     _find_repo_root,
     canonical_n8n_version,
@@ -13,6 +14,7 @@ from src.config import (
     registry_n8n_url,
     settings,
     shared_dev_n8n_api_key,
+    validate_n8n_provider_settings,
 )
 
 
@@ -96,3 +98,50 @@ def test_canonical_n8n_version_reads_registry_manifest(tmp_path, monkeypatch):
     monkeypatch.setattr("src.config._registry_manifest_path", lambda: manifest)
 
     assert canonical_n8n_version() == "1.121.3"
+
+
+def test_local_secret_store_path_defaults_to_stable_absolute_path():
+    assert Path(settings.n8n_local_secret_store_path).is_absolute()
+    assert Path(settings.n8n_local_secret_store_path) == _DEFAULT_LOCAL_SECRET_STORE_PATH
+
+
+def test_validate_n8n_provider_settings_rejects_non_google_secret_backend_in_production(
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "n8n_provider_mode", "customer_owned")
+    monkeypatch.setattr(settings, "n8n_secret_manager_backend", "encrypted_file")
+
+    with pytest.raises(ValueError, match="google_secret_manager"):
+        validate_n8n_provider_settings()
+
+
+def test_validate_n8n_provider_settings_accepts_customer_owned_google_backend_in_production(
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "n8n_provider_mode", "customer_owned")
+    monkeypatch.setattr(settings, "n8n_secret_manager_backend", "google_secret_manager")
+
+    validate_n8n_provider_settings()
+
+
+def test_validate_n8n_provider_settings_rejects_memory_for_local_customer_owned(
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "environment", "development")
+    monkeypatch.setattr(settings, "n8n_provider_mode", "customer_owned")
+    monkeypatch.setattr(settings, "n8n_secret_manager_backend", "memory")
+
+    with pytest.raises(ValueError, match="encrypted_file"):
+        validate_n8n_provider_settings()
+
+
+def test_validate_n8n_provider_settings_accepts_encrypted_file_for_local_customer_owned(
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "environment", "development")
+    monkeypatch.setattr(settings, "n8n_provider_mode", "customer_owned")
+    monkeypatch.setattr(settings, "n8n_secret_manager_backend", "encrypted_file")
+
+    validate_n8n_provider_settings()

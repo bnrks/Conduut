@@ -10,6 +10,7 @@ PUBLIC_AGENT_TOOLS = {
     "search_workflow_cards",
     "get_workflow_card",
     "get_node_contract",
+    "get_automation_server_setup_step",
     "run_platform_action",
     "request_user_input",
     "list_workflows",
@@ -40,6 +41,10 @@ def test_unknown_tools_fail_closed():
 
 def test_ephemeral_user_input_request_is_safe_to_replay():
     assert replay_safety("request_user_input") is ReplaySafety.READ_ONLY
+
+
+def test_setup_guide_tool_is_safe_to_replay():
+    assert replay_safety("get_automation_server_setup_step") is ReplaySafety.READ_ONLY
 
 
 def test_agent_deps_marks_only_unsafe_tools(make_agent_deps):

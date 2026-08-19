@@ -5,6 +5,7 @@ import { RECOVERY_ACTION_PREFIX } from "@/lib/chat/stream-state";
 const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   search_n8n_nodes: "Checking available n8n steps",
   get_node_schema: "Reading step requirements",
+  get_automation_server_setup_step: "Preparing the next server setup step",
   find_workflow_template: "Looking for a matching template",
   request_user_input: "Checking what details are missing",
   list_workflows: "Checking workflows",

@@ -264,6 +264,15 @@ yuzeyi `src.agent.tools` paketinin `__init__.py` dosyasindan korunur. Ana
 moduller:
 
 - `factory.py`: `create_agent` ve Pydantic AI tool registration.
+- `setup_guide.py`: customer-owned Ubuntu 24.04/x86_64 VPS icin versioned,
+  deterministic, tek-adimlik n8n `1.121.3` kurulum rehberi; komutlar, file
+  payload'lari, beklenen sinyaller ve guvenli troubleshooting sinirlari.
+  2026-08-17 itibariyla destek matrisi Ubuntu 22.04 veya 24.04 + x86_64'tur
+  (24.04 preferred). Ayni modul chat icin snake_case stage payload'i ve
+  Settings/BFF icin secret-free camelCase `GET /api/n8n/setup-guide` payload'i
+  uretir. Docker install adimi official `docker.asc` + `.sources` akisini
+  dinamik codename ile verir; deploy compose `N8N_WEBHOOK_URL` kullanir ve
+  5678'i public'e publish etmez.
 - `prompt.py`: agent system prompt'u.
 - `runtime_inputs.py`: reusable workflow input schema ve Gmail runtime input
   inference.
@@ -286,6 +295,13 @@ moduller:
 Kayitli tool'lar:
 
 - Registry: `search_n8n_nodes`, `get_node_schema`, `find_workflow_template`.
+- Setup: read-only/replay-safe `get_automation_server_setup_step`; agent bu
+  tool olmadan VPS/n8n kurulum komutu uretmez, VPS'e baglanmaz ve shell
+  calistirmaz. Secret'lar chat yerine ilgili kaynak sistem/Settings write-only
+  formunda kalir. Setup conversation mode'u Firestore'da immutable saklanir;
+  runner bu modda yalniz setup step + safe clarification tool'larini kaydeder.
+  Route belirgin secret-bearing setup mesajlarini persistence/model oncesi
+  reddeder; setup stage sirasi conversation state ile server-side enforce edilir.
 - Workflow CRUD: `list_workflows`, `get_workflow`, `create_workflow`,
   `update_workflow`, `delete_workflow`. (IR tool'lari
   `create_workflow_from_plan`/`_spec` Faz 3'te kaldirildi — ADR-0010.)
@@ -712,11 +728,26 @@ tarafindan ignore edilir.
 
 `src/n8n_client.py` instance-scoped `N8nClient` ile target'in base/webhook URL
 ve API key'ini kullanir. `N8nInstanceResolver` authenticated `user_id` icin
-aktif Firestore instance metadata'sini ve Secret Manager secret'ini cozer;
+aktif Firestore instance metadata'sini ve secili secret backend'indeki secret'i cozer;
 `N8nClientFactory` ayni request context'ini route, agent tools, readiness,
 executions, sandbox ve platform state boyunca tasir. Shared global facade yalniz
 `shared_dev` geriye uyumluluk/test adapter'idir. Production resolver hatasinda
 shared fallback yoktur.
+
+Secret backend secimi `CONDUUT_N8N_SECRET_MANAGER_BACKEND` ile yapilir:
+`memory` unit/test adapter'i, `encrypted_file` local restart-persistent adapter,
+`google_secret_manager` production adapter'idir. Local encrypted store yolu
+`CONDUUT_N8N_LOCAL_SECRET_STORE_PATH` ile override edilebilir; default
+`apps/agent/.local/n8n-secrets.json`'dir. Store value'lari Fernet ile ayri ayri
+encrypt eder, adjacent `.key` dosyasini tekrar kullanir ve atomik file replace
+uygular. Bilinmeyen backend sessizce memory'ye dusmez; startup fail-fast olur.
+Production validation yalniz `customer_owned + google_secret_manager` kabul
+eder. Local `.local/` payload/key Git'e girmez (2026-08-19).
+Local `customer_owned + memory` kombinasyonu da startup'ta reddedilir; boylece
+restartta API key kaybina yol acan eski konfigurasyona sessizce donulemez.
+Windows'ta file/key ACL'i workspace kullanicisinin mevcut NTFS izin sinirina
+dayanir; bu adapter ayni makinedeki kotu niyetli kullaniciya karsi production
+vault garantisi vermez.
 
 Connect preflight ve her kritik transport, `src/n8n_security.py` uzerinden
 HTTPS/public-address kontrolu ve yeniden DNS cozumleme yapar; redirect izlemez.

@@ -14,6 +14,7 @@ def _find_repo_root(start: Path) -> Path:
 
 
 _REPO_ROOT = _find_repo_root(_APP_DIR)
+_DEFAULT_LOCAL_SECRET_STORE_PATH = (_APP_DIR / ".local" / "n8n-secrets.json").resolve()
 
 
 def _registry_manifest_path() -> Path:
@@ -67,6 +68,7 @@ class Settings(BaseSettings):
     n8n_secret_manager_backend: str = "memory"
     n8n_secret_manager_project_id: str = ""
     n8n_secret_manager_secret_prefix: str = "conduut-n8n"
+    n8n_local_secret_store_path: str = str(_DEFAULT_LOCAL_SECRET_STORE_PATH)
     n8n_migration_mode: str = "off"
     n8n_migration_manifest_path: str = ""
     # User-facing schedule times are stored in this workflow timezone. Keeping
@@ -153,6 +155,9 @@ def validate_n8n_provider_settings() -> None:
     provider_mode = str(settings.n8n_provider_mode or "").strip().lower()
     secret_backend = str(settings.n8n_secret_manager_backend or "").strip().lower()
 
+    if secret_backend not in {"memory", "encrypted_file", "google_secret_manager"}:
+        raise ValueError("Unsupported CONDUUT_N8N_SECRET_MANAGER_BACKEND.")
+
     if environment == "production":
         if provider_mode != "customer_owned":
             raise ValueError("Production requires CONDUUT_N8N_PROVIDER_MODE=customer_owned.")
@@ -162,3 +167,7 @@ def validate_n8n_provider_settings() -> None:
             )
     elif provider_mode not in {"shared_dev", "customer_owned"}:
         raise ValueError("Unsupported CONDUUT_N8N_PROVIDER_MODE.")
+    elif provider_mode == "customer_owned" and secret_backend == "memory":
+        raise ValueError(
+            "Local customer_owned mode requires CONDUUT_N8N_SECRET_MANAGER_BACKEND=encrypted_file."
+        )

@@ -239,24 +239,35 @@ gecmisi `/dashboard/runs` altinda kalir ([[execution-history]]).
 
 ## Settings
 
-`/dashboard/settings` bes tab icerir:
+`/dashboard/settings` dort tab icerir:
 
 - Profile: UI var, kaydetme backend'e bagli degil.
 - Security: UI var, password update backend'e bagli degil.
 - Preferences: theme local behavior var, email notification kaydi yok.
-- Assistant Connections: gercek LLM provider ekleme/listeleme/dogrulama akisi
-  vardir.
-- Automation Server: customer-owned n8n connect formu, provider-independent
-  yeni kurulum rehberi, canonical version/health, stored-key check, key rotation
-  ve uzak n8n verisini silmeyen disconnect aksiyonlarini sunar.
+- Automation Server: customer-owned n8n connect formu; bagli durumda form yerine
+  kompakt connection ozeti; korunmus `Current status`; canonical version/health,
+  stored-key check, key rotation ve uzak n8n verisini silmeyen disconnect
+  aksiyonlarini sunar. Silinen legacy migration yuzeyi Settings'te gosterilmez
+  ve migration status istegi atilmaz. `What Conduut expects`, public HTTPS,
+  admin API key, desteklenen `1.121.3` surumu ve dogru public webhook origin
+  gereksinimlerini dort taranabilir kartta anlatir. Ayrica ayni canonical
+  `setup_guide.py` kaynagindan beslenen gomulu kurulum rehberi bulunur:
+  desteklenen Ubuntu 22.04/24.04 + x86_64 hedefi, minimum VPS siniri,
+  kopyalanabilir Docker/n8n komutlari, olusturulacak dosyalar, expected
+  signals, troubleshooting ve safety notlari adim adim Settings icinde gorulur.
+  Rehberde girilen public DNS hostname'i yalniz guvenli hostname ise
+  `<your-hostname>` placeholder'larina substitute edilir ve connect formundaki
+  URL alanina prefill olur; connected kullanicida guide collapsed baslar.
+  Rehber kullanicidan yalniz son adimda public HTTPS URL ve n8n icinde
+  olusturulan API key'i Conduut'a vermesini ister; root password, private SSH
+  key ve `N8N_ENCRYPTION_KEY` asla istenmez. Ayni rehber `Open in chat` ile
+  `/chat?intent=automation-server-setup` konusmasina gecirilebilir. Kullanici
+  komutlari kendi terminalinde calistirir ve secret icermeyen ciktiyi chat'e
+  geri getirir (2026-08-17).
 
 Next.js 16 route segment ayarlari statik analiz edildigi icin BYO BFF
 route'larinin `dynamic` ve `runtime` degerleri her `route.ts` icinde literal
 olarak export edilir; ortak helper'dan re-export edilmez.
-
-Assistant Connections, Firestore'daki provider ve LLM settings dokumanlarini
-kullanir. API key saklama sekli MVP icin yeterli kabul edilmis, production icin
-guvenli degildir.
 
 Chat, Workflows, Runs ve Credentials baglanti olmadan acilabilir. n8n gerektiren
 aksiyonlar Automation Server sekmesine yonlendiren soft gate gosterir; chat tool

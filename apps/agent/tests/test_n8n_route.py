@@ -80,3 +80,25 @@ def test_connect_n8n_route_redacts_secret_from_response(monkeypatch):
     assert "https://" not in str(body).lower()
     assert "baseUrl" not in str(body)
     assert body["instance"]["displayName"] == "Prod"
+
+
+def test_get_setup_guide_requires_auth():
+    response = _app().get("/api/n8n/setup-guide")
+
+    assert response.status_code == 401
+
+
+def test_get_setup_guide_returns_public_payload(monkeypatch):
+    monkeypatch.setattr(n8n_route, "get_user_id", lambda _request: "u1")
+
+    response = _app().get("/api/n8n/setup-guide")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["schemaVersion"] == "automation_server_setup.v1"
+    assert body["supportedTarget"]["preferredOs"] == "Ubuntu 24.04 LTS"
+    assert body["supportedTarget"]["supportedOsVersions"] == [
+        "Ubuntu 22.04 LTS",
+        "Ubuntu 24.04 LTS",
+    ]
+    assert all("apiKey" not in str(stage) for stage in body["stages"])

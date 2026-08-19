@@ -20,11 +20,14 @@ once bu not ve kaynak kod esas alinmalidir.
   Docker Compose ile calistirir; agent'i lokal Uvicorn reload, web'i lokal
   `npm run dev` ile ayaga kaldirir.
 - Customer-owned n8n V1: authenticated kullaniciyi aktif instance'a cozen
-  request-scope provider/client, Secret Manager, guvenli connect/check/rotate/
+  request-scope provider/client, pluggable secret store, guvenli connect/check/rotate/
   disconnect, migration ve web onboarding yuzeyleri uygulanmistir. Aktif
   customer-owned instance'taki workflow'lar ek `External/Adopt` adimi olmadan
   dogrudan yonetilir.
-  Shared n8n yalniz `shared_dev` local gelistirme adapter'idir.
+  Local customer-owned testte API key restartlar arasinda Git-ignored
+  Fernet-encrypted file store'da kalir; production hala Google Secret Manager
+  ve IAM kurulumu ister. Shared n8n yalniz `shared_dev` local gelistirme
+  adapter'idir.
 
 ## Gercek Veriyle Bagli Olanlar
 

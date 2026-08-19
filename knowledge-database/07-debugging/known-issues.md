@@ -7,6 +7,65 @@ Bu not, repo icinde gorulen bilinen sorunlari ve dikkat noktalarini toplar.
 Kullanicinin yeni fark ettigi ve henuz triage edilmemis sorun/bug notlari icin
 ayri alan: [[issue-backlog]].
 
+## Temiz Ubuntu'da unattended-upgrades Docker kurulumunu kilitliyordu (2026-08-19, cozuldu)
+
+**Belirti:** Docker repository basariyla eklendikten sonra paket kurulumu
+`/var/lib/dpkg/lock-frontend` kilidinin `unattended-upgr` prosesi tarafindan
+tutuldugunu soyleyerek duruyor; sonraki version kontrolu `docker: command not
+found` donduruyordu.
+
+**Kok neden:** Yeni acilan Ubuntu VPS ilk otomatik sistem guncellemesini
+rehberdeki Docker kurulumu ile ayni anda calistirabiliyor. Varsayilan apt
+davranisi dpkg kilidini beklemek yerine hemen hata donduruyordu.
+
+**Duzeltme:** Canonical Docker prerequisite ve Engine install komutlari artik
+`DPkg::Lock::Timeout=600` kullanarak kilidin guvenli bicimde kalkmasini en fazla
+10 dakika bekler. Rehber kilit dosyasini silmemeyi ve `unattended-upgrades`
+prosesini oldurmemeyi acikca belirtir. Ilgili: [[customer-owned-n8n]],
+[[agent-service]].
+
+## BYO rehberi compose dosyalarini yazmadan stack'i baslatiyordu (2026-08-19, cozuldu)
+
+**Belirti:** Temiz Ubuntu VPS'te rehber komutlari gorundugu sirayla
+calistirildiginda `.env` olusuyor, fakat `docker compose up -d` ve ardindan
+`docker compose ps` `no configuration file provided: not found` donduruyordu.
+
+**Kok neden:** Canonical `deploy_n8n` adimi compose ve Caddy iceriklerini ayri
+`Files` payload'i olarak gosteriyor, fakat bunlari VPS'e yazan calistirilabilir
+komut vermiyordu. Web arayuzu komutlari file payload'larindan once gosterdigi
+icin sirali akista `/opt/conduut-n8n/docker-compose.yml` ve `Caddyfile` hic
+olusmuyordu. `verify_stack` ayrica n8n icin gerekli olmayan bir HTTP HEAD
+istegine (`curl -I`) dayaniyordu.
+
+**Duzeltme:** Deploy adimi iki public config dosyasini quoted heredoc +
+`sudo tee` ile dogrudan olusturur, ardindan `docker compose config --quiet` ile
+dogrulayip stack'i baslatir. Ayri file payload'lari yalniz referans kopyasi
+olarak korunur. HTTPS kontrolu artik `GET /healthz` cagirir ve beklenen
+`{"status":"ok"}` sinyalini aciklar. Ilgili: [[customer-owned-n8n]],
+[[web-app]], [[agent-service]].
+
+## Customer-owned n8n API key agent restartinda kayboluyordu (2026-08-19, cozuldu)
+
+**Belirti:** Local agent yeniden baslatildiktan sonra `/api/n8n/instance` eski
+Firestore metadata'si nedeniyle `200` ve connected gorunurken `/api/workflows`
+ile `/api/executions` `404 n8n_connection_required` donduruyordu.
+
+**Kok neden:** Local `CONDUUT_N8N_SECRET_MANAGER_BACKEND=memory` API key'i
+yalniz process RAM'inde tutuyordu. Firestore instance kaydi kalici, in-memory
+secret ise restartta bosaldigi icin metadata ile gercek credential durumu
+ayrisiyordu.
+
+**Duzeltme:** Local workspace `encrypted_file` backend'ine gecti. API key
+Fernet ciphertext olarak Git-ignored `apps/agent/.local/` altinda, encryption
+key ise adjacent machine-local `.key` dosyasinda tutulur; atomik replace ve
+restart-persistence testleri vardir. Gecis sonrasi mevcut instance icin API key
+bir kez daha Settings `Rotate key` ile yazilmalidir. Production bu adapter'i
+kabul etmez; yalniz Google Secret Manager ile baslar. Local customer-owned
+startup da artik `memory` backend'ini reddeder. Windows local adapter guvenligi
+mevcut kullanici/workspace NTFS ACL sinirina dayanir; ayni makinedeki kotu
+niyetli kullaniciya karsi production vault izolasyonu saglamaz. Ilgili:
+[[customer-owned-n8n]], [[agent-service]].
+
 ## Sifir eligible item `lastNode` webhook'unda HTTP 500 gorunuyordu (2026-07-23, cozuldu)
 
 **Belirti:** Gecen H1 workflow'unun ikinci real execution'i `#423` Sheet'teki

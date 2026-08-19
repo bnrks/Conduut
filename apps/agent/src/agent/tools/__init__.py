@@ -3,7 +3,7 @@
 from src import n8n_client, store
 from src.agent.tools.build_pipeline import _validated_runtime_workflow, _validated_workflow
 from src.agent.tools.execution import _summarize_execution
-from src.agent.tools.factory import create_agent
+from src.agent.tools.factory import create_agent, create_setup_agent
 from src.agent.tools.readiness import analyze_workflow_readiness_payload
 from src.agent.tools.runtime_inputs import (
     _apply_runtime_inputs_to_nodes,
@@ -34,6 +34,7 @@ __all__ = [
     "_workflow_with_post_webhook_trigger",
     "analyze_workflow_readiness_payload",
     "create_agent",
+    "create_setup_agent",
     "n8n_client",
     "registry",
     "iter_workflow_batch_with_input",

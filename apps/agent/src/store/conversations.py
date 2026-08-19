@@ -5,8 +5,10 @@ from typing import Literal
 from uuid import uuid4
 
 import src.store as _pkg_store
+from src.agent.setup_guide import SetupStageName, get_setup_stage_order
 
 ExecutionPolicy = Literal["safe", "fast"]
+ConversationMode = Literal["default", "automation-server-setup"]
 
 
 @dataclass
@@ -34,6 +36,10 @@ class Conversation:
     reasoning_effort: str | None = None
     execution_policy: ExecutionPolicy = "safe"
     execution_policy_locked: bool = True
+    conversation_mode: ConversationMode = "default"
+    setup_next_stage: SetupStageName | None = None
+    setup_stage_locked: bool = False
+    setup_last_stage: SetupStageName | None = None
     messages: list[Message] | None = None
 
 
@@ -45,6 +51,29 @@ def _conversation_execution_policy(data: dict | None) -> ExecutionPolicy:
 def _conversation_execution_policy_locked(data: dict | None) -> bool:
     value = (data or {}).get("execution_policy_locked")
     return True if value is None else bool(value)
+
+
+def _conversation_mode(data: dict | None) -> ConversationMode:
+    value = (data or {}).get("conversation_mode")
+    return "automation-server-setup" if value == "automation-server-setup" else "default"
+
+
+def _conversation_setup_next_stage(data: dict | None) -> SetupStageName | None:
+    value = (data or {}).get("setup_next_stage")
+    if value in get_setup_stage_order():
+        return value
+    return "requirements" if _conversation_mode(data) == "automation-server-setup" else None
+
+
+def _conversation_setup_stage_locked(data: dict | None) -> bool:
+    return bool((data or {}).get("setup_stage_locked") or False)
+
+
+def _conversation_setup_last_stage(data: dict | None) -> SetupStageName | None:
+    value = (data or {}).get("setup_last_stage")
+    if value in get_setup_stage_order():
+        return value
+    return None
 
 
 def _conv_ref(user_id: str, conv_id: str):
@@ -76,6 +105,10 @@ async def list_conversations(user_id: str) -> list[Conversation]:
                 updated_at=data.get("updated_at", ""),
                 execution_policy=_conversation_execution_policy(data),
                 execution_policy_locked=_conversation_execution_policy_locked(data),
+                conversation_mode=_conversation_mode(data),
+                setup_next_stage=_conversation_setup_next_stage(data),
+                setup_stage_locked=_conversation_setup_stage_locked(data),
+                setup_last_stage=_conversation_setup_last_stage(data),
             )
         )
     return result
@@ -121,6 +154,10 @@ async def get_conversation(user_id: str, conv_id: str) -> Conversation | None:
         reasoning_effort=data.get("reasoning_effort"),
         execution_policy=_conversation_execution_policy(data),
         execution_policy_locked=_conversation_execution_policy_locked(data),
+        conversation_mode=_conversation_mode(data),
+        setup_next_stage=_conversation_setup_next_stage(data),
+        setup_stage_locked=_conversation_setup_stage_locked(data),
+        setup_last_stage=_conversation_setup_last_stage(data),
         messages=messages,
     )
 
@@ -129,6 +166,7 @@ async def get_or_create_conversation(
     user_id: str,
     conv_id: str | None,
     execution_policy: ExecutionPolicy = "safe",
+    conversation_mode: ConversationMode = "default",
     provider: str | None = None,
     model: str | None = None,
     reasoning_effort: str | None = None,
@@ -142,12 +180,20 @@ async def get_or_create_conversation(
             if (
                 data.get("execution_policy") != stored_execution_policy
                 or data.get("execution_policy_locked") is None
+                or data.get("conversation_mode") != _conversation_mode(data)
+                or data.get("setup_stage_locked") != _conversation_setup_stage_locked(data)
+                or data.get("setup_next_stage") != _conversation_setup_next_stage(data)
+                or data.get("setup_last_stage") != _conversation_setup_last_stage(data)
             ):
                 await _pkg_store._run(
                     lambda: _pkg_store._conv_ref(user_id, conv_id).update(
                         {
                             "execution_policy": stored_execution_policy,
                             "execution_policy_locked": stored_execution_policy_locked,
+                            "conversation_mode": _conversation_mode(data),
+                            "setup_next_stage": _conversation_setup_next_stage(data),
+                            "setup_stage_locked": _conversation_setup_stage_locked(data),
+                            "setup_last_stage": _conversation_setup_last_stage(data),
                         }
                     )
                 )
@@ -162,6 +208,10 @@ async def get_or_create_conversation(
                 reasoning_effort=data.get("reasoning_effort"),
                 execution_policy=stored_execution_policy,
                 execution_policy_locked=stored_execution_policy_locked,
+                conversation_mode=_conversation_mode(data),
+                setup_next_stage=_conversation_setup_next_stage(data),
+                setup_stage_locked=_conversation_setup_stage_locked(data),
+                setup_last_stage=_conversation_setup_last_stage(data),
             )
 
     new_id = str(uuid4())
@@ -173,6 +223,12 @@ async def get_or_create_conversation(
         "updated_at": now,
         "execution_policy": execution_policy,
         "execution_policy_locked": True,
+        "conversation_mode": conversation_mode,
+        "setup_next_stage": (
+            "requirements" if conversation_mode == "automation-server-setup" else None
+        ),
+        "setup_stage_locked": False,
+        "setup_last_stage": None,
     }
     if provider:
         doc_data["provider"] = provider
@@ -193,7 +249,30 @@ async def get_or_create_conversation(
         reasoning_effort=reasoning_effort,
         execution_policy=execution_policy,
         execution_policy_locked=True,
+        conversation_mode=conversation_mode,
+        setup_next_stage="requirements" if conversation_mode == "automation-server-setup" else None,
+        setup_stage_locked=False,
+        setup_last_stage=None,
     )  # noqa: E501
+
+
+async def save_setup_stage_state(
+    user_id: str,
+    conv_id: str,
+    *,
+    next_stage: SetupStageName | None,
+    stage_locked: bool,
+    last_stage: SetupStageName | None,
+) -> None:
+    await _pkg_store._run(
+        lambda: _pkg_store._conv_ref(user_id, conv_id).update(
+            {
+                "setup_next_stage": next_stage,
+                "setup_stage_locked": stage_locked,
+                "setup_last_stage": last_stage,
+            }
+        )
+    )
 
 
 async def add_message(

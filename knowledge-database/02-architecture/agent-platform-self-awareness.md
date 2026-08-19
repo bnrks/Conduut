@@ -10,6 +10,14 @@ kez dinamik bağlam enjekte edilir.
   `tools/factory.base_instructions()` üzerinden `create_agent` constructor
   instructions'ına gömülür (sabit, cache-dostu önek).
   **Yeni özellik/sınır değişiminde önce burası güncellenir.**
+  2026-08-17 itibariyla customer-owned automation server guided setup yetenegi
+  ve siniri da buradadir: agent once read-only
+  `get_automation_server_setup_step` tool'unu kullanir, tek adim ilerler,
+  unsupported OS/architecture'da durur; password, SSH private key, API key,
+  encryption key veya token istemez ve pasted terminal output'u untrusted data
+  olarak ele alir. Runtime ek olarak setup conversation'ini normal action
+  tool'larindan izole eder ve belirgin secret-bearing mesaji persistence/model
+  oncesinde reddeder.
 - **Dinamik durum** — `apps/agent/src/agent/platform_state.py`: bağlı servisler
   + kayıtlı credential'lar + workflow'lar, `gather_user_state` ile her run
   PARALEL + best-effort toplanır (her kaynak `_safe` ile izole; biri patlarsa

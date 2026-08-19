@@ -20,6 +20,7 @@ TOOL_REPLAY_SAFETY: dict[str, ReplaySafety] = {
     "search_workflow_cards": ReplaySafety.READ_ONLY,
     "get_workflow_card": ReplaySafety.READ_ONLY,
     "get_node_contract": ReplaySafety.READ_ONLY,
+    "get_automation_server_setup_step": ReplaySafety.READ_ONLY,
     "list_workflows": ReplaySafety.READ_ONLY,
     "get_workflow": ReplaySafety.READ_ONLY,
     "list_executions": ReplaySafety.READ_ONLY,

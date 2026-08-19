@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from src import store
+from src.agent.setup_guide import get_public_setup_guide_payload
 from src.auth import get_user_id
 from src.n8n_provider import N8nInstanceResolver, N8nProviderError, error_detail
 
@@ -62,6 +63,12 @@ async def get_active_n8n_connection(request: Request):
         user_id
     )
     return {"instance": _serialize_instance(instance)}
+
+
+@router.get("/n8n/setup-guide")
+async def get_n8n_setup_guide(request: Request):
+    get_user_id(request)
+    return get_public_setup_guide_payload()
 
 
 @router.post("/n8n/instance/check")

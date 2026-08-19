@@ -1,3 +1,4 @@
+import re
 from typing import Literal
 
 import structlog
@@ -34,9 +35,51 @@ class ChatRequest(BaseModel):
 
     content: str
     conversation_id: str | None = None
+    intent: Literal["automation-server-setup"] | None = None
     execution_policy: Literal["safe", "fast"] | None = None
     execution_reference: ExecutionReference | None = None
     user_input_response: UserInputResponse | None = None
+
+
+_SETUP_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "private_key",
+        re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----", re.IGNORECASE),
+    ),
+    (
+        "n8n_encryption_key",
+        re.compile(r"(?im)\bN8N_ENCRYPTION_KEY\b\s*[:=]\s*\S+"),
+    ),
+    (
+        "password_assignment",
+        re.compile(r"(?im)\b(password|passwd|passphrase)\b\s*[:=]\s*\S+"),
+    ),
+    (
+        "api_key_assignment",
+        re.compile(r"(?im)\b(api[_-]?key|x-api-key)\b\s*[:=]\s*\S+"),
+    ),
+    (
+        "token_assignment",
+        re.compile(r"(?im)\b(token|access[_-]?token|refresh[_-]?token)\b\s*[:=]\s*\S+"),
+    ),
+    (
+        "bearer_header",
+        re.compile(r"(?im)\b(authorization)\b\s*:\s*bearer\s+\S+"),
+    ),
+)
+
+
+def _requested_conversation_mode(
+    body: ChatRequest,
+) -> Literal["default", "automation-server-setup"]:
+    return "automation-server-setup" if body.intent == "automation-server-setup" else "default"
+
+
+def _detect_setup_secret(content: str) -> str | None:
+    for name, pattern in _SETUP_SECRET_PATTERNS:
+        if pattern.search(content):
+            return name
+    return None
 
 
 @router.post("/chat/send")
@@ -53,14 +96,60 @@ async def chat_send(request: Request, body: ChatRequest):
         conversation_id=body.conversation_id,
         content_length=len(body.content),
     )
+
+    existing_conversation = (
+        await store.get_conversation(user_id, body.conversation_id)
+        if body.conversation_id
+        else None
+    )
+    conversation_mode = (
+        existing_conversation.conversation_mode
+        if existing_conversation is not None
+        else _requested_conversation_mode(body)
+    )
+    setup_stage_reply_available = bool(
+        existing_conversation is not None
+        and existing_conversation.conversation_mode == "automation-server-setup"
+        and existing_conversation.setup_stage_locked
+    )
+    if (
+        existing_conversation is not None
+        and body.intent is not None
+        and conversation_mode != _requested_conversation_mode(body)
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "conversation_mode_locked",
+                "message": "This conversation is locked to the existing mode.",
+                "conversation_mode": conversation_mode,
+            },
+        )
+
+    if conversation_mode == "automation-server-setup":
+        secret_kind = _detect_setup_secret(body.content)
+        if secret_kind is not None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "setup_secret_not_allowed",
+                    "message": (
+                        "Secrets are not accepted in automation-server setup chat. "
+                        "Rotate the secret if needed and continue without pasting it here."
+                    ),
+                    "secret_kind": secret_kind,
+                },
+            )
+
     resolved_n8n_context = None
     resolved_n8n = None
     resolved_n8n_error: Exception | None = None
-    try:
-        resolved_n8n_context = await resolver.resolve(user_id, request_id=request_id)
-        resolved_n8n = await client_factory.for_request_context(resolved_n8n_context)
-    except N8nProviderError as exc:
-        resolved_n8n_error = exc
+    if conversation_mode != "automation-server-setup":
+        try:
+            resolved_n8n_context = await resolver.resolve(user_id, request_id=request_id)
+            resolved_n8n = await client_factory.for_request_context(resolved_n8n_context)
+        except N8nProviderError as exc:
+            resolved_n8n_error = exc
 
     attachments: list[dict] = []
     if body.execution_reference:
@@ -121,6 +210,7 @@ async def chat_send(request: Request, body: ChatRequest):
         user_id,
         body.conversation_id,
         execution_policy=requested_execution_policy or "safe",
+        conversation_mode=conversation_mode,
     )
     if (
         requested_execution_policy is not None
@@ -133,6 +223,15 @@ async def chat_send(request: Request, body: ChatRequest):
                 "code": "execution_policy_locked",
                 "message": ("This conversation is locked to the existing execution policy."),
                 "execution_policy": conv.execution_policy,
+            },
+        )
+    if body.intent is not None and conv.conversation_mode != _requested_conversation_mode(body):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "conversation_mode_locked",
+                "message": "This conversation is locked to the existing mode.",
+                "conversation_mode": conv.conversation_mode,
             },
         )
     await store.add_message(
@@ -161,6 +260,8 @@ async def chat_send(request: Request, body: ChatRequest):
             messages,
             request_id=request_id,
             execution_policy=conv.execution_policy,
+            conversation_mode=conv.conversation_mode,
+            setup_stage_reply_available=setup_stage_reply_available,
             n8n_context=resolved_n8n_context,
             n8n=resolved_n8n,
             n8n_error=resolved_n8n_error,
@@ -172,5 +273,6 @@ async def chat_send(request: Request, body: ChatRequest):
             "X-Conversation-Id": conv.id,
             "X-Execution-Policy": conv.execution_policy,
             "X-Execution-Policy-Locked": str(conv.execution_policy_locked).lower(),
+            "X-Conversation-Mode": conv.conversation_mode,
         },
     )

@@ -6,6 +6,18 @@ from src.executions import RunDetail
 from src.routes import chat as chat_route
 
 
+@pytest.fixture(autouse=True)
+def _stub_n8n_resolution(monkeypatch):
+    async def fake_resolve(*_args, **_kwargs):
+        return object()
+
+    async def fake_client(*_args, **_kwargs):
+        return object()
+
+    monkeypatch.setattr(chat_route.resolver, "resolve", fake_resolve)
+    monkeypatch.setattr(chat_route.client_factory, "for_request_context", fake_client)
+
+
 @pytest.mark.asyncio
 async def test_chat_send_streams_runner_response(monkeypatch):
     monkeypatch.setattr(chat_route, "get_user_id", lambda _request: "user_1")
@@ -99,6 +111,17 @@ async def test_chat_send_persists_structured_workflow_approval(monkeypatch):
     monkeypatch.setattr(chat_route, "get_user_id", lambda _request: "user_1")
     captured = {}
 
+    async def fake_get_conversation(*_args, **_kwargs):
+        return store.Conversation(
+            id="conv_1",
+            title="New conversation",
+            message_count=0,
+            created_at="now",
+            updated_at="now",
+            execution_policy="safe",
+            execution_policy_locked=True,
+        )
+
     async def fake_get_or_create_conversation(*_args, **_kwargs):
         return store.Conversation(
             id="conv_1",
@@ -133,6 +156,7 @@ async def test_chat_send_persists_structured_workflow_approval(monkeypatch):
         "get_or_create_conversation",
         fake_get_or_create_conversation,
     )
+    monkeypatch.setattr(chat_route.store, "get_conversation", fake_get_conversation)
     monkeypatch.setattr(chat_route.store, "add_message", fake_add_message)
     monkeypatch.setattr(chat_route.store, "get_conversation_messages", fake_get_messages)
     monkeypatch.setattr(chat_route.runner, "run", fake_runner_run)
@@ -286,6 +310,17 @@ async def test_chat_send_omitted_policy_uses_existing_fast_conversation(monkeypa
     monkeypatch.setattr(chat_route, "get_user_id", lambda _request: "user_1")
     captured_runner_kwargs = {}
 
+    async def fake_get_conversation(*_args, **_kwargs):
+        return store.Conversation(
+            id="conv_fast",
+            title="Fast conversation",
+            message_count=3,
+            created_at="now",
+            updated_at="now",
+            execution_policy="fast",
+            execution_policy_locked=True,
+        )
+
     async def fake_get_or_create_conversation(*_args, **_kwargs):
         return store.Conversation(
             id="conv_fast",
@@ -310,6 +345,7 @@ async def test_chat_send_omitted_policy_uses_existing_fast_conversation(monkeypa
     monkeypatch.setattr(
         chat_route.store, "get_or_create_conversation", fake_get_or_create_conversation
     )
+    monkeypatch.setattr(chat_route.store, "get_conversation", fake_get_conversation)
     monkeypatch.setattr(chat_route.store, "add_message", fake_add_message)
     monkeypatch.setattr(chat_route.store, "get_conversation_messages", fake_get_messages)
     monkeypatch.setattr(chat_route.runner, "run", fake_runner_run)
@@ -328,6 +364,17 @@ async def test_chat_send_omitted_policy_uses_existing_fast_conversation(monkeypa
 async def test_chat_send_rejects_locked_execution_policy_mismatch(monkeypatch):
     monkeypatch.setattr(chat_route, "get_user_id", lambda _request: "user_1")
 
+    async def fake_get_conversation(*_args, **_kwargs):
+        return store.Conversation(
+            id="conv_safe",
+            title="Safe conversation",
+            message_count=1,
+            created_at="now",
+            updated_at="now",
+            execution_policy="safe",
+            execution_policy_locked=True,
+        )
+
     async def fake_get_or_create_conversation(*_args, **_kwargs):
         return store.Conversation(
             id="conv_safe",
@@ -345,6 +392,7 @@ async def test_chat_send_rejects_locked_execution_policy_mismatch(monkeypatch):
     monkeypatch.setattr(
         chat_route.store, "get_or_create_conversation", fake_get_or_create_conversation
     )
+    monkeypatch.setattr(chat_route.store, "get_conversation", fake_get_conversation)
     monkeypatch.setattr(chat_route.store, "add_message", fail_add_message)
 
     with pytest.raises(HTTPException) as exc_info:
@@ -363,3 +411,193 @@ async def test_chat_send_rejects_locked_execution_policy_mismatch(monkeypatch):
         "message": "This conversation is locked to the existing execution policy.",
         "execution_policy": "safe",
     }
+
+
+@pytest.mark.asyncio
+async def test_chat_send_persists_setup_mode_on_new_conversation(monkeypatch):
+    monkeypatch.setattr(chat_route, "get_user_id", lambda _request: "user_1")
+    captured_store_kwargs = {}
+    captured_runner_kwargs = {}
+
+    async def fake_get_or_create_conversation(*_args, **kwargs):
+        captured_store_kwargs.update(kwargs)
+        return store.Conversation(
+            id="conv_setup",
+            title="Setup conversation",
+            message_count=0,
+            created_at="now",
+            updated_at="now",
+            execution_policy="safe",
+            execution_policy_locked=True,
+            conversation_mode="automation-server-setup",
+            setup_next_stage="requirements",
+            setup_stage_locked=False,
+        )
+
+    async def fake_add_message(*_args, **_kwargs):
+        return None
+
+    async def fake_get_messages(*_args, **_kwargs):
+        return [
+            store.Message(id="msg_1", role="user", content="help me set it up", created_at="now")
+        ]
+
+    async def fake_runner_run(*_args, **kwargs):
+        captured_runner_kwargs.update(kwargs)
+        yield 'event: done\ndata: {"conversation_id": "conv_setup"}\n\n'
+
+    monkeypatch.setattr(
+        chat_route.store, "get_or_create_conversation", fake_get_or_create_conversation
+    )
+    monkeypatch.setattr(chat_route.store, "add_message", fake_add_message)
+    monkeypatch.setattr(chat_route.store, "get_conversation_messages", fake_get_messages)
+    monkeypatch.setattr(chat_route.runner, "run", fake_runner_run)
+
+    response = await chat_route.chat_send(
+        object(),
+        chat_route.ChatRequest(content="help me set it up", intent="automation-server-setup"),
+    )
+    _ = [chunk async for chunk in response.body_iterator]
+
+    assert captured_store_kwargs["conversation_mode"] == "automation-server-setup"
+    assert captured_runner_kwargs["conversation_mode"] == "automation-server-setup"
+    assert response.headers["x-conversation-mode"] == "automation-server-setup"
+
+
+@pytest.mark.asyncio
+async def test_chat_send_rejects_conversation_mode_change(monkeypatch):
+    monkeypatch.setattr(chat_route, "get_user_id", lambda _request: "user_1")
+
+    async def fake_get_conversation(*_args, **_kwargs):
+        return store.Conversation(
+            id="conv_default",
+            title="Default conversation",
+            message_count=1,
+            created_at="now",
+            updated_at="now",
+            execution_policy="safe",
+            execution_policy_locked=True,
+            conversation_mode="default",
+        )
+
+    async def fail_create(*_args, **_kwargs):
+        raise AssertionError("conversation should not be recreated when mode is locked")
+
+    monkeypatch.setattr(chat_route.store, "get_conversation", fake_get_conversation)
+    monkeypatch.setattr(chat_route.store, "get_or_create_conversation", fail_create)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await chat_route.chat_send(
+            object(),
+            chat_route.ChatRequest(
+                content="switch to setup",
+                conversation_id="conv_default",
+                intent="automation-server-setup",
+            ),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == {
+        "code": "conversation_mode_locked",
+        "message": "This conversation is locked to the existing mode.",
+        "conversation_mode": "default",
+    }
+
+
+@pytest.mark.asyncio
+async def test_chat_send_rejects_setup_secret_before_persist(monkeypatch):
+    monkeypatch.setattr(chat_route, "get_user_id", lambda _request: "user_1")
+
+    async def fail_create(*_args, **_kwargs):
+        raise AssertionError("conversation must not be created when a secret is pasted")
+
+    async def fail_add_message(*_args, **_kwargs):
+        raise AssertionError("secret message must not be persisted")
+
+    monkeypatch.setattr(chat_route.store, "get_or_create_conversation", fail_create)
+    monkeypatch.setattr(chat_route.store, "add_message", fail_add_message)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await chat_route.chat_send(
+            object(),
+            chat_route.ChatRequest(
+                content="N8N_ENCRYPTION_KEY=supersecretvalue",
+                intent="automation-server-setup",
+            ),
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["code"] == "setup_secret_not_allowed"
+    assert exc_info.value.detail["secret_kind"] == "n8n_encryption_key"
+
+
+@pytest.mark.asyncio
+async def test_existing_setup_conversation_infers_mode_and_exposes_reply_available(monkeypatch):
+    monkeypatch.setattr(chat_route, "get_user_id", lambda _request: "user_1")
+    captured_runner_kwargs = {}
+
+    async def fake_get_conversation(*_args, **_kwargs):
+        return store.Conversation(
+            id="conv_setup",
+            title="Setup conversation",
+            message_count=2,
+            created_at="now",
+            updated_at="now",
+            execution_policy="safe",
+            execution_policy_locked=True,
+            conversation_mode="automation-server-setup",
+            setup_next_stage="requirements",
+            setup_stage_locked=True,
+            setup_last_stage="requirements",
+        )
+
+    async def fake_get_or_create_conversation(*_args, **_kwargs):
+        return store.Conversation(
+            id="conv_setup",
+            title="Setup conversation",
+            message_count=2,
+            created_at="now",
+            updated_at="now",
+            execution_policy="safe",
+            execution_policy_locked=True,
+            conversation_mode="automation-server-setup",
+            setup_next_stage="requirements",
+            setup_stage_locked=True,
+            setup_last_stage="requirements",
+        )
+
+    async def fake_add_message(*_args, **_kwargs):
+        return None
+
+    async def fake_get_messages(*_args, **_kwargs):
+        return [
+            store.Message(
+                id="msg_1", role="user", content="automation.example.com", created_at="now"
+            )
+        ]
+
+    async def fake_runner_run(*_args, **kwargs):
+        captured_runner_kwargs.update(kwargs)
+        yield 'event: done\ndata: {"conversation_id": "conv_setup"}\n\n'
+
+    async def fail_save_setup_state(*_args, **_kwargs):
+        raise AssertionError("route must not mutate setup stage state directly")
+
+    monkeypatch.setattr(chat_route.store, "get_conversation", fake_get_conversation)
+    monkeypatch.setattr(
+        chat_route.store, "get_or_create_conversation", fake_get_or_create_conversation
+    )
+    monkeypatch.setattr(chat_route.store, "save_setup_stage_state", fail_save_setup_state)
+    monkeypatch.setattr(chat_route.store, "add_message", fake_add_message)
+    monkeypatch.setattr(chat_route.store, "get_conversation_messages", fake_get_messages)
+    monkeypatch.setattr(chat_route.runner, "run", fake_runner_run)
+
+    response = await chat_route.chat_send(
+        object(),
+        chat_route.ChatRequest(content="automation.example.com", conversation_id="conv_setup"),
+    )
+    _ = [chunk async for chunk in response.body_iterator]
+
+    assert captured_runner_kwargs["conversation_mode"] == "automation-server-setup"
+    assert captured_runner_kwargs["setup_stage_reply_available"] is True
+    assert response.headers["x-conversation-mode"] == "automation-server-setup"
