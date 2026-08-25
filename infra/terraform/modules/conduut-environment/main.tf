@@ -1,16 +1,10 @@
-check "tenant_secret_project_is_dedicated" {
-  assert {
-    condition     = var.tenant_secret_project_id != var.project_id
-    error_message = "tenant_secret_project_id must differ from the application project_id."
-  }
-}
-
 locals {
   app_project_apis = toset([
     "artifactregistry.googleapis.com",
     "cloudresourcemanager.googleapis.com",
     "compute.googleapis.com",
     "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",
     "serviceusage.googleapis.com",
@@ -37,7 +31,34 @@ locals {
     "secretmanager.versions.list",
   ]
 
-  tenant_secret_project_id = var.tenant_secret_project_id
+  tenant_secret_project_id = coalesce(var.tenant_secret_project_id, var.project_id)
+  required_project_services = merge(
+    {
+      for service in local.app_project_apis :
+      "${var.project_id}/${service}" => {
+        project = var.project_id
+        service = service
+      }
+    },
+    {
+      for service in local.firebase_project_apis :
+      "${var.firebase_project_id}/${service}" => {
+        project = var.firebase_project_id
+        service = service
+      }
+    },
+    {
+      for service in toset([
+        "iam.googleapis.com",
+        "secretmanager.googleapis.com",
+        "serviceusage.googleapis.com",
+      ]) :
+      "${local.tenant_secret_project_id}/${service}" => {
+        project = local.tenant_secret_project_id
+        service = service
+      }
+    },
+  )
   all_secret_ids = toset(distinct(concat(
     tolist(var.static_secret_ids),
     [for ref in values(var.agent_secret_env) : ref.secret_id],
@@ -71,46 +92,31 @@ data "google_project" "tenant_secret" {
   project_id = local.tenant_secret_project_id
 }
 
-resource "google_project_service" "app_required" {
-  for_each           = local.app_project_apis
-  project            = var.project_id
-  service            = each.value
-  disable_on_destroy = false
-}
-
-resource "google_project_service" "firebase_required" {
-  for_each           = local.firebase_project_apis
-  project            = var.firebase_project_id
-  service            = each.value
-  disable_on_destroy = false
-}
-
-resource "google_project_service" "tenant_secret_required" {
-  for_each = toset([
-    "iam.googleapis.com",
-    "secretmanager.googleapis.com",
-    "serviceusage.googleapis.com",
-  ])
-
-  project            = local.tenant_secret_project_id
-  service            = each.value
+resource "google_project_service" "required" {
+  for_each           = local.required_project_services
+  project            = each.value.project
+  service            = each.value.service
   disable_on_destroy = false
 }
 
 resource "google_firebase_project" "project" {
+  count = var.manage_firebase_project ? 1 : 0
+
   provider   = google-beta
   project    = var.firebase_project_id
-  depends_on = [google_project_service.firebase_required]
+  depends_on = [google_project_service.required]
 }
 
 resource "google_firestore_database" "default" {
+  count = var.manage_firestore_database ? 1 : 0
+
   provider    = google-beta
   project     = var.firebase_project_id
   name        = "(default)"
   location_id = var.region
   type        = "FIRESTORE_NATIVE"
 
-  depends_on = [google_firebase_project.project]
+  depends_on = [google_project_service.required, google_firebase_project.project]
 }
 
 resource "google_artifact_registry_repository" "containers" {
@@ -120,7 +126,7 @@ resource "google_artifact_registry_repository" "containers" {
   format        = "DOCKER"
   description   = "Conduut containers for ${var.environment}."
 
-  depends_on = [google_project_service.app_required]
+  depends_on = [google_project_service.required]
 }
 
 resource "google_artifact_registry_repository_iam_member" "deployer_writer" {
@@ -176,17 +182,17 @@ resource "google_project_iam_custom_role" "agent_secret_manager" {
   description = "Least-privilege runtime access for tenant n8n secrets."
   permissions = local.agent_secret_permissions
 
-  depends_on = [google_project_service.tenant_secret_required]
+  depends_on = [google_project_service.required]
 }
 
 resource "google_project_iam_custom_role" "agent_secret_creator" {
   project     = local.tenant_secret_project_id
   role_id     = "${replace(var.environment, "-", "_")}_agent_secret_creator"
   title       = "Conduut ${var.environment} agent secret creator"
-  description = "Create-only access in the dedicated tenant-secret project."
+  description = "Create-only access in the configured tenant-secret project boundary."
   permissions = ["secretmanager.secrets.create"]
 
-  depends_on = [google_project_service.tenant_secret_required]
+  depends_on = [google_project_service.required]
 }
 
 resource "google_project_iam_member" "agent_firestore" {

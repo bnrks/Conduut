@@ -11,13 +11,13 @@ provider "google" {
 }
 
 resource "google_project_service" "bootstrap" {
-  for_each = toset([
+  for_each = var.manage_project_services ? toset([
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
     "serviceusage.googleapis.com",
     "sts.googleapis.com",
     "storage.googleapis.com",
-  ])
+  ]) : toset([])
 
   project            = var.bootstrap_project_id
   service            = each.value

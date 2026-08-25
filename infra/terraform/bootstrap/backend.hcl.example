@@ -1,2 +1,2 @@
 bucket = "conduut-1-terraform-state"
-prefix = "environments/staging"
+prefix = "bootstrap"

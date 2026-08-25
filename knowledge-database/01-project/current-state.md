@@ -45,6 +45,11 @@ kaniti degil, staging foundation'in kod temelidir.
   seviyesinde vardir. Terraform bootstrap/staging modulleri ile WIF image deploy
   workflow'u local validation'dan gecmistir; canli GCP apply ve staging pilotu
   henuz yapilmamistir.
+- Canli GCP foundation hazirligi: `conduut-1` billing/Firebase/Firestore
+  envanteri dogrulandi; Firestore Native `(default)` database `europe-west3`
+  bolgesindedir. Cloud Run, Artifact Registry, Secret Manager, Compute, IAM,
+  IAM Credentials ve STS API'leri 2026-08-25'te etkinlestirildi. Tek-project
+  Terraform plan'i `40 add, 0 change, 0 destroy` verdi; henuz apply yapilmadi.
 
 ## Gercek Veriyle Bagli Olanlar
 

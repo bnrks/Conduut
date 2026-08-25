@@ -1,18 +1,20 @@
-project_id                = "your-staging-app-project-id"
-firebase_project_id       = "your-staging-firebase-project-id"
-tenant_secret_project_id  = "your-staging-tenant-secrets-project-id"
-deploy_runtime_services   = false
-deploy_service_account_email = "github-actions-deployer@your-bootstrap-project-id.iam.gserviceaccount.com"
-public_web_url            = "https://staging.example.com"
-web_image                 = "europe-west3-docker.pkg.dev/your-staging-app-project-id/conduut-staging/web:replace-me"
-agent_image               = "europe-west3-docker.pkg.dev/your-staging-app-project-id/conduut-staging/agent:replace-me"
+project_id                   = "conduut-1"
+firebase_project_id          = "conduut-1"
+tenant_secret_project_id     = null
+manage_firebase_project      = false
+manage_firestore_database    = false
+deploy_runtime_services      = false
+deploy_service_account_email = "github-actions-deployer@conduut-1.iam.gserviceaccount.com"
+public_web_url               = "https://staging.example.com"
+web_image                    = "europe-west3-docker.pkg.dev/conduut-1/conduut-staging/web:replace-me"
+agent_image                  = "europe-west3-docker.pkg.dev/conduut-1/conduut-staging/agent:replace-me"
 
 web_env = {
   NEXT_PUBLIC_FIREBASE_API_KEY             = "replace-me"
   NEXT_PUBLIC_FIREBASE_APP_ID              = "replace-me"
   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN         = "replace-me.firebaseapp.com"
   NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID = "replace-me"
-  NEXT_PUBLIC_FIREBASE_PROJECT_ID          = "your-staging-firebase-project-id"
+  NEXT_PUBLIC_FIREBASE_PROJECT_ID          = "conduut-1"
   NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET      = "replace-me.firebasestorage.app"
 }
 

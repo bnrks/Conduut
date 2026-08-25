@@ -4,14 +4,21 @@ Merkez: [[index]]
 
 ## Google Cloud foundation canli dogrulama kapilari (2026-08-25)
 
-- Terraform foundation, WIF ve Cloud Run tanimlari repo'dadir fakat henuz
-  gercek GCP project'lerine apply edilmemistir. Local `validate`, canli IAM ve
-  ingress davranisinin kaniti degildir.
-- Tenant Secret Manager custom role'u dedicated project ve hashed secret-name
-  prefix condition ile sinirlidir. Parent project'te authorize edilen
+- Terraform foundation, WIF ve Cloud Run tanimlari repo'dadir; gerekli API'ler
+  `conduut-1` uzerinde etkinlestirildi fakat foundation henuz apply edilmemistir.
+  Local `validate` ve apply'siz plan, canli IAM/ingress davranisinin kaniti
+  degildir.
+- Tenant Secret Manager custom role'u hashed secret-name prefix condition ile
+  sinirlidir. Parent project'te authorize edilen
   `secrets.create` bunun disinda, yalniz create izni veren kosulsuz ayri role
-  sahiptir. Ilk staging apply sonrasi create/read/rotate/destroy canary gecmeden
-  production'a tasinmamalidir.
+  sahiptir. Tek-project staging'de bu role `conduut-1` genelinde secret container
+  olusturabilir fakat prefix disini okuyamaz/silemez. Ilk apply sonrasi canary
+  gecmeden production'a tasinmamalidir.
+- Ilk staging mevcut `conduut-1` Firestore database'ini kullanir; test ve olasi
+  mevcut veriler collection seviyesinde paylasilir. Production oncesi ayri
+  project/database veya acik namespace stratejisi zorunludur.
+- Compute API etkinlestirilirken `default` auto-mode VPC olustu. Foundation bunu
+  kullanmaz; silme karari once bagimlilik envanteriyle ayrica verilmelidir.
 - Ilk Cloud Run apply iki asamalidir: once
   `deploy_runtime_services=false`, sonra statik secret version seed'i, image
   push ve `deploy_runtime_services=true`. Secret degerleri Terraform'a

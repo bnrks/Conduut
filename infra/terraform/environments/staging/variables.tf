@@ -6,6 +6,16 @@ variable "firebase_project_id" {
   type = string
 }
 
+variable "manage_firebase_project" {
+  type    = bool
+  default = false
+}
+
+variable "manage_firestore_database" {
+  type    = bool
+  default = false
+}
+
 variable "region" {
   type    = string
   default = "europe-west3"
@@ -22,7 +32,9 @@ variable "tenant_secret_prefix" {
 }
 
 variable "tenant_secret_project_id" {
-  type = string
+  type     = string
+  default  = null
+  nullable = true
 }
 
 variable "deploy_runtime_services" {

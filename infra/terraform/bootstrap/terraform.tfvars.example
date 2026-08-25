@@ -1,7 +1,8 @@
-bootstrap_project_id = "conduut-bootstrap-staging"
-region               = "europe-west3"
-state_bucket_name    = "conduut-tfstate-staging-unique-suffix"
-github_repository    = "your-org/Conduut"
+bootstrap_project_id    = "conduut-1"
+manage_project_services = false
+region                  = "europe-west3"
+state_bucket_name       = "conduut-1-terraform-state"
+github_repository       = "bnrks/Conduut"
 
 allowed_refs = [
   "refs/heads/main",

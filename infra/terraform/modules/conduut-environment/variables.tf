@@ -4,8 +4,20 @@ variable "project_id" {
 }
 
 variable "firebase_project_id" {
-  description = "Separate Firebase/Auth/Firestore project ID."
+  description = "Firebase/Auth/Firestore project ID; may equal project_id."
   type        = string
+}
+
+variable "manage_firebase_project" {
+  description = "Create the Firebase project binding; false when Firebase already exists."
+  type        = bool
+  default     = false
+}
+
+variable "manage_firestore_database" {
+  description = "Create the default Firestore database; false when it already exists."
+  type        = bool
+  default     = false
 }
 
 variable "region" {
@@ -29,13 +41,10 @@ variable "tenant_secret_prefix" {
 }
 
 variable "tenant_secret_project_id" {
-  description = "Dedicated project containing tenant runtime secrets only."
+  description = "Optional tenant-secret project; null reuses project_id."
   type        = string
-
-  validation {
-    condition     = length(trimspace(var.tenant_secret_project_id)) > 0
-    error_message = "tenant_secret_project_id is required."
-  }
+  default     = null
+  nullable    = true
 }
 
 variable "deploy_runtime_services" {

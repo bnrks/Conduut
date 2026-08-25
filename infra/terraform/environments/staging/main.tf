@@ -49,6 +49,8 @@ module "staging" {
   deploy_service_account_email = var.deploy_service_account_email
   environment                  = "staging"
   firebase_project_id          = var.firebase_project_id
+  manage_firebase_project      = var.manage_firebase_project
+  manage_firestore_database    = var.manage_firestore_database
   project_id                   = var.project_id
   public_web_url               = var.public_web_url
   region                       = var.region

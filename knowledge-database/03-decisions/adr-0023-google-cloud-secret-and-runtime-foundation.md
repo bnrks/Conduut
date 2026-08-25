@@ -24,15 +24,16 @@ Conduut staging foundation Google Cloud uzerinde Terraform ile kurulacak:
   JSON key kullanilmayacak.
 - Tenant n8n API key'leri ve platform secret'lari Google Secret Manager'da
   tutulacak; degerler Terraform state'e girmeyecek.
-- Tenant secret create yetkisi dedicated tenant-secret project'te create-only
-  kosulsuz custom role'a; mevcut secret/version islemleri hashed-prefix
-  condition'li ayri role'a bolunecek.
+- Tenant secret create yetkisi create-only kosulsuz custom role'a; mevcut
+  secret/version islemleri hashed-prefix condition'li ayri role'a bolunecek.
 - Web -> agent cagrisi Cloud Run ID token'i ve Firebase ID token'i iki ayri
   header'da tasiyacak.
 - GitHub Actions GCP'ye WIF/OIDC ile baglanacak.
-- Staging bootstrap/state, application runtime, Firebase ve tenant secrets
-  icin ayri project sinirlari kullanacak; regional kaynaklar `europe-west3`
-  bolgesinde tutulacak.
+- Ilk staging kullanicinin mevcut `conduut-1` project'ini ve mevcut Firebase/
+  Firestore'unu kullanacak; Terraform bunlari yeniden olusturmayacak. Logical
+  sinirlar IAM ve resource bazinda korunacak, regional kaynaklar
+  `europe-west3` bolgesinde tutulacak. Modul daha sonra ayri Firebase veya
+  tenant-secret project ID kabul etmeye devam edecek.
 - Foundation Terraform apply'i operator yetkisidir. GitHub WIF deploy kimligi
   yalniz image push, mevcut Cloud Run revision update ve gerekli runtime
   service-account act-as yetkilerini alacak.
@@ -44,6 +45,9 @@ Conduut staging foundation Google Cloud uzerinde Terraform ile kurulacak:
 ## Sonuclar
 
 - Local dev `encrypted_file` ile calismaya devam eder; cloud fail closed olur.
+- Tek-project staging daha az operasyon yukune karsilik tenant create rolunun
+  project-geneli blast radius'ini ve mevcut Firestore ile veri paylasimini kabul
+  eder; production oncesi izolasyon karari yeniden acilacaktir.
 - Ilk altyapi kurulumu bootstrap ve statik secret seed adimlari gerektirir.
 - Cloud Run create, secret degerleri Terraform state'e alinmadan seed
   edilebilsin diye iki asamali `deploy_runtime_services` kapisi kullanir.

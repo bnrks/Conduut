@@ -3,6 +3,12 @@ variable "bootstrap_project_id" {
   type        = string
 }
 
+variable "manage_project_services" {
+  description = "Manage bootstrap APIs here; false when the environment root owns APIs in the same project."
+  type        = bool
+  default     = true
+}
+
 variable "region" {
   description = "Region for bootstrap-adjacent regional resources."
   type        = string

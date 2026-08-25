@@ -12,6 +12,9 @@ dist/
 .terraform/
 *.tfstate
 *.tfstate.*
+*.tfvars
+!*.tfvars.example
+backend.hcl
 
 # Claude Code local settings
 .claude/settings.local.json

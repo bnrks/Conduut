@@ -27,6 +27,10 @@ Ilgili kararlar: [[adr-0023-google-cloud-secret-and-runtime-foundation]],
 - Faz 6 aciktir: gercek project/bootstrap apply, statik secret seed, Cloud Run
   create, prefix-condition canary, private ingress negatif testleri ve rollback
   provasi canli staging'de yapilmamistir.
+- `conduut-1` canli envanteri okundu: billing ve mevcut Firebase Web App aktif,
+  `(default)` Firestore Native database `europe-west3` bolgesindedir. Gerekli
+  yedi API etkinlestirildi. Tek-project tfvars ile apply'siz plan `40 add,
+  0 change, 0 destroy` verdi; mevcut Firebase/Firestore plana girmedi.
 
 ## Hedef Sonuc
 
@@ -34,8 +38,9 @@ Ilgili kararlar: [[adr-0023-google-cloud-secret-and-runtime-foundation]],
 - `apps/agent` public internetten erisilemeyen private Cloud Run servisi olur.
 - Web BFF, agent'i kendi service account kimligiyle cagirir; kullanicinin
   Firebase ID token'i uygulama kimligi olarak ayrica korunur.
-- Firebase Auth ve Firestore staging icin ayri bir GCP/Firebase project'te
-  calisir.
+- Ilk staging, kullanicinin mevcut `conduut-1` Firebase Auth ve Firestore'unu
+  kullanir; Terraform bu mevcut kaynaklari yeniden olusturmaz. Production veri
+  izolasyonu staging pilotundan sonra ayri project/database karari gerektirir.
 - Customer-owned n8n API key'leri Firestore, Terraform state, GitHub, log,
   browser veya chat'e girmez; runtime'da Google Secret Manager'da tutulur.
 - LLM provider key'leri, Google OAuth client secret ve connection encryption
@@ -80,8 +85,9 @@ GSM'e eklenir. Tenant secret degerlerini yalniz agent runtime API'si yazar.
 ## Hedef GCP Topolojisi
 
 - Region: `europe-west3` (Frankfurt).
-- Staging dort guven sinirina ayrilir: bootstrap/state, application runtime,
-  Firebase/Auth/Firestore ve tenant runtime secrets project'leri.
+- Ilk staging tek `conduut-1` project'indedir; bootstrap/state, application
+  runtime, Firebase ve tenant secret ayrimi IAM/resource sinirlariyla yapilir.
+  Modul ileride Firebase ve tenant secrets icin ayri project ID destekler.
 - Cloud Run `web`:
   - public ingress,
   - container port `3000`,
@@ -109,10 +115,11 @@ GSM'e eklenir. Tenant secret degerlerini yalniz agent runtime API'si yazar.
 - Agent service account Firestore icin gereken en dar veri yetkilerini ve
   tenant secret prefix'i icin gereken exact custom secret rolunu alir.
 - Secret create yetkisi Secret Manager tarafindan parent project uzerinde
-  degerlendirildigi icin dedicated tenant-secret project'te yalniz
+  degerlendirildigi icin tenant runtime'a yalniz
   `secretmanager.secrets.create` iceren ayri kosulsuz custom role verilir.
   Mevcut secret/version okuma, yazma ve silme yetkileri hashed prefix condition
-  altinda kalir; dedicated project bu create istisnasinin blast radius'idir.
+  altinda kalir. Tek-project staging'de create yetkisinin blast radius'i
+  `conduut-1` oldugu icin audit/quota canary production oncesi zorunludur.
 - Agent'in statik secret'lari Cloud Run secret reference ile env/mount olarak
   okunur; tenant n8n key'leri Secret Manager API ile request aninda cozulur.
 - Secret create IAM condition ile yeterince daraltilamiyorsa tenant secret'lar
@@ -209,7 +216,7 @@ infra/terraform/
    - iki asamali runtime create kapisi (`deploy_runtime_services`).
 3. Staging environment:
    - `europe-west3`,
-   - izole Firebase/Firestore project baglantisi,
+   - mevcut `conduut-1` Firebase/Firestore baglantisi; create flag'leri kapali,
    - service limits ve env contract,
    - production'dan farkli isim/prefix/hostname.
 4. Terraform ciktilari secret degeri icermez.
@@ -279,8 +286,8 @@ Cloud Run servislerini olusturur.
   destroy planlanmissa 7 gunluk recovery penceresini kullan.
 - Terraform: state/versioning ile once plan/readback yap; secret degerlerini
   Terraform'a geri alma.
-- Veri: staging Firestore production'dan izoledir; production migration bu
-  planda yoktur.
+- Veri: ilk staging mevcut `conduut-1` Firestore'u kullanir; production
+  izolasyonu ve migration bu foundation apply'inin disindadir.
 
 ## Urunlesme Oncesi Zorunlu Kapilar
 
