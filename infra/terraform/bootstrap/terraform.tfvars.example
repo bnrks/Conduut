@@ -1,0 +1,9 @@
+bootstrap_project_id = "conduut-bootstrap-staging"
+region               = "europe-west3"
+state_bucket_name    = "conduut-tfstate-staging-unique-suffix"
+github_repository    = "your-org/Conduut"
+
+allowed_refs = [
+  "refs/heads/main",
+  "refs/heads/staging",
+]

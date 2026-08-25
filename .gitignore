@@ -8,6 +8,11 @@ logs/
 build/
 dist/
 
+# Terraform local caches and state. Provider lock files remain tracked.
+.terraform/
+*.tfstate
+*.tfstate.*
+
 # Claude Code local settings
 .claude/settings.local.json
 

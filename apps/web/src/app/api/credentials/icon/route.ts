@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { agentHeaders } from "@/lib/request-id";
-
-function getAgentBaseUrl(): string {
-  const fromEnv = process.env.AGENT_API_BASE_URL || process.env.NEXT_PUBLIC_AGENT_API_BASE_URL;
-  return fromEnv || "http://localhost:8000";
-}
+import {
+  agentUnavailableResponse,
+  proxyAgentRequest,
+} from "@/lib/agent-client";
 
 export async function GET(request: NextRequest) {
   const path = request.nextUrl.searchParams.get("path") ?? "";
@@ -13,22 +11,23 @@ export async function GET(request: NextRequest) {
     return new NextResponse(null, { status: 400 });
   }
   try {
-    const response = await fetch(
-      `${getAgentBaseUrl()}/api/credentials/icon?path=${encodeURIComponent(path)}`,
-      { method: "GET", headers: agentHeaders(request, {}), cache: "no-store" }
-    );
-    if (!response.ok) {
-      return new NextResponse(null, { status: response.status });
+    const response = await proxyAgentRequest(request, {
+      auth: "none",
+      method: "GET",
+      path: `/api/credentials/icon?path=${encodeURIComponent(path)}`,
+      responseType: "binary",
+    });
+    if (response instanceof NextResponse) {
+      return response;
     }
-    const body = await response.arrayBuffer();
-    return new NextResponse(body, {
-      status: 200,
+    return new NextResponse(response.body, {
+      status: response.status,
       headers: {
-        "Content-Type": response.headers.get("content-type") ?? "image/svg+xml",
+        "Content-Type": response.contentType || "image/svg+xml",
         "Cache-Control": "public, max-age=86400",
       },
     });
   } catch {
-    return new NextResponse(null, { status: 502 });
+    return agentUnavailableResponse();
   }
 }

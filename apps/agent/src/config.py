@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     deepseek_api_key: str = ""
 
+    # Firebase Admin
+    firebase_credentials_mode: str = "auto"
+    firebase_project_id: str = ""
+    firebase_service_account_path: str = ""
+
     # n8n
     n8n_url: str = "http://localhost:6180"
     n8n_api_key: str = ""
@@ -67,6 +72,7 @@ class Settings(BaseSettings):
     n8n_registry_url: str = ""
     n8n_secret_manager_backend: str = "memory"
     n8n_secret_manager_project_id: str = ""
+    n8n_secret_manager_location: str = ""
     n8n_secret_manager_secret_prefix: str = "conduut-n8n"
     n8n_local_secret_store_path: str = str(_DEFAULT_LOCAL_SECRET_STORE_PATH)
     n8n_migration_mode: str = "off"
@@ -154,17 +160,43 @@ def validate_n8n_provider_settings() -> None:
     environment = str(settings.environment or "").strip().lower()
     provider_mode = str(settings.n8n_provider_mode or "").strip().lower()
     secret_backend = str(settings.n8n_secret_manager_backend or "").strip().lower()
+    firebase_credentials_mode = str(settings.firebase_credentials_mode or "").strip().lower()
+    firebase_project_id = str(settings.firebase_project_id or "").strip()
 
     if secret_backend not in {"memory", "encrypted_file", "google_secret_manager"}:
         raise ValueError("Unsupported CONDUUT_N8N_SECRET_MANAGER_BACKEND.")
 
-    if environment == "production":
+    if firebase_credentials_mode not in {"auto", "certificate", "adc", "emulator"}:
+        raise ValueError("Unsupported CONDUUT_FIREBASE_CREDENTIALS_MODE.")
+
+    if firebase_credentials_mode == "emulator" and environment not in {
+        "development",
+        "test",
+    }:
+        raise ValueError("Firebase emulator credentials are limited to development and test.")
+
+    if environment in {"staging", "production"}:
         if provider_mode != "customer_owned":
-            raise ValueError("Production requires CONDUUT_N8N_PROVIDER_MODE=customer_owned.")
+            raise ValueError(
+                "Staging and production require CONDUUT_N8N_PROVIDER_MODE=customer_owned."
+            )
         if secret_backend != "google_secret_manager":
             raise ValueError(
-                "Production requires CONDUUT_N8N_SECRET_MANAGER_BACKEND=google_secret_manager."
+                "Staging and production require "
+                "CONDUUT_N8N_SECRET_MANAGER_BACKEND=google_secret_manager."
             )
+        if not str(settings.n8n_secret_manager_project_id or "").strip():
+            raise ValueError(
+                "Staging and production require CONDUUT_N8N_SECRET_MANAGER_PROJECT_ID."
+            )
+        if not str(settings.n8n_secret_manager_location or "").strip():
+            raise ValueError("Staging and production require CONDUUT_N8N_SECRET_MANAGER_LOCATION.")
+        if firebase_credentials_mode != "adc":
+            raise ValueError(
+                "Staging and production require CONDUUT_FIREBASE_CREDENTIALS_MODE=adc."
+            )
+        if not firebase_project_id:
+            raise ValueError("Staging and production require CONDUUT_FIREBASE_PROJECT_ID.")
     elif provider_mode not in {"shared_dev", "customer_owned"}:
         raise ValueError("Unsupported CONDUUT_N8N_PROVIDER_MODE.")
     elif provider_mode == "customer_owned" and secret_backend == "memory":

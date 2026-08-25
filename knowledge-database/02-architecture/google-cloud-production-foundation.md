@@ -11,6 +11,23 @@ Ilgili kararlar: [[adr-0023-google-cloud-secret-and-runtime-foundation]],
 [[customer-owned-n8n]], [[system-architecture]], [[agent-service]],
 [[web-app]].
 
+## Uygulama Durumu - 2026-08-25
+
+- Faz 0 tamamlandi: BYO branch kontrolleri gecti, `main` fast-forward edilip
+  origin'e gonderildi ve foundation branch'i guncel `main`den acildi.
+- Faz 1-5'in repo temeli uygulandi: GSM/Firebase runtime hardening, ortak private
+  agent BFF client'i, Terraform bootstrap/staging modulleri ve WIF image deploy
+  workflow'u vardir.
+- Local kanit: agent Ruff/format ve 808 pytest, web ESLint/TypeScript, registry
+  Ruff, Compose config, Terraform bootstrap/staging init+validate ve scoped
+  credential-pattern taramasi gecti. ESLint'te yalniz onceki dort `<img>`
+  warning'i kaldi.
+- Docker Desktop engine bu kontrolde kapali oldugu icin image build yeniden
+  kosulamadi; CI iki image build'ini zorunlu tutar.
+- Faz 6 aciktir: gercek project/bootstrap apply, statik secret seed, Cloud Run
+  create, prefix-condition canary, private ingress negatif testleri ve rollback
+  provasi canli staging'de yapilmamistir.
+
 ## Hedef Sonuc
 
 - `apps/web` public Cloud Run servisi olarak calisir.
@@ -63,7 +80,8 @@ GSM'e eklenir. Tenant secret degerlerini yalniz agent runtime API'si yazar.
 ## Hedef GCP Topolojisi
 
 - Region: `europe-west3` (Frankfurt).
-- Staging: ayri GCP project + ayri Firebase Auth + ayri Firestore.
+- Staging dort guven sinirina ayrilir: bootstrap/state, application runtime,
+  Firebase/Auth/Firestore ve tenant runtime secrets project'leri.
 - Cloud Run `web`:
   - public ingress,
   - container port `3000`,
@@ -90,6 +108,11 @@ GSM'e eklenir. Tenant secret degerlerini yalniz agent runtime API'si yazar.
   `roles/run.invoker` alir.
 - Agent service account Firestore icin gereken en dar veri yetkilerini ve
   tenant secret prefix'i icin gereken exact custom secret rolunu alir.
+- Secret create yetkisi Secret Manager tarafindan parent project uzerinde
+  degerlendirildigi icin dedicated tenant-secret project'te yalniz
+  `secretmanager.secrets.create` iceren ayri kosulsuz custom role verilir.
+  Mevcut secret/version okuma, yazma ve silme yetkileri hashed prefix condition
+  altinda kalir; dedicated project bu create istisnasinin blast radius'idir.
 - Agent'in statik secret'lari Cloud Run secret reference ile env/mount olarak
   okunur; tenant n8n key'leri Secret Manager API ile request aninda cozulur.
 - Secret create IAM condition ile yeterince daraltilamiyorsa tenant secret'lar
@@ -101,11 +124,12 @@ GSM'e eklenir. Tenant secret degerlerini yalniz agent runtime API'si yazar.
 - GitHub Actions, GitHub OIDC -> Workload Identity Pool/Provider -> deploy
   service account zincirini kullanir.
 - Provider condition repository ve branch/ref'i sinirlar.
-- Deploy service account yalniz Artifact Registry push, Cloud Run deploy,
-  gerekli service-account act-as ve Terraform kaynak yonetimi yetkilerine
-  sahip olur.
-- Pull request akisi `fmt`, `validate`, test ve `terraform plan` calistirir.
-  Apply yalniz korumali environment/onay sonrasi staging'e yapilir.
+- Deploy service account yalniz Artifact Registry repository writer, mevcut
+  Cloud Run servislerinde revision update ve gerekli runtime service-account
+  act-as yetkilerine sahip olur. Foundation IAM/infra apply yetkisi almaz.
+- Pull request akisi `fmt`, `validate`, test ve image build calistirir.
+  Foundation plan/apply yetkili operator tarafindan yapilir; GitHub WIF akisi
+  yalniz mevcut staging servislerine immutable image revision deploy eder.
 
 ## Uygulama Asamalari
 
@@ -126,9 +150,12 @@ GSM'e eklenir. Tenant secret degerlerini yalniz agent runtime API'si yazar.
    - Firestore ref degisikligi gerekiyorsa atomik olarak guncelle,
    - onceki version'lari `destroy` ile delayed destruction'a al.
 4. Yeni version yazma/okuma basarisizsa eski version enabled kalir.
-5. Missing/permission/quota/network hatalarini secret degeri loglamadan
+5. Yeni version read-back sonrasi committed kabul edilir; onceki version'lardan
+   birinin delayed-destruction cleanup'i gecici hata verirse rotation false
+   negative dondurmez, PII-safe warning uretir ve yeni version aktif kalir.
+6. Missing/permission/quota/network hatalarini secret degeri loglamadan
    siniflandir.
-6. Fake-client unit testlerinin yanina staging canary testi ekle.
+7. Fake-client unit testlerinin yanina staging canary testi ekle.
 
 ### Faz 2 - Firebase ADC ve runtime config
 
@@ -151,6 +178,8 @@ GSM'e eklenir. Tenant secret degerlerini yalniz agent runtime API'si yazar.
 4. Browser'a agent URL veya Google identity token gonderme.
 5. Tum BFF route'larini ortak client'a tasi; timeout, SSE ve hata map'ini
    merkezi hale getir.
+   Timeout controller response body/SSE omru bitene kadar acik kalir; yalniz
+   header geldigi anda temizlenmez.
 6. Unit testlerde iki auth katmaninin birlikte ve secret redaction ile
    calistigini kanitla.
 
@@ -177,7 +206,7 @@ infra/terraform/
    - statik secret container'lari (degersiz),
    - Cloud Run web/agent servisleri,
    - Cloud Run invoker binding,
-   - log/metric/alert temelleri.
+   - iki asamali runtime create kapisi (`deploy_runtime_services`).
 3. Staging environment:
    - `europe-west3`,
    - izole Firebase/Firestore project baglantisi,
@@ -188,14 +217,20 @@ infra/terraform/
 ### Faz 5 - Build ve deploy pipeline
 
 1. Agent ve web image'larini commit SHA ile tag'le.
-2. PR: lint, type-check, unit test, Docker build, Terraform fmt/validate/plan.
+2. PR: lint, type-check, unit test, Docker build, Terraform fmt/validate.
 3. Main/staging deploy:
    - WIF ile GCP auth,
    - image push,
-   - korumali staging apply/deploy,
+   - mevcut Cloud Run servislerine revision deploy,
    - revision health/readiness kontrolu,
    - smoke test basarisizsa onceki revision'a trafik rollback.
 4. Static secret eksikse deploy veya readiness fail closed olur.
+
+Foundation Terraform apply'i CI deploy kimliginin kapsami disindadir. Ilk
+kurulumda operator once `deploy_runtime_services=false` ile API/IAM/network ve
+secret container'larini olusturur, statik secret version'larini GSM'e dogrudan
+ekler ve image'lari hazirlar; ancak sonra `deploy_runtime_services=true` ile
+Cloud Run servislerini olusturur.
 
 ### Faz 6 - Canli staging pilotu
 
@@ -214,7 +249,9 @@ infra/terraform/
 ## Test Matrisi
 
 - Agent: Ruff, format check, tum pytest; GSM unit/failure/rotation testleri.
-- Web: ESLint, TypeScript; ortak BFF client auth/timeout/SSE testleri.
+- Web: ESLint, TypeScript ve tum BFF route'larinin ortak client kullandigina
+  yonelik kaynak taramasi. Repo'da web test runner'i bulunmadigi icin ortak
+  client unit testi sonraki test-altyapisi isidir.
 - Infra: `terraform fmt -check`, `init -backend=false`, `validate`, policy/IAM
   kontrolleri, `docker compose config`, iki image build.
 - Security: repository secret scan, Terraform plan/state secret leakage

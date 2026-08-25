@@ -10,7 +10,11 @@ Google Cloud production foundation icin kabul edilen hedef ve asamali uygulama
 plani [[google-cloud-production-foundation]] ile
 [[adr-0023-google-cloud-secret-and-runtime-foundation]] notlarindadir. Staging
 altyapisi henuz uygulanma asamasindadir; production kaynaklari kurulmus kabul
-edilmemelidir.
+edilmemelidir. Repo icinde artik `infra/terraform/bootstrap`,
+`infra/terraform/modules/conduut-environment`,
+`infra/terraform/environments/staging` ve
+`.github/workflows/staging-foundation.yml` iskeleti bulunur; bunlar live apply
+kaniti degil, staging foundation'in kod temelidir.
 
 ## Calisan Parcalar
 
@@ -34,6 +38,13 @@ edilmemelidir.
   Fernet-encrypted file store'da kalir; production hala Google Secret Manager
   ve IAM kurulumu ister. Shared n8n yalniz `shared_dev` local gelistirme
   adapter'idir.
+- Google Cloud foundation repo implementasyonu: backend GSM secret adlari PII-free hash,
+  delayed-destruction rotation ve ADC/certificate Firebase init matrisi ile
+  sertlesti. Web BFF agent cagrilari ortak server-only client'a tasindi; private
+  Cloud Run agent icin `X-Serverless-Authorization` header destegi repo
+  seviyesinde vardir. Terraform bootstrap/staging modulleri ile WIF image deploy
+  workflow'u local validation'dan gecmistir; canli GCP apply ve staging pilotu
+  henuz yapilmamistir.
 
 ## Gercek Veriyle Bagli Olanlar
 

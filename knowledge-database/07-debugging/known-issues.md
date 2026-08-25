@@ -2,17 +2,27 @@
 
 Merkez: [[index]]
 
-## Google Cloud foundation acik kapilari (2026-08-25)
+## Google Cloud foundation canli dogrulama kapilari (2026-08-25)
 
-- Firebase Admin halen import aninda local `serviceAccount.json` yukler; Cloud
-  Run ADC modu uygulanmadan private agent deploy edilmemelidir.
-- Web BFF halen yalniz Firebase `Authorization` header'i yollar; private Cloud
-  Run agent icin Google ID token katmani uygulanmalidir.
+- Terraform foundation, WIF ve Cloud Run tanimlari repo'dadir fakat henuz
+  gercek GCP project'lerine apply edilmemistir. Local `validate`, canli IAM ve
+  ingress davranisinin kaniti degildir.
+- Tenant Secret Manager custom role'u dedicated project ve hashed secret-name
+  prefix condition ile sinirlidir. Parent project'te authorize edilen
+  `secrets.create` bunun disinda, yalniz create izni veren kosulsuz ayri role
+  sahiptir. Ilk staging apply sonrasi create/read/rotate/destroy canary gecmeden
+  production'a tasinmamalidir.
+- Ilk Cloud Run apply iki asamalidir: once
+  `deploy_runtime_services=false`, sonra statik secret version seed'i, image
+  push ve `deploy_runtime_services=true`. Secret degerleri Terraform'a
+  verilmez.
 - Agent mutation lock'lari process-local oldugu icin Cloud Run agent
   `max_instances=1` kalmalidir. Distributed lock olmadan yatay olcekleme acik
   production riskidir.
-- Terraform/WIF/Cloud Run staging foundation henuz repo'da yoktur. Takip:
-  [[google-cloud-production-foundation]].
+- Bu gelistirme makinesinde final Docker image build'i Docker Desktop engine
+  kapali oldugu icin yeniden kosulamadi; CI image build kapisi korunur.
+
+Takip: [[google-cloud-production-foundation]].
 
 Bu not, repo icinde gorulen bilinen sorunlari ve dikkat noktalarini toplar.
 

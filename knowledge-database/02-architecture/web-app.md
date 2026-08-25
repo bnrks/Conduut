@@ -106,8 +106,14 @@ yeniden kullanim ihtimali icin silinmedi.
 
 Firebase client auth `src/hooks/use-auth.ts` icinde kullanilir. Browser
 `user.getIdToken()` ile token alir ve `Authorization: Bearer ...` header'i ile
-Next API route'larina gonderir. Next API route'lari ayni header'i agent
-servisine aktarir. Dashboard workflows sayfasi ilk listeleme isteginde
+Next API route'larina gonderir. Web BFF route'lari ortak server-only
+`src/lib/agent-client.ts` uzerinden agent'a gider. Bu katman kullanicinin
+Firebase token'ini `Authorization` header'inda korur, `X-Request-ID` tasir ve
+Cloud Run private agent modu aciksa metadata server'dan audience-bound Google
+ID token alip `X-Serverless-Authorization` header'ina ekler. `AGENT_API_BASE_URL`
+artik yalniz server env'dir; `NEXT_PUBLIC_AGENT_API_BASE_URL` fallback'i
+kullanilmaz. JSON ve SSE deadline controller'i response body tamamlanana veya
+stream iptal edilene kadar yasatilir. Dashboard workflows sayfasi ilk listeleme isteginde
 `user.getIdToken(true)` ile taze ID token ister; auth state henuz hazir degilse
 listeleme bekler, kullanici yoksa local loading state'ini kapatir. Agent 401
 veya baska hata donerse BFF payload'indaki `detail.message`, `detail` veya
@@ -167,7 +173,10 @@ sonrasi tekrar login istenebilir. Script root `.env` icinden Google OAuth
 client bilgilerine ek olarak `CONDUUT_CONNECTION_ENCRYPTION_KEY` degerini de
 agent process'ine tasir; bu key yoksa Google connection n8n credential olarak
 kaydedilir ama direct Sheets/Gmail API aksiyonlari icin refresh token encrypted
-saklanamaz. Env veya port degisirse Next dev server yeniden baslatilmalidir.
+saklanamaz. Cloud Run staging/production contract'i icin root `.env.example`
+dosyasina `AGENT_API_AUTH_MODE`, `AGENT_API_AUDIENCE`,
+JSON/SSE timeout'lari ile birlikte eklendi. Env veya port degisirse Next dev
+server yeniden baslatilmalidir.
 
 Settings `Automation Server` yuzeyi
 `components/settings/automation-server-section.tsx` icinde connection
