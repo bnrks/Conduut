@@ -6,6 +6,12 @@ Bu not, repo icin mevcut gercegi ozetler. Planlanan mimari icin
 [[system-architecture]] ve `PROJECT.md` kullanilabilir, fakat kod yazarken
 once bu not ve kaynak kod esas alinmalidir.
 
+Google Cloud production foundation icin kabul edilen hedef ve asamali uygulama
+plani [[google-cloud-production-foundation]] ile
+[[adr-0023-google-cloud-secret-and-runtime-foundation]] notlarindadir. Staging
+altyapisi henuz uygulanma asamasindadir; production kaynaklari kurulmus kabul
+edilmemelidir.
+
 ## Calisan Parcalar
 
 - `apps/web`: Next.js 16 frontend, React 19, Tailwind CSS 4, Firebase client

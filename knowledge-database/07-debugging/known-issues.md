@@ -2,6 +2,18 @@
 
 Merkez: [[index]]
 
+## Google Cloud foundation acik kapilari (2026-08-25)
+
+- Firebase Admin halen import aninda local `serviceAccount.json` yukler; Cloud
+  Run ADC modu uygulanmadan private agent deploy edilmemelidir.
+- Web BFF halen yalniz Firebase `Authorization` header'i yollar; private Cloud
+  Run agent icin Google ID token katmani uygulanmalidir.
+- Agent mutation lock'lari process-local oldugu icin Cloud Run agent
+  `max_instances=1` kalmalidir. Distributed lock olmadan yatay olcekleme acik
+  production riskidir.
+- Terraform/WIF/Cloud Run staging foundation henuz repo'da yoktur. Takip:
+  [[google-cloud-production-foundation]].
+
 Bu not, repo icinde gorulen bilinen sorunlari ve dikkat noktalarini toplar.
 
 Kullanicinin yeni fark ettigi ve henuz triage edilmemis sorun/bug notlari icin

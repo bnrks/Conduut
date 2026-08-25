@@ -2,6 +2,11 @@
 
 Merkez: [[index]]
 
+Customer-owned API key'lerinin Google Secret Manager'da saklanmasi, private
+Cloud Run agent kimligi ve staging rollout kapilari
+[[google-cloud-production-foundation]] ile
+[[adr-0023-google-cloud-secret-and-runtime-foundation]] notlarinda tanimlidir.
+
 ## Durum
 
 V1 kodu `codex/byo-n8n-v1` dalinda uygulandi; production pilotu ve operasyonel
