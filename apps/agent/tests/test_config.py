@@ -32,7 +32,18 @@ def test_find_repo_root_falls_back_to_start_without_marker():
     try:
         app_dir = Path(temp_dir) / "app"
         app_dir.mkdir()
-        assert _find_repo_root(app_dir) == app_dir
+        original_exists = Path.exists
+
+        def fake_exists(path: Path) -> bool:
+            if path.name in {"AGENTS.md", "docker-compose.yml"}:
+                return False
+            return original_exists(path)
+
+        Path.exists = fake_exists  # type: ignore[method-assign]
+        try:
+            assert _find_repo_root(app_dir) == app_dir
+        finally:
+            Path.exists = original_exists  # type: ignore[method-assign]
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -111,6 +122,10 @@ def test_validate_n8n_provider_settings_rejects_non_google_secret_backend_in_pro
     monkeypatch.setattr(settings, "environment", "production")
     monkeypatch.setattr(settings, "n8n_provider_mode", "customer_owned")
     monkeypatch.setattr(settings, "n8n_secret_manager_backend", "encrypted_file")
+    monkeypatch.setattr(settings, "firebase_credentials_mode", "adc")
+    monkeypatch.setattr(settings, "firebase_project_id", "firebase-prod")
+    monkeypatch.setattr(settings, "n8n_secret_manager_project_id", "gsm-prod")
+    monkeypatch.setattr(settings, "n8n_secret_manager_location", "europe-west3")
 
     with pytest.raises(ValueError, match="google_secret_manager"):
         validate_n8n_provider_settings()
@@ -122,6 +137,10 @@ def test_validate_n8n_provider_settings_accepts_customer_owned_google_backend_in
     monkeypatch.setattr(settings, "environment", "production")
     monkeypatch.setattr(settings, "n8n_provider_mode", "customer_owned")
     monkeypatch.setattr(settings, "n8n_secret_manager_backend", "google_secret_manager")
+    monkeypatch.setattr(settings, "firebase_credentials_mode", "adc")
+    monkeypatch.setattr(settings, "firebase_project_id", "firebase-prod")
+    monkeypatch.setattr(settings, "n8n_secret_manager_project_id", "gsm-prod")
+    monkeypatch.setattr(settings, "n8n_secret_manager_location", "europe-west3")
 
     validate_n8n_provider_settings()
 
@@ -145,3 +164,62 @@ def test_validate_n8n_provider_settings_accepts_encrypted_file_for_local_custome
     monkeypatch.setattr(settings, "n8n_secret_manager_backend", "encrypted_file")
 
     validate_n8n_provider_settings()
+
+
+def test_validate_n8n_provider_settings_rejects_non_adc_firebase_mode_in_staging(monkeypatch):
+    monkeypatch.setattr(settings, "environment", "staging")
+    monkeypatch.setattr(settings, "n8n_provider_mode", "customer_owned")
+    monkeypatch.setattr(settings, "n8n_secret_manager_backend", "google_secret_manager")
+    monkeypatch.setattr(settings, "n8n_secret_manager_project_id", "gsm-staging")
+    monkeypatch.setattr(settings, "n8n_secret_manager_location", "europe-west3")
+    monkeypatch.setattr(settings, "firebase_credentials_mode", "certificate")
+    monkeypatch.setattr(settings, "firebase_project_id", "firebase-staging")
+
+    with pytest.raises(ValueError, match="CONDUUT_FIREBASE_CREDENTIALS_MODE=adc"):
+        validate_n8n_provider_settings()
+
+
+def test_validate_n8n_provider_settings_rejects_missing_firebase_project_id_in_staging(
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "environment", "staging")
+    monkeypatch.setattr(settings, "n8n_provider_mode", "customer_owned")
+    monkeypatch.setattr(settings, "n8n_secret_manager_backend", "google_secret_manager")
+    monkeypatch.setattr(settings, "n8n_secret_manager_project_id", "gsm-staging")
+    monkeypatch.setattr(settings, "n8n_secret_manager_location", "europe-west3")
+    monkeypatch.setattr(settings, "firebase_credentials_mode", "adc")
+    monkeypatch.setattr(settings, "firebase_project_id", "")
+
+    with pytest.raises(ValueError, match="CONDUUT_FIREBASE_PROJECT_ID"):
+        validate_n8n_provider_settings()
+
+
+def test_validate_n8n_provider_settings_rejects_unknown_firebase_credentials_mode(monkeypatch):
+    monkeypatch.setattr(settings, "environment", "development")
+    monkeypatch.setattr(settings, "firebase_credentials_mode", "bogus")
+
+    with pytest.raises(ValueError, match="CONDUUT_FIREBASE_CREDENTIALS_MODE"):
+        validate_n8n_provider_settings()
+
+
+def test_validate_n8n_provider_settings_rejects_emulator_credentials_in_production(
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "firebase_credentials_mode", "emulator")
+
+    with pytest.raises(ValueError, match="limited to development and test"):
+        validate_n8n_provider_settings()
+
+
+def test_validate_n8n_provider_settings_rejects_missing_gsm_location_in_staging(monkeypatch):
+    monkeypatch.setattr(settings, "environment", "staging")
+    monkeypatch.setattr(settings, "n8n_provider_mode", "customer_owned")
+    monkeypatch.setattr(settings, "n8n_secret_manager_backend", "google_secret_manager")
+    monkeypatch.setattr(settings, "n8n_secret_manager_project_id", "gsm-staging")
+    monkeypatch.setattr(settings, "n8n_secret_manager_location", "")
+    monkeypatch.setattr(settings, "firebase_credentials_mode", "adc")
+    monkeypatch.setattr(settings, "firebase_project_id", "firebase-staging")
+
+    with pytest.raises(ValueError, match="CONDUUT_N8N_SECRET_MANAGER_LOCATION"):
+        validate_n8n_provider_settings()

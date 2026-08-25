@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { agentHeaders } from "@/lib/request-id";
-
-function getAgentBaseUrl(): string {
-  const fromEnv =
-    process.env.AGENT_API_BASE_URL || process.env.NEXT_PUBLIC_AGENT_API_BASE_URL;
-  return fromEnv || "http://localhost:8000";
-}
+import {
+  fetchAgentResponse,
+  isAgentTimeoutError,
+  releaseAgentResponse,
+} from "@/lib/agent-client";
 
 function safeReturnTo(value: unknown): string {
   if (typeof value !== "string") return "/dashboard/connections";
@@ -59,33 +57,47 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const response = await fetch(
-      `${getAgentBaseUrl()}/api/connections/google/callback`,
-      {
-        method: "POST",
-        headers: agentHeaders(request, { "Content-Type": "application/json" }),
-        body: JSON.stringify({ code, state }),
-        cache: "no-store",
-      }
-    );
+    const response = await fetchAgentResponse(request, {
+      auth: "none",
+      body: JSON.stringify({ code, state }),
+      contentType: "application/json",
+      method: "POST",
+      path: "/api/connections/google/callback",
+      timeoutMs: 30_000,
+    });
 
-    if (!response.ok) {
+    if (response instanceof NextResponse) {
       return redirectWithQuery(request, "/dashboard/connections", {
-        error: await getErrorMessage(
-          response,
-          "Google connection could not be completed."
-        ),
+        error: "Google connection could not be completed.",
       });
     }
 
-    const payload = (await response.json().catch(() => null)) as {
-      connection?: { id?: string };
-      returnTo?: string;
-    } | null;
-    return redirectWithQuery(request, safeReturnTo(payload?.returnTo), {
-      connected: payload?.connection?.id ?? "google",
-    });
-  } catch {
+    try {
+      if (!response.ok) {
+        return redirectWithQuery(request, "/dashboard/connections", {
+          error: await getErrorMessage(
+            response,
+            "Google connection could not be completed."
+          ),
+        });
+      }
+
+      const payload = (await response.json().catch(() => null)) as {
+        connection?: { id?: string };
+        returnTo?: string;
+      } | null;
+      return redirectWithQuery(request, safeReturnTo(payload?.returnTo), {
+        connected: payload?.connection?.id ?? "google",
+      });
+    } finally {
+      releaseAgentResponse(response);
+    }
+  } catch (error) {
+    if (isAgentTimeoutError(error)) {
+      return redirectWithQuery(request, "/dashboard/connections", {
+        error: "Agent service timed out before responding.",
+      });
+    }
     return redirectWithQuery(request, "/dashboard/connections", {
       error: "Agent service is unreachable.",
     });

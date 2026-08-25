@@ -2,6 +2,10 @@
 
 Merkez: [[index]]
 
+Google Cloud staging/production runtime, IAM, secret lifecycle ve deploy
+foundation detaylari icin [[google-cloud-production-foundation]] ve
+[[adr-0023-google-cloud-secret-and-runtime-foundation]] esas alinmalidir.
+
 Conduut mimarisi iki provider modunda dusunulmeli: local gelistirme icin
 shared-n8n ve production icin customer-owned n8n (BYO).
 

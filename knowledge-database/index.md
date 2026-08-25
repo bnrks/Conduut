@@ -26,6 +26,8 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
 - [[system-architecture]] - MVP mimarisi ve uzun vadeli hedef mimari.
 - [[customer-owned-n8n]] - aktif BYO n8n production mimarisi, onboarding,
   guvenlik sinirlari ve shared MVP'den gecis plani.
+- [[google-cloud-production-foundation]] - Google Secret Manager, private
+  Cloud Run agent, Terraform, WIF ve izole staging rollout plani.
 - [[web-app]] - Next.js frontend, route yapisi, auth ve BFF API route'lari.
 - [[agent-service]] - FastAPI agent, SSE chat flow, Pydantic AI ve Firestore.
 - [[agent-platform-self-awareness]] - agent'in platform oz-farkindaligi: statik
@@ -127,6 +129,9 @@ Butun ana proje notlari bu sayfaya geri link verir; Obsidian graph'ta
 - [[adr-0022-customer-owned-n8n]] - production'da kullanicinin kendi VPS/n8n
   instance'ini yonettigi, Conduut'un public API ile baglandigi BYO provider
   karari; managed container/control-plane ertelendi.
+- [[adr-0023-google-cloud-secret-and-runtime-foundation]] - GSM secret
+  lifecycle, ADC service identity, private agent Cloud Run ve WIF/Terraform
+  staging foundation karari.
 
 ## Kaynak Dokumanlar
 

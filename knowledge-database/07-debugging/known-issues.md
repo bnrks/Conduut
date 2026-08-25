@@ -2,6 +2,58 @@
 
 Merkez: [[index]]
 
+## GCP foundation CI dev extra'sinda Ruff yoktu (2026-08-25, cozuldu)
+
+**Belirti:** PR #3 `staging-foundation` validate job'u agent kontrolunde
+`ruff: command not found` ile durdu.
+
+**Kok neden:** Workflow `pip install -e "apps/agent[dev]"` kullaniyor ve
+ardindan Ruff calistiriyordu; ancak `apps/agent/pyproject.toml` icindeki `dev`
+extra'si pytest araclarini icerirken Ruff'i tanimlamiyordu.
+
+**Duzeltme:** Ruff agent `dev` extra'sina eklendi. Boylece lokal gelistirme ve
+GitHub Actions ayni deklaratif gelistirme araci setini kurar. Bu hata deploy
+job'una ulasmadan validate asamasinda cikti; `STAGING_DEPLOY_ENABLED` kapali
+kaldigi icin herhangi bir GCP deploy islemi calismadi.
+
+## Google Cloud foundation canli dogrulama kapilari (2026-08-25)
+
+- Bootstrap foundation ve secret-only application temeli uygulanmistir: GCS
+  remote state, WIF, deploy service account, bes seed edilmis secret container'i ve
+  runtime service account/IAM temeli canlidir. Cloud Run, Artifact Registry
+  repository ve staging VPC/NAT uygulanmamistir; `STAGING_DEPLOY_ENABLED` unset
+  kalir. Secret latest version'lari byte-level dogrulandi; tenant-prefix IAM
+  canary gecti. Bu kanit Cloud Run/private ingress davranisinin kaniti degildir.
+- Windows `gcloud.ps1` uzerinden `--data-file=-` stdin seed'i payload'a CRLF
+  ekledi. Hatalı ilk version'lar disabled ve yedi gunluk delayed destruction'a
+  alindi; dogru version'lar Secret Manager REST API'ye base64 byte payload ile
+  yazildi. Windows'ta static secret seed icin `gcloud.ps1` stdin yolu yeniden
+  kullanilmamalidir.
+- Tenant Secret Manager custom role'u hashed secret-name prefix condition ile
+  sinirlidir. Parent project'te authorize edilen
+  `secrets.create` bunun disinda, yalniz create izni veren kosulsuz ayri role
+  sahiptir. Tek-project staging'de bu role `conduut-1` genelinde secret container
+  olusturabilir fakat prefix disini okuyamaz/silemez. Ilk apply sonrasi canary
+  gecmeden production'a tasinmamalidir.
+- Ilk staging mevcut `conduut-1` Firestore database'ini kullanir; test ve olasi
+  mevcut veriler collection seviyesinde paylasilir. Production oncesi ayri
+  project/database veya acik namespace stratejisi zorunludur.
+- Compute API etkinlestirilirken `default` auto-mode VPC olustu. Foundation bunu
+  kullanmaz; silme karari once bagimlilik envanteriyle ayrica verilmelidir.
+  Modul artik Compute API'yi yalniz `provision_networking=true` iken yonetir;
+  secret-only mod yeni project'te bu yan etkiyi uretmez.
+- Ilk Cloud Run apply asamalidir: secret-only adimda uc provisioning flag'i
+  false kalir; sonra onayla Artifact Registry, statik secret version seed'i ve
+  image push; son olarak network ile runtime birlikte acilir. Secret degerleri
+  Terraform'a verilmez.
+- Agent mutation lock'lari process-local oldugu icin Cloud Run agent
+  `max_instances=1` kalmalidir. Distributed lock olmadan yatay olcekleme acik
+  production riskidir.
+- Bu gelistirme makinesinde final Docker image build'i Docker Desktop engine
+  kapali oldugu icin yeniden kosulamadi; CI image build kapisi korunur.
+
+Takip: [[google-cloud-production-foundation]].
+
 Bu not, repo icinde gorulen bilinen sorunlari ve dikkat noktalarini toplar.
 
 Kullanicinin yeni fark ettigi ve henuz triage edilmemis sorun/bug notlari icin

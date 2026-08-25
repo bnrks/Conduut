@@ -1,0 +1,10 @@
+bootstrap_project_id    = "conduut-1"
+manage_project_services = false
+region                  = "europe-west3"
+state_bucket_name       = "conduut-1-terraform-state"
+github_repository       = "bnrks/Conduut"
+
+allowed_refs = [
+  "refs/heads/main",
+  "refs/heads/staging",
+]

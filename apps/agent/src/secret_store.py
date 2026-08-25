@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import logging
 import os
 import re
 import tempfile
@@ -11,9 +13,12 @@ from typing import Protocol
 
 import firebase_admin
 from cryptography.fernet import Fernet
-from google.api_core.exceptions import AlreadyExists
+from google.api_core.exceptions import AlreadyExists, NotFound
+from google.protobuf import duration_pb2
 
 from src.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class SecretStore(Protocol):
@@ -166,9 +171,19 @@ class EncryptedFileSecretStore:
 
 
 class GoogleSecretManagerSecretStore:
-    def __init__(self, *, project_id: str, secret_prefix: str):
+    _VERSION_DESTROY_TTL_SECONDS = 7 * 24 * 60 * 60
+
+    def __init__(self, *, project_id: str, secret_prefix: str, location: str = ""):
         self._project_id = project_id
         self._secret_prefix = secret_prefix.strip("-/")
+        self._location = location.strip()
+        if not self._project_id.strip():
+            raise ValueError("Google Secret Manager project id is required.")
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", self._secret_prefix):
+            raise ValueError(
+                "Google Secret Manager secret prefix must use only letters, numbers, hyphens, "
+                "or underscores."
+            )
 
     def _client(self):
         from google.cloud import secretmanager
@@ -176,8 +191,11 @@ class GoogleSecretManagerSecretStore:
         return secretmanager.SecretManagerServiceClient()
 
     def _secret_name(self, secret_ref: str) -> str:
-        suffix = re.sub(r"[^A-Za-z0-9_-]+", "-", secret_ref.strip()).strip("-")
-        name = f"{self._secret_prefix}-{suffix}".strip("-")
+        normalized = secret_ref.strip()
+        if not normalized:
+            raise ValueError("Secret reference cannot be empty.")
+        digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:40]
+        name = f"{self._secret_prefix}-tenant-{digest}".strip("-")
         if not name:
             raise ValueError("Secret reference cannot be converted to a valid GSM secret id.")
         return name[:255]
@@ -186,8 +204,14 @@ class GoogleSecretManagerSecretStore:
         name = self._secret_name(secret_ref)
         return f"projects/{self._project_id}/secrets/{name}"
 
-    async def put_secret(self, secret_ref: str, secret_value: str) -> str:
-        client = self._client()
+    @staticmethod
+    def _parse_version_number(version_name: str) -> int:
+        try:
+            return int(version_name.rsplit("/", 1)[-1])
+        except (TypeError, ValueError):
+            return -1
+
+    async def _ensure_secret(self, client, secret_ref: str) -> str:
         secret_path = self._secret_path(secret_ref)
         parent = f"projects/{self._project_id}"
         secret_id = self._secret_name(secret_ref)
@@ -198,51 +222,107 @@ class GoogleSecretManagerSecretStore:
                 request={
                     "parent": parent,
                     "secret_id": secret_id,
-                    "secret": {"replication": {"automatic": {}}},
+                    "secret": {
+                        "replication": (
+                            {"user_managed": {"replicas": [{"location": self._location}]}}
+                            if self._location
+                            else {"automatic": {}}
+                        ),
+                        "version_destroy_ttl": duration_pb2.Duration(
+                            seconds=self._VERSION_DESTROY_TTL_SECONDS
+                        ),
+                    },
                 },
             )
         except AlreadyExists:
             pass
+        return secret_path
 
-        await asyncio.to_thread(
+    async def _access_secret_version(self, client, version_name: str) -> str:
+        response = await asyncio.to_thread(
+            client.access_secret_version,
+            request={"name": version_name},
+        )
+        return response.payload.data.decode("utf-8")
+
+    async def _enabled_version_names(self, client, secret_path: str) -> list[str]:
+        try:
+            versions = await asyncio.to_thread(
+                lambda: list(
+                    client.list_secret_versions(
+                        request={"parent": secret_path, "filter": "state:ENABLED"}
+                    )
+                )
+            )
+        except NotFound:
+            return []
+        names = [str(getattr(version, "name", "") or "") for version in versions]
+        names = [name for name in names if name]
+        names.sort(key=self._parse_version_number)
+        return names
+
+    async def _latest_enabled_version_name(self, client, secret_path: str) -> str | None:
+        versions = await self._enabled_version_names(client, secret_path)
+        if not versions:
+            return None
+        return versions[-1]
+
+    async def put_secret(self, secret_ref: str, secret_value: str) -> str:
+        client = self._client()
+        secret_path = await self._ensure_secret(client, secret_ref)
+        created = await asyncio.to_thread(
             client.add_secret_version,
             request={
                 "parent": secret_path,
                 "payload": {"data": secret_value.encode("utf-8")},
             },
         )
+        created_name = str(getattr(created, "name", "") or "")
+        try:
+            if not created_name:
+                raise RuntimeError("Secret Manager did not return the new version name.")
+            roundtrip = await self._access_secret_version(client, created_name)
+            if roundtrip != secret_value:
+                raise RuntimeError("Secret Manager verification mismatch.")
+        except Exception as exc:
+            if created_name:
+                try:
+                    await asyncio.to_thread(
+                        client.destroy_secret_version,
+                        request={"name": created_name},
+                    )
+                except Exception:
+                    pass
+            raise RuntimeError("Unable to verify tenant secret in Google Secret Manager.") from exc
         return secret_ref
 
     async def get_secret(self, secret_ref: str) -> str | None:
         client = self._client()
-        secret_path = f"{self._secret_path(secret_ref)}/versions/latest"
+        secret_path = self._secret_path(secret_ref)
         try:
-            response = await asyncio.to_thread(
-                client.access_secret_version, request={"name": secret_path}
-            )
+            version_name = await self._latest_enabled_version_name(client, secret_path)
+            if version_name is None:
+                return None
+            return await self._access_secret_version(client, version_name)
+        except NotFound:
+            return None
         except Exception as exc:
-            raise RuntimeError(
-                f"Unable to read secret '{secret_ref}' from Google Secret Manager."
-            ) from exc
-        return response.payload.data.decode("utf-8")
+            raise RuntimeError("Unable to read tenant secret from Google Secret Manager.") from exc
 
     async def delete_secret(self, secret_ref: str) -> None:
         client = self._client()
-        await asyncio.to_thread(
-            client.delete_secret,
-            request={"name": self._secret_path(secret_ref)},
-        )
+        try:
+            await asyncio.to_thread(
+                client.delete_secret,
+                request={"name": self._secret_path(secret_ref)},
+            )
+        except NotFound:
+            return
 
     async def put_secret_version(self, secret_ref: str, secret_value: str) -> str:
         client = self._client()
-        secret_path = self._secret_path(secret_ref)
-        previous = await asyncio.to_thread(
-            lambda: list(
-                client.list_secret_versions(
-                    request={"parent": secret_path, "filter": "state:ENABLED"}
-                )
-            )
-        )
+        secret_path = await self._ensure_secret(client, secret_ref)
+        previous = await self._enabled_version_names(client, secret_path)
         added = await asyncio.to_thread(
             client.add_secret_version,
             request={
@@ -251,14 +331,38 @@ class GoogleSecretManagerSecretStore:
             },
         )
         added_name = str(getattr(added, "name", "") or "")
-        for version in previous:
-            version_name = str(getattr(version, "name", "") or "")
-            if not version_name or version_name == added_name:
+        try:
+            if not added_name:
+                raise RuntimeError("Secret Manager did not return the new version name.")
+            roundtrip = await self._access_secret_version(client, added_name)
+            if roundtrip != secret_value:
+                raise RuntimeError("Secret Manager verification mismatch.")
+        except Exception as exc:
+            if added_name:
+                try:
+                    await asyncio.to_thread(
+                        client.destroy_secret_version,
+                        request={"name": added_name},
+                    )
+                except Exception:
+                    pass
+            raise RuntimeError(
+                "Unable to verify rotated tenant secret in Google Secret Manager."
+            ) from exc
+
+        for version_name in previous:
+            if version_name == added_name:
                 continue
-            await asyncio.to_thread(
-                client.disable_secret_version,
-                request={"name": version_name},
-            )
+            try:
+                await asyncio.to_thread(
+                    client.destroy_secret_version,
+                    request={"name": version_name},
+                )
+            except Exception as exc:
+                logger.warning(
+                    "tenant_secret_previous_version_cleanup_failed",
+                    extra={"error_type": type(exc).__name__},
+                )
         return secret_ref
 
 
@@ -280,6 +384,7 @@ def build_secret_store() -> SecretStore:
         return GoogleSecretManagerSecretStore(
             project_id=project_id,
             secret_prefix=str(settings.n8n_secret_manager_secret_prefix or "conduut-n8n"),
+            location=str(settings.n8n_secret_manager_location or ""),
         )
     if backend == "memory":
         return InMemorySecretStore()

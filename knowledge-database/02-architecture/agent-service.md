@@ -55,10 +55,14 @@ icin Firebase Admin'in izin verdigi ust sinir olan 60 saniyelik clock skew
 toleransi kullanilir. Reddedilen token'lar `firebase_token_rejected` log
 event'iyle hata tipi ve mesaji korunarak kaydedilir.
 
-`src/firebase.py` Docker icinde `/app/serviceAccount.json` dosyasini, local
-test/dev ortaminda ise `apps/agent/serviceAccount.json` dosyasini kullanir.
-Firebase Admin uygulamasi daha once initialize edildiyse yeniden initialize
-etmez.
+`src/firebase.py` artik dort modu acik secer: `certificate`, `adc`, `emulator`
+ve `auto`.
+Local/dev akista varsayilan `auto`, once `/app/serviceAccount.json` veya
+`apps/agent/serviceAccount.json` arar; bulamazsa ADC'ye duser. Cloud staging ve
+production icin config fail-fast olarak
+`CONDUUT_FIREBASE_CREDENTIALS_MODE=adc` ve
+`CONDUUT_FIREBASE_PROJECT_ID` ister. Firebase Admin uygulamasi daha once
+initialize edildiyse yeniden initialize etmez.
 
 ## Konfigurasyon
 
@@ -73,6 +77,30 @@ image icinde `/app/src/config.py` iken `parents[3]` gibi sabit path varsayimi
 yuzunden startup kirilmaz. Lokal n8n default URL'i Windows port mapping'iyle
 uyumlu olacak sekilde `http://localhost:6180`'dir; Docker compose agent
 container'inda `CONDUUT_N8N_URL=http://n8n:5678` env override'i kullanilir.
+Staging/production validation artik BYO provider, GSM backend, GSM project id,
+Firebase ADC mode ve Firebase project id matrisini birlikte fail-fast denetler.
+
+## Secret Store
+
+Customer-owned n8n API key'leri icin `src/secret_store.py` icindeki
+`GoogleSecretManagerSecretStore` production temelidir. Uygulanan guardrail'ler:
+
+- GSM secret id'si ham Firebase UID, email veya instance id tasimaz; secret
+  ref'ten turetilen deterministik SHA-256 hash kullanilir.
+- Secret create sirasinda `version_destroy_ttl=604800` (7 gun) ayarlanir.
+- Rotation akisi yeni version'i ekler, exact version name ile read-back
+  dogrular, ancak dogrulama gectikten sonra onceki enabled version'lari delayed
+  destruction'a gonderir.
+- Read-back sonrasi rotation committed kabul edilir; eski version cleanup'inda
+  gecici hata yeni key aktifken API'ye false failure olarak donmez ve secret
+  degeri icermeyen warning ile izlenir.
+- Runtime read yolu `/versions/latest` alias'ina guvenmez; en yeni `ENABLED`
+  version'i listeler. Boylece read-back'i gecmeyen yeni version destruction'a
+  alinirken eski enabled version okunmaya devam eder.
+- Staging ve production tenant secret'lari explicit
+  `CONDUUT_N8N_SECRET_MANAGER_LOCATION` ile regional replication kullanir.
+- Missing secret durumunda `None` dondurulur; diger hatalar raw secret degeri
+  loglamadan typed runtime hatasina cevrilir.
 
 ## Diagnostic Logging
 

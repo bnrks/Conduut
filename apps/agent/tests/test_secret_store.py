@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+from google.api_core.exceptions import NotFound
 
 from src.secret_store import (
     EncryptedFileSecretStore,
@@ -12,22 +13,71 @@ from src.secret_store import (
 
 class _FakeSecretManagerClient:
     def __init__(self):
+        self.created = []
         self.added = []
+        self.accessed = []
+        self.destroyed = []
         self.disabled = []
+        self.deleted = []
+        self.secrets: dict[str, dict[int, dict[str, object]]] = {}
+
+    def create_secret(self, *, request):
+        self.created.append(request)
+        parent = request["parent"]
+        secret_path = f"{parent}/secrets/{request['secret_id']}"
+        self.secrets.setdefault(secret_path, {})
+        return SimpleNamespace(name=secret_path)
 
     def list_secret_versions(self, *, request):
         assert request["filter"] == "state:ENABLED"
+        versions = self.secrets.get(request["parent"])
+        if versions is None:
+            raise NotFound("missing")
         return [
-            SimpleNamespace(name=f"{request['parent']}/versions/1"),
-            SimpleNamespace(name=f"{request['parent']}/versions/2"),
+            SimpleNamespace(name=f"{request['parent']}/versions/{version}")
+            for version, payload in sorted(versions.items())
+            if payload["state"] == "ENABLED"
         ]
 
     def add_secret_version(self, *, request):
         self.added.append(request)
-        return SimpleNamespace(name=f"{request['parent']}/versions/3")
+        versions = self.secrets.setdefault(request["parent"], {})
+        next_version = max(versions.keys(), default=0) + 1
+        versions[next_version] = {
+            "data": request["payload"]["data"],
+            "state": "ENABLED",
+        }
+        return SimpleNamespace(name=f"{request['parent']}/versions/{next_version}")
+
+    def access_secret_version(self, *, request):
+        self.accessed.append(request["name"])
+        secret_path, _, version_label = request["name"].rpartition("/versions/")
+        versions = self.secrets.get(secret_path)
+        if versions is None:
+            raise NotFound("missing")
+        version = int(version_label)
+        payload = versions.get(version)
+        if payload is None or payload["state"] != "ENABLED":
+            raise NotFound("missing")
+        return SimpleNamespace(payload=SimpleNamespace(data=payload["data"]))
 
     def disable_secret_version(self, *, request):
         self.disabled.append(request["name"])
+        secret_path, _, version_label = request["name"].rpartition("/versions/")
+        versions = self.secrets[secret_path]
+        versions[int(version_label)]["state"] = "DISABLED"
+
+    def destroy_secret_version(self, *, request):
+        self.destroyed.append(request["name"])
+        secret_path, _, version_label = request["name"].rpartition("/versions/")
+        versions = self.secrets[secret_path]
+        versions[int(version_label)]["state"] = "DESTROYED"
+
+    def delete_secret(self, *, request):
+        self.deleted.append(request["name"])
+        if request["name"] not in self.secrets:
+            raise NotFound("missing")
+        self.secrets.pop(request["name"], None)
 
 
 @pytest.mark.asyncio
@@ -76,7 +126,116 @@ async def test_encrypted_file_secret_store_rotation_and_delete(tmp_path):
     assert "secret-ref" not in store_path.read_text(encoding="utf-8")
 
 
-async def test_google_secret_rotation_disables_all_previous_enabled_versions(monkeypatch):
+@pytest.mark.asyncio
+async def test_google_secret_store_creates_secret_with_destroy_ttl_and_verifies_roundtrip(
+    monkeypatch,
+):
+    client = _FakeSecretManagerClient()
+    secret_store = GoogleSecretManagerSecretStore(
+        project_id="project-1",
+        secret_prefix="conduut-n8n",
+        location="europe-west3",
+    )
+    monkeypatch.setattr(secret_store, "_client", lambda: client)
+
+    result = await secret_store.put_secret("user/instance/api_key", "new-secret")
+    secret_path = secret_store._secret_path("user/instance/api_key")
+
+    assert result == "user/instance/api_key"
+    assert client.created[0]["secret"]["version_destroy_ttl"].seconds == 604800
+    assert client.created[0]["secret"]["replication"] == {
+        "user_managed": {"replicas": [{"location": "europe-west3"}]}
+    }
+    assert client.added[0]["payload"]["data"] == b"new-secret"
+    assert client.accessed == [f"{secret_path}/versions/1"]
+
+
+@pytest.mark.asyncio
+async def test_google_secret_rotation_destroys_previous_enabled_versions_after_verification(
+    monkeypatch,
+):
+    client = _FakeSecretManagerClient()
+    secret_store = GoogleSecretManagerSecretStore(
+        project_id="project-1",
+        secret_prefix="conduut-n8n",
+    )
+    secret_path = secret_store._secret_path("user/instance/api_key")
+    client.secrets[secret_path] = {
+        1: {"data": b"old-secret", "state": "ENABLED"},
+        2: {"data": b"older-secret", "state": "ENABLED"},
+    }
+    monkeypatch.setattr(secret_store, "_client", lambda: client)
+
+    result = await secret_store.put_secret_version("user/instance/api_key", "new-secret")
+
+    assert result == "user/instance/api_key"
+    assert client.destroyed == [
+        f"{secret_path}/versions/1",
+        f"{secret_path}/versions/2",
+    ]
+    assert await secret_store.get_secret("user/instance/api_key") == "new-secret"
+
+
+@pytest.mark.asyncio
+async def test_google_secret_rotation_preserves_previous_enabled_version_on_verify_failure(
+    monkeypatch,
+):
+    client = _FakeSecretManagerClient()
+    secret_store = GoogleSecretManagerSecretStore(
+        project_id="project-1",
+        secret_prefix="conduut-n8n",
+    )
+    secret_path = secret_store._secret_path("user/instance/api_key")
+    client.secrets[secret_path] = {
+        1: {"data": b"old-secret", "state": "ENABLED"},
+    }
+    monkeypatch.setattr(secret_store, "_client", lambda: client)
+
+    original_access = client.access_secret_version
+
+    def broken_access(*, request):
+        if request["name"].endswith("/versions/2"):
+            raise RuntimeError("readback failed")
+        return original_access(request=request)
+
+    monkeypatch.setattr(client, "access_secret_version", broken_access)
+
+    with pytest.raises(RuntimeError, match="Unable to verify rotated tenant secret"):
+        await secret_store.put_secret_version("user/instance/api_key", "new-secret")
+
+    assert client.disabled == []
+    assert client.destroyed == [f"{secret_path}/versions/2"]
+    assert await secret_store.get_secret("user/instance/api_key") == "old-secret"
+
+
+@pytest.mark.asyncio
+async def test_google_secret_rotation_commits_when_previous_version_cleanup_fails(
+    monkeypatch,
+):
+    client = _FakeSecretManagerClient()
+    secret_store = GoogleSecretManagerSecretStore(
+        project_id="project-1",
+        secret_prefix="conduut-n8n",
+    )
+    secret_path = secret_store._secret_path("user/instance/api_key")
+    client.secrets[secret_path] = {
+        1: {"data": b"old-secret", "state": "ENABLED"},
+    }
+    monkeypatch.setattr(secret_store, "_client", lambda: client)
+
+    def broken_destroy(*, request):
+        raise RuntimeError("transient cleanup failure")
+
+    monkeypatch.setattr(client, "destroy_secret_version", broken_destroy)
+
+    result = await secret_store.put_secret_version("user/instance/api_key", "new-secret")
+
+    assert result == "user/instance/api_key"
+    assert await secret_store.get_secret("user/instance/api_key") == "new-secret"
+
+
+@pytest.mark.asyncio
+async def test_google_secret_get_returns_none_when_secret_missing(monkeypatch):
     client = _FakeSecretManagerClient()
     secret_store = GoogleSecretManagerSecretStore(
         project_id="project-1",
@@ -84,25 +243,25 @@ async def test_google_secret_rotation_disables_all_previous_enabled_versions(mon
     )
     monkeypatch.setattr(secret_store, "_client", lambda: client)
 
-    result = await secret_store.put_secret_version("user/instance/api_key", "new-secret")
-
-    assert result == "user/instance/api_key"
-    assert client.added[0]["payload"]["data"] == b"new-secret"
-    assert client.disabled == [
-        "projects/project-1/secrets/conduut-n8n-user-instance-api_key/versions/1",
-        "projects/project-1/secrets/conduut-n8n-user-instance-api_key/versions/2",
-    ]
+    assert await secret_store.get_secret("missing/ref") is None
 
 
-def test_google_secret_name_sanitizes_firestore_identity_characters():
+def test_google_secret_name_hashes_reference_without_pii():
     secret_store = GoogleSecretManagerSecretStore(
         project_id="project-1",
         secret_prefix="conduut-n8n",
     )
 
-    assert secret_store._secret_name("user@example.com/instance/api key") == (
-        "conduut-n8n-user-example-com-instance-api-key"
-    )
+    name = secret_store._secret_name("user@example.com/instance/api key")
+
+    assert name.startswith("conduut-n8n-tenant-")
+    assert "user" not in name
+    assert "instance" not in name
+
+
+def test_google_secret_store_rejects_invalid_prefix():
+    with pytest.raises(ValueError, match="secret prefix"):
+        GoogleSecretManagerSecretStore(project_id="project-1", secret_prefix="tenant/secret")
 
 
 def test_build_secret_store_selects_encrypted_file_backend(monkeypatch, tmp_path):
