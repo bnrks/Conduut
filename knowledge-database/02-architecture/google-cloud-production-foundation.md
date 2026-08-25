@@ -29,17 +29,27 @@ Ilgili kararlar: [[adr-0023-google-cloud-secret-and-runtime-foundation]],
   backend'e import edildi; WIF pool/provider, `github-actions-deployer` service
   account ve yalniz `bnrks/Conduut` `main` ref binding'i olusturuldu. Apply
   `4 added, 0 changed, 0 destroyed`, sonraki plan `No changes` verdi.
-- Faz 6'nin uygulama tarafi aciktir: foundation environment apply, statik
-  secret seed, Cloud Run create, prefix-condition canary, private ingress
-  negatif testleri ve rollback provasi yapilmamistir. Kullanici production/
-  Cloud Run rollout istemedigi icin bu kaynaklar bilincli olarak bekler.
+- Faz 4'un secret-only canli adimi tamamlandi: staging remote state, sekiz bos
+  regional statik secret container'i, iki runtime service account ve sinirli
+  agent IAM binding'leri uygulandi. Sonraki plan `No changes` verdi; secret
+  version/degeri eklenmedi.
+- Faz 6'nin uygulama tarafi aciktir: statik secret seed, Artifact Registry,
+  VPC/NAT, Cloud Run create, prefix-condition canary, private ingress negatif
+  testleri ve rollback provasi yapilmamistir. Kullanici production/Cloud Run
+  rollout istemedigi icin bu kaynaklar bilincli olarak bekler.
 - `conduut-1` canli envanteri okundu: billing ve mevcut Firebase Web App aktif,
   `(default)` Firestore Native database `europe-west3` bolgesindedir. Gerekli
-  yedi API etkinlestirildi. Tek-project tfvars ile apply'siz plan `40 add,
-  0 change, 0 destroy` verdi; mevcut Firebase/Firestore plana girmedi.
+  API'ler etkinlestirildi. Secret-only exact plan `35 add, 0 change, 0 destroy`
+  ile uygulandi; mevcut Firebase/Firestore, Cloud Run, Artifact Registry
+  repository ve staging network kaynaklari plana girmedi.
 - GitHub staging deploy job'u `STAGING_DEPLOY_ENABLED=true` olmadikca calismaz;
   flag hazirlik asamasinda unset kalir. `github-actions-deployer` henuz
   project-level role almaz; yalniz WIF impersonation binding'i vardir.
+- `deploy_runtime_services`, `provision_artifact_registry` ve
+  `provision_networking` varsayilan olarak false'tur. Runtime acilacaksa network
+  flag'i zorunludur; Artifact Registry, Compute ve Cloud Run API'leri de ilgili
+  flag acilmadan Terraform tarafindan etkinlestirilmez. Repository ve network
+  kullanici onayi olmadan olusmaz.
 
 ## Hedef Sonuc
 

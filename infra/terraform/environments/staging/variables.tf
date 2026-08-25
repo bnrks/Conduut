@@ -26,6 +26,16 @@ variable "artifact_repository_id" {
   default = "conduut-staging"
 }
 
+variable "provision_artifact_registry" {
+  type    = bool
+  default = false
+}
+
+variable "provision_networking" {
+  type    = bool
+  default = false
+}
+
 variable "tenant_secret_prefix" {
   type    = string
   default = "conduut-staging-tenant"

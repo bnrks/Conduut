@@ -4,10 +4,12 @@ Merkez: [[index]]
 
 ## Google Cloud foundation canli dogrulama kapilari (2026-08-25)
 
-- Bootstrap foundation uygulanmistir: GCS remote state, WIF ve deploy service
-  account canlidir. Application foundation ve Cloud Run uygulanmamistir;
-  `STAGING_DEPLOY_ENABLED` unset kalir. Local `validate` ve apply'siz environment
-  plan, canli tenant IAM/ingress davranisinin kaniti degildir.
+- Bootstrap foundation ve secret-only application temeli uygulanmistir: GCS
+  remote state, WIF, deploy service account, sekiz bos secret container'i ve
+  runtime service account/IAM temeli canlidir. Cloud Run, Artifact Registry
+  repository ve staging VPC/NAT uygulanmamistir; `STAGING_DEPLOY_ENABLED` unset
+  kalir. Bos secret container'lari canli tenant IAM/ingress davranisinin kaniti
+  degildir.
 - Tenant Secret Manager custom role'u hashed secret-name prefix condition ile
   sinirlidir. Parent project'te authorize edilen
   `secrets.create` bunun disinda, yalniz create izni veren kosulsuz ayri role
@@ -19,10 +21,12 @@ Merkez: [[index]]
   project/database veya acik namespace stratejisi zorunludur.
 - Compute API etkinlestirilirken `default` auto-mode VPC olustu. Foundation bunu
   kullanmaz; silme karari once bagimlilik envanteriyle ayrica verilmelidir.
-- Ilk Cloud Run apply iki asamalidir: once
-  `deploy_runtime_services=false`, sonra statik secret version seed'i, image
-  push ve `deploy_runtime_services=true`. Secret degerleri Terraform'a
-  verilmez.
+  Modul artik Compute API'yi yalniz `provision_networking=true` iken yonetir;
+  secret-only mod yeni project'te bu yan etkiyi uretmez.
+- Ilk Cloud Run apply asamalidir: secret-only adimda uc provisioning flag'i
+  false kalir; sonra onayla Artifact Registry, statik secret version seed'i ve
+  image push; son olarak network ile runtime birlikte acilir. Secret degerleri
+  Terraform'a verilmez.
 - Agent mutation lock'lari process-local oldugu icin Cloud Run agent
   `max_instances=1` kalmalidir. Distributed lock olmadan yatay olcekleme acik
   production riskidir.

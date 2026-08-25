@@ -35,6 +35,18 @@ variable "artifact_repository_id" {
   type        = string
 }
 
+variable "provision_artifact_registry" {
+  description = "Create Artifact Registry only when image publishing is intentionally enabled."
+  type        = bool
+  default     = false
+}
+
+variable "provision_networking" {
+  description = "Create Direct VPC, subnet, router and NAT only before Cloud Run rollout."
+  type        = bool
+  default     = false
+}
+
 variable "tenant_secret_prefix" {
   description = "Reserved prefix for tenant runtime secrets."
   type        = string

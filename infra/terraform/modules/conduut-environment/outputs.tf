@@ -7,7 +7,7 @@ output "web_service_url" {
 }
 
 output "artifact_repository_id" {
-  value = google_artifact_registry_repository.containers.id
+  value = try(google_artifact_registry_repository.containers[0].id, null)
 }
 
 output "agent_service_name" {

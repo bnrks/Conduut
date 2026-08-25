@@ -8,13 +8,13 @@ once bu not ve kaynak kod esas alinmalidir.
 
 Google Cloud production foundation icin kabul edilen hedef ve asamali uygulama
 plani [[google-cloud-production-foundation]] ile
-[[adr-0023-google-cloud-secret-and-runtime-foundation]] notlarindadir. Staging
-altyapisi henuz uygulanma asamasindadir; production kaynaklari kurulmus kabul
-edilmemelidir. Repo icinde artik `infra/terraform/bootstrap`,
+[[adr-0023-google-cloud-secret-and-runtime-foundation]] notlarindadir. Bootstrap
+ve secret-only staging temeli canlidir; production/runtime kaynaklari kurulmus
+kabul edilmemelidir. Repo icinde `infra/terraform/bootstrap`,
 `infra/terraform/modules/conduut-environment`,
 `infra/terraform/environments/staging` ve
-`.github/workflows/staging-foundation.yml` iskeleti bulunur; bunlar live apply
-kaniti degil, staging foundation'in kod temelidir.
+`.github/workflows/staging-foundation.yml` iskeleti bulunur. Cloud Run,
+Artifact Registry repository ve staging VPC/NAT flag'lerle kapali tutulur.
 
 ## Calisan Parcalar
 
@@ -43,20 +43,23 @@ kaniti degil, staging foundation'in kod temelidir.
   sertlesti. Web BFF agent cagrilari ortak server-only client'a tasindi; private
   Cloud Run agent icin `X-Serverless-Authorization` header destegi repo
   seviyesinde vardir. Terraform bootstrap/staging modulleri ile WIF image deploy
-  workflow'u local validation'dan gecmistir; canli GCP apply ve staging pilotu
-  henuz yapilmamistir.
+  workflow'u local validation'dan gecmistir; bootstrap ve secret-only apply
+  canlidir, uygulama deploy'u ve staging pilotu henuz yapilmamistir.
 - Canli GCP foundation hazirligi: `conduut-1` billing/Firebase/Firestore
   envanteri dogrulandi; Firestore Native `(default)` database `europe-west3`
   bolgesindedir. Cloud Run, Artifact Registry, Secret Manager, Compute, IAM,
   IAM Credentials ve STS API'leri 2026-08-25'te etkinlestirildi. Tek-project
-  Terraform plan'i `40 add, 0 change, 0 destroy` verdi; henuz apply yapilmadi.
+  Secret-only Terraform plan'i `35 add, 0 change, 0 destroy` verdi ve uygulandi.
 - Bootstrap foundation canlidir: `conduut-1-terraform-state` GCS remote backend,
   GitHub WIF pool/provider ve `github-actions-deployer` service account
   olusturuldu; WIF yalniz `bnrks/Conduut` `main` ref'ini kabul eder. Sonraki
-  bootstrap plan'i `No changes` verdi. Cloud Run/application foundation apply
-  edilmedi ve workflow deploy'u `STAGING_DEPLOY_ENABLED=true` flag'ine baglidir.
-  Flag/GitHub vars set edilmemistir; deploy service account project-level role
-  almaz.
+  bootstrap plan'i `No changes` verdi. Ayrica sekiz bos regional Secret Manager
+  container'i, `staging-agent`/`staging-web` service account'lari ve sinirli
+  agent IAM binding'leri olusturuldu; staging remote state dogrulandi ve sonraki
+  plan `No changes` verdi. Sekiz secret'in da version sayisi sifirdir. Cloud Run,
+  Artifact Registry repository ve staging VPC/NAT olusturulmadi; workflow
+  deploy'u `STAGING_DEPLOY_ENABLED=true` flag'ine baglidir. Flag/GitHub vars set
+  edilmemistir; deploy service account project-level role almaz.
 
 ## Gercek Veriyle Bagli Olanlar
 

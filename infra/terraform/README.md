@@ -5,9 +5,10 @@ state, plan veya variable dosyalarina secret degeri koymayin.
 
 ## Project sinirlari
 
-Ilk staging kurulumu mevcut `conduut-1` project'ini kullanir. Ayni project'te
+Ilk staging kurulumu mevcut `conduut-1` project'ini kullanir. Hedef mimaride
 Cloud Run, Artifact Registry, Firebase/Auth/Firestore, statik secret'lar, tenant
-secret'lari, serverless VPC, Terraform state bucket ve GitHub WIF bulunur.
+secret'lari, serverless VPC, Terraform state bucket ve GitHub WIF ayni
+project'tedir; bunlar asamali flag'ler ile ayri ayri acilir.
 Terraform mevcut Firebase project'ini ve `(default)` Firestore database'ini
 olusturmaz; `manage_firebase_project=false` ve
 `manage_firestore_database=false` kalir.
@@ -40,15 +41,22 @@ servislerinin image revision'ini gunceller.
    olustur; ikisi de gitignored'dir. `terraform init
    -backend-config=backend.hcl` kullan. Mevcut Firebase/Firestore icin iki
    `manage_*` flag'i false kalir.
-   `deploy_runtime_services=false` birak ve staging root'una apply et. Bu adim
-   API/IAM/network/secret container'larini olusturur, Cloud Run'i olusturmaz.
+   `deploy_runtime_services=false`, `provision_artifact_registry=false` ve
+   `provision_networking=false` birak ve staging root'una apply et. Bu adim
+   API yonetimi, sinirli IAM, runtime service account'lari ve bos secret
+   container'larini olusturur; Cloud Run, image repository veya VPC/NAT
+   olusturmaz. Artifact Registry, Compute ve Cloud Run API'leri de kendi
+   provisioning flag'leri acilmadan Terraform tarafindan etkinlestirilmez.
 4. Statik secret degerlerini yetkili operator olarak dogrudan Google Secret
    Manager'a ekle. Degerleri shell history, Git, CI output veya Terraform'a
    koyma. Her gerekli secret'in en az bir enabled version'i oldugunu Secret
    Manager metadata'sindan dogrula.
-5. Agent ve web image'larini Artifact Registry'ye push et; tfvars image
-   URI'lerini immutable tag/digest ile guncelle.
-6. `deploy_runtime_services=true` yap, plan'i incele ve staging'e apply et.
+5. Uygulama yayinina acik onay verildiginde
+   `provision_artifact_registry=true` yapip repository plan/apply et. Agent ve
+   web image'larini push et; tfvars image URI'lerini immutable tag/digest ile
+   guncelle.
+6. `provision_networking=true` ve `deploy_runtime_services=true` yap, plan'i
+   incele ve staging'e apply et.
 7. Web public URL, agent internal ingress, web -> agent IAM/VPC cagrisi ve
    tenant secret canary testlerini tamamla.
 8. Bundan sonra `.github/workflows/staging-foundation.yml` WIF ile image push
@@ -93,9 +101,12 @@ disindaki bir secret'i okuyamamali veya silememelidir.
 - Cloud Run, Artifact Registry, Secret Manager, Compute, IAM, IAM Credentials
   ve STS API'leri etkinlestirildi.
 - Compute API etkinlestirmesi `default` auto-mode VPC olusturdu; foundation
-  bunu kullanmaz, ayri `staging-serverless-vpc` planlar.
-- Gercek project kimligiyle apply'siz plan sonucu `40 add, 0 change, 0 destroy`;
-  Firebase, Firestore ve Cloud Run bu ilk planda degisiklik olarak yer almadi.
+  bunu kullanmaz, ayri `staging-serverless-vpc` planlar. Secret-only modul
+  artik Compute API'yi `provision_networking=true` olmadan etkinlestirmez;
+  mevcut `default` VPC ayri envanter/silme karari bekler.
+- Secret-only exact plan `35 add, 0 change, 0 destroy` olarak incelendi;
+  Cloud Run, Artifact Registry repository, VPC/subnet/router/NAT ve deployer
+  project IAM binding'i planda yer almadi.
 - `conduut-1-terraform-state` bucket'i private/uniform/versioned olarak
   olusturuldu, GCS backend'e import edildi ve remote state
   `bootstrap/default.tfstate` altinda dogrulandi.
@@ -105,5 +116,14 @@ disindaki bir secret'i okuyamamali veya silememelidir.
 - Deploy service account henuz project-level role almaz; yalniz kendi uzerindeki
   `roles/iam.workloadIdentityUser` binding'i vardir. GitHub repository variable
   listesi bostur ve `STAGING_DEPLOY_ENABLED` set edilmemistir.
-- Cloud Run service, image, VPC/NAT, Artifact Registry repository veya Secret
-  Manager container'i henuz olusturulmadi.
+- Secret-only staging foundation uygulandi ve sonraki plan `No changes` verdi.
+  Sekiz regional statik secret container'i olusturuldu; hicbirinde secret
+  version/deger yoktur. `staging-agent` ve `staging-web` service account'lari
+  olusturuldu; agent yalniz `roles/datastore.user`, iki sinirli custom secret
+  role'u ve sekiz secret-ozel accessor binding'i aldi.
+- Cloud Run service, image, VPC/subnet/router/NAT veya Artifact Registry
+  repository olusturulmadi. Deploy service account project-level role almadi;
+  `STAGING_DEPLOY_ENABLED` unset kalir.
+- Staging remote state
+  `gs://conduut-1-terraform-state/environments/staging/default.tfstate`
+  altinda dogrulandi.

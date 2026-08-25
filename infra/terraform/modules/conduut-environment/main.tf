@@ -1,15 +1,24 @@
+check "runtime_services_require_networking" {
+  assert {
+    condition     = !var.deploy_runtime_services || var.provision_networking
+    error_message = "deploy_runtime_services=true requires provision_networking=true."
+  }
+}
+
 locals {
-  app_project_apis = toset([
-    "artifactregistry.googleapis.com",
-    "cloudresourcemanager.googleapis.com",
-    "compute.googleapis.com",
-    "iam.googleapis.com",
-    "iamcredentials.googleapis.com",
-    "run.googleapis.com",
-    "secretmanager.googleapis.com",
-    "serviceusage.googleapis.com",
-    "sts.googleapis.com",
-  ])
+  app_project_apis = setunion(
+    toset([
+      "cloudresourcemanager.googleapis.com",
+      "iam.googleapis.com",
+      "iamcredentials.googleapis.com",
+      "secretmanager.googleapis.com",
+      "serviceusage.googleapis.com",
+      "sts.googleapis.com",
+    ]),
+    var.provision_artifact_registry ? toset(["artifactregistry.googleapis.com"]) : toset([]),
+    var.provision_networking ? toset(["compute.googleapis.com"]) : toset([]),
+    var.deploy_runtime_services ? toset(["run.googleapis.com"]) : toset([]),
+  )
 
   firebase_project_apis = toset([
     "firestore.googleapis.com",
@@ -120,6 +129,8 @@ resource "google_firestore_database" "default" {
 }
 
 resource "google_artifact_registry_repository" "containers" {
+  count = var.provision_artifact_registry ? 1 : 0
+
   project       = var.project_id
   location      = var.region
   repository_id = var.artifact_repository_id
@@ -130,11 +141,11 @@ resource "google_artifact_registry_repository" "containers" {
 }
 
 resource "google_artifact_registry_repository_iam_member" "deployer_writer" {
-  count = var.deploy_service_account_email == null ? 0 : 1
+  count = var.provision_artifact_registry && var.deploy_service_account_email != null ? 1 : 0
 
   project    = var.project_id
   location   = var.region
-  repository = google_artifact_registry_repository.containers.name
+  repository = google_artifact_registry_repository.containers[0].name
   role       = "roles/artifactregistry.writer"
   member     = "serviceAccount:${var.deploy_service_account_email}"
 }
@@ -257,37 +268,45 @@ resource "google_secret_manager_secret_iam_member" "web_static_accessor" {
 }
 
 resource "google_compute_network" "serverless" {
+  count = var.provision_networking ? 1 : 0
+
   project                 = var.project_id
   name                    = "${var.environment}-serverless-vpc"
   auto_create_subnetworks = false
 }
 
 resource "google_compute_subnetwork" "serverless" {
+  count = var.provision_networking ? 1 : 0
+
   project                  = var.project_id
   name                     = "${var.environment}-serverless-subnet"
   region                   = var.region
-  network                  = google_compute_network.serverless.id
+  network                  = google_compute_network.serverless[0].id
   ip_cidr_range            = "10.42.0.0/24"
   private_ip_google_access = true
 }
 
 resource "google_compute_router" "serverless" {
+  count = var.provision_networking ? 1 : 0
+
   project = var.project_id
   name    = "${var.environment}-serverless-router"
   region  = var.region
-  network = google_compute_network.serverless.id
+  network = google_compute_network.serverless[0].id
 }
 
 resource "google_compute_router_nat" "serverless" {
+  count = var.provision_networking ? 1 : 0
+
   project                            = var.project_id
   name                               = "${var.environment}-serverless-nat"
-  router                             = google_compute_router.serverless.name
+  router                             = google_compute_router.serverless[0].name
   region                             = var.region
   nat_ip_allocate_option             = "AUTO_ONLY"
   source_subnetwork_ip_ranges_to_nat = "LIST_OF_SUBNETWORKS"
 
   subnetwork {
-    name                    = google_compute_subnetwork.serverless.id
+    name                    = google_compute_subnetwork.serverless[0].id
     source_ip_ranges_to_nat = ["ALL_IP_RANGES"]
   }
 }
@@ -314,8 +333,8 @@ resource "google_cloud_run_v2_service" "agent" {
       egress = "ALL_TRAFFIC"
 
       network_interfaces {
-        network    = google_compute_network.serverless.id
-        subnetwork = google_compute_subnetwork.serverless.id
+        network    = google_compute_network.serverless[0].id
+        subnetwork = google_compute_subnetwork.serverless[0].id
       }
     }
 
@@ -396,8 +415,8 @@ resource "google_cloud_run_v2_service" "web" {
       egress = "ALL_TRAFFIC"
 
       network_interfaces {
-        network    = google_compute_network.serverless.id
-        subnetwork = google_compute_subnetwork.serverless.id
+        network    = google_compute_network.serverless[0].id
+        subnetwork = google_compute_subnetwork.serverless[0].id
       }
     }
 

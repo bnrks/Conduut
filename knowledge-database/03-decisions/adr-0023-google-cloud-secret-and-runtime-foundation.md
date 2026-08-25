@@ -50,8 +50,20 @@ Conduut staging foundation Google Cloud uzerinde Terraform ile kurulacak:
   eder; production oncesi izolasyon karari yeniden acilacaktir.
 - Ilk altyapi kurulumu bootstrap ve statik secret seed adimlari gerektirir.
 - Cloud Run create, secret degerleri Terraform state'e alinmadan seed
-  edilebilsin diye iki asamali `deploy_runtime_services` kapisi kullanir.
+  edilebilsin diye asamali kapilar kullanir. `deploy_runtime_services`,
+  `provision_artifact_registry` ve `provision_networking` varsayilan false'tur;
+  runtime acilmasi network flag'ini zorunlu kilar. Artifact Registry, Compute
+  ve Cloud Run API yonetimi de ilgili provisioning flag'ine baglidir; boylece
+  secret-only mod yeni project'te dolayli `default` VPC olusturmaz.
 - Agent yatay olceklemesi distributed lock gelene kadar sinirlidir.
 - Production apply staging pilotu tamamlanana kadar kapsam disidir.
 - Tam uygulama ve kabul plani
   [[google-cloud-production-foundation]] notunda tutulur.
+
+## Uygulama Notu - 2026-08-25
+
+Bootstrap ve secret-only staging foundation `conduut-1` icinde uygulanmistir.
+Sekiz statik secret container'i deger/version olmadan, runtime service
+account'lari ve sinirli IAM ile olusturulmustur. Cloud Run, Artifact Registry
+repository, staging VPC/NAT ve deployer project role'u bilincli olarak
+olusturulmamistir; production karari degismemistir.

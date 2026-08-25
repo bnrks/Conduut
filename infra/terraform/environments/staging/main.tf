@@ -52,6 +52,8 @@ module "staging" {
   manage_firebase_project      = var.manage_firebase_project
   manage_firestore_database    = var.manage_firestore_database
   project_id                   = var.project_id
+  provision_artifact_registry  = var.provision_artifact_registry
+  provision_networking         = var.provision_networking
   public_web_url               = var.public_web_url
   region                       = var.region
   static_secret_ids            = local.static_secret_ids
