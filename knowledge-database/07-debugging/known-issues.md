@@ -2,6 +2,20 @@
 
 Merkez: [[index]]
 
+## GCP foundation CI dev extra'sinda Ruff yoktu (2026-08-25, cozuldu)
+
+**Belirti:** PR #3 `staging-foundation` validate job'u agent kontrolunde
+`ruff: command not found` ile durdu.
+
+**Kok neden:** Workflow `pip install -e "apps/agent[dev]"` kullaniyor ve
+ardindan Ruff calistiriyordu; ancak `apps/agent/pyproject.toml` icindeki `dev`
+extra'si pytest araclarini icerirken Ruff'i tanimlamiyordu.
+
+**Duzeltme:** Ruff agent `dev` extra'sina eklendi. Boylece lokal gelistirme ve
+GitHub Actions ayni deklaratif gelistirme araci setini kurar. Bu hata deploy
+job'una ulasmadan validate asamasinda cikti; `STAGING_DEPLOY_ENABLED` kapali
+kaldigi icin herhangi bir GCP deploy islemi calismadi.
+
 ## Google Cloud foundation canli dogrulama kapilari (2026-08-25)
 
 - Bootstrap foundation ve secret-only application temeli uygulanmistir: GCS
