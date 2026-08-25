@@ -5,7 +5,7 @@ Merkez: [[index]]
 ## Google Cloud foundation canli dogrulama kapilari (2026-08-25)
 
 - Bootstrap foundation ve secret-only application temeli uygulanmistir: GCS
-  remote state, WIF, deploy service account, sekiz bos secret container'i ve
+  remote state, WIF, deploy service account, bes bos secret container'i ve
   runtime service account/IAM temeli canlidir. Cloud Run, Artifact Registry
   repository ve staging VPC/NAT uygulanmamistir; `STAGING_DEPLOY_ENABLED` unset
   kalir. Bos secret container'lari canli tenant IAM/ingress davranisinin kaniti

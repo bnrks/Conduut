@@ -29,10 +29,14 @@ Ilgili kararlar: [[adr-0023-google-cloud-secret-and-runtime-foundation]],
   backend'e import edildi; WIF pool/provider, `github-actions-deployer` service
   account ve yalniz `bnrks/Conduut` `main` ref binding'i olusturuldu. Apply
   `4 added, 0 changed, 0 destroyed`, sonraki plan `No changes` verdi.
-- Faz 4'un secret-only canli adimi tamamlandi: staging remote state, sekiz bos
+- Faz 4'un secret-only canli adimi tamamlandi: staging remote state, bes bos
   regional statik secret container'i, iki runtime service account ve sinirli
   agent IAM binding'leri uygulandi. Sonraki plan `No changes` verdi; secret
-  version/degeri eklenmedi.
+  version/degeri eklenmedi. Aktif kapsam DeepSeek, Google research, Google OAuth
+  client ID/secret ve connection encryption key ile sinirlidir; kullanilmayan
+  Anthropic, OpenAI ve OpenRouter container'lari kaldirildi. Staging Terraform
+  root'u `CONDUUT_MODEL_PROFILE=deepseek` degerini zorunlu kilarken Google model
+  anahtari yalniz research/judge yardimci yollarinda kullanilir.
 - Faz 6'nin uygulama tarafi aciktir: statik secret seed, Artifact Registry,
   VPC/NAT, Cloud Run create, prefix-condition canary, private ingress negatif
   testleri ve rollback provasi yapilmamistir. Kullanici production/Cloud Run

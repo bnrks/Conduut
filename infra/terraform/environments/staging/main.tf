@@ -1,19 +1,13 @@
 locals {
   static_secret_ids = toset([
-    "conduut-anthropic-api-key",
     "conduut-connection-encryption-key",
     "conduut-deepseek-api-key",
     "conduut-google-api-key",
     "conduut-google-oauth-client-id",
     "conduut-google-oauth-client-secret",
-    "conduut-openai-api-key",
-    "conduut-openrouter-api-key",
   ])
 
   agent_secret_env = {
-    CONDUUT_ANTHROPIC_API_KEY = {
-      secret_id = "conduut-anthropic-api-key"
-    }
     CONDUUT_CONNECTION_ENCRYPTION_KEY = {
       secret_id = "conduut-connection-encryption-key"
     }
@@ -29,19 +23,15 @@ locals {
     CONDUUT_GOOGLE_OAUTH_CLIENT_SECRET = {
       secret_id = "conduut-google-oauth-client-secret"
     }
-    CONDUUT_OPENAI_API_KEY = {
-      secret_id = "conduut-openai-api-key"
-    }
-    CONDUUT_OPENROUTER_API_KEY = {
-      secret_id = "conduut-openrouter-api-key"
-    }
   }
 }
 
 module "staging" {
   source = "../../modules/conduut-environment"
 
-  agent_env                    = var.agent_env
+  agent_env = merge(var.agent_env, {
+    CONDUUT_MODEL_PROFILE = "deepseek"
+  })
   agent_image                  = var.agent_image
   agent_secret_env             = local.agent_secret_env
   artifact_repository_id       = var.artifact_repository_id

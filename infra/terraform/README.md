@@ -117,10 +117,15 @@ disindaki bir secret'i okuyamamali veya silememelidir.
   `roles/iam.workloadIdentityUser` binding'i vardir. GitHub repository variable
   listesi bostur ve `STAGING_DEPLOY_ENABLED` set edilmemistir.
 - Secret-only staging foundation uygulandi ve sonraki plan `No changes` verdi.
-  Sekiz regional statik secret container'i olusturuldu; hicbirinde secret
+  Bes regional statik secret container'i tutulur: DeepSeek, Google research,
+  Google OAuth client ID/secret ve connection encryption key. Hicbirinde secret
   version/deger yoktur. `staging-agent` ve `staging-web` service account'lari
   olusturuldu; agent yalniz `roles/datastore.user`, iki sinirli custom secret
-  role'u ve sekiz secret-ozel accessor binding'i aldi.
+  role'u ve bes secret-ozel accessor binding'i aldi. Kullanilmayan bos
+  Anthropic, OpenAI ve OpenRouter container'lari kaldirildi. Staging runtime
+  profili, kalan provider secret'lariyla tutarli olacak sekilde Terraform
+  root'unda `deepseek` olarak sabitlenir; Google API key yalniz research/judge
+  yardimci yollarina ayrilir.
 - Cloud Run service, image, VPC/subnet/router/NAT veya Artifact Registry
   repository olusturulmadi. Deploy service account project-level role almadi;
   `STAGING_DEPLOY_ENABLED` unset kalir.
