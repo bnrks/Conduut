@@ -53,6 +53,10 @@ Ilgili kararlar: [[adr-0023-google-cloud-secret-and-runtime-foundation]],
 - GitHub staging deploy job'u `STAGING_DEPLOY_ENABLED=true` olmadikca calismaz;
   flag hazirlik asamasinda unset kalir. `github-actions-deployer` henuz
   project-level role almaz; yalniz WIF impersonation binding'i vardir.
+- GitHub Actions canli deploy ayarlari kullanici karariyla ertelenmistir.
+  GitHub environment variable'lari, deploy service-account project rolleri ve
+  deploy enable flag'i yalniz uygulamayi canliya alma adiminda yapilandirilir;
+  foundation hazirligi bu kapilari acmaz.
 - `deploy_runtime_services`, `provision_artifact_registry` ve
   `provision_networking` varsayilan olarak false'tur. Runtime acilacaksa network
   flag'i zorunludur; Artifact Registry, Compute ve Cloud Run API'leri de ilgili

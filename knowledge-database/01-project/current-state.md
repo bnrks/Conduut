@@ -65,6 +65,10 @@ Artifact Registry repository ve staging VPC/NAT flag'lerle kapali tutulur.
   Artifact Registry repository ve staging VPC/NAT olusturulmadi; workflow
   deploy'u `STAGING_DEPLOY_ENABLED=true` flag'ine baglidir. Flag/GitHub vars set
   edilmemistir; deploy service account project-level role almaz.
+- Kullanici karari: GitHub Actions staging/deploy konfigurasyonu simdi
+  yapilmayacak. GitHub environment variable'lari, deploy IAM rolleri ve
+  `STAGING_DEPLOY_ENABLED` ancak uygulamayi canliya alma calismasi acikca
+  baslatildiginda ayarlanacak.
 
 ## Gercek Veriyle Bagli Olanlar
 
