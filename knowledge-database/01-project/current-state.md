@@ -50,6 +50,13 @@ kaniti degil, staging foundation'in kod temelidir.
   bolgesindedir. Cloud Run, Artifact Registry, Secret Manager, Compute, IAM,
   IAM Credentials ve STS API'leri 2026-08-25'te etkinlestirildi. Tek-project
   Terraform plan'i `40 add, 0 change, 0 destroy` verdi; henuz apply yapilmadi.
+- Bootstrap foundation canlidir: `conduut-1-terraform-state` GCS remote backend,
+  GitHub WIF pool/provider ve `github-actions-deployer` service account
+  olusturuldu; WIF yalniz `bnrks/Conduut` `main` ref'ini kabul eder. Sonraki
+  bootstrap plan'i `No changes` verdi. Cloud Run/application foundation apply
+  edilmedi ve workflow deploy'u `STAGING_DEPLOY_ENABLED=true` flag'ine baglidir.
+  Flag/GitHub vars set edilmemistir; deploy service account project-level role
+  almaz.
 
 ## Gercek Veriyle Bagli Olanlar
 

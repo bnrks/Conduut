@@ -4,10 +4,10 @@ Merkez: [[index]]
 
 ## Google Cloud foundation canli dogrulama kapilari (2026-08-25)
 
-- Terraform foundation, WIF ve Cloud Run tanimlari repo'dadir; gerekli API'ler
-  `conduut-1` uzerinde etkinlestirildi fakat foundation henuz apply edilmemistir.
-  Local `validate` ve apply'siz plan, canli IAM/ingress davranisinin kaniti
-  degildir.
+- Bootstrap foundation uygulanmistir: GCS remote state, WIF ve deploy service
+  account canlidir. Application foundation ve Cloud Run uygulanmamistir;
+  `STAGING_DEPLOY_ENABLED` unset kalir. Local `validate` ve apply'siz environment
+  plan, canli tenant IAM/ingress davranisinin kaniti degildir.
 - Tenant Secret Manager custom role'u hashed secret-name prefix condition ile
   sinirlidir. Parent project'te authorize edilen
   `secrets.create` bunun disinda, yalniz create izni veren kosulsuz ayri role

@@ -3,8 +3,9 @@
 Merkez: [[index]]
 
 Bu not, Conduut'un Google Cloud uzerindeki staging ve ileride production
-temelini kurmak icin uygulanacak kanonik plandir. Ilk hedef tam izole bir
-`staging` ortamidir. Production kaynaklari staging pilotu ve kabul kapilari
+temelini kurmak icin uygulanacak kanonik plandir. Ilk hedef mevcut
+`conduut-1` icinde kontrollu bir `staging` temelidir. Production kaynaklari
+staging pilotu ve kabul kapilari
 gecilmeden olusturulmaz.
 
 Ilgili kararlar: [[adr-0023-google-cloud-secret-and-runtime-foundation]],
@@ -24,13 +25,21 @@ Ilgili kararlar: [[adr-0023-google-cloud-secret-and-runtime-foundation]],
   warning'i kaldi.
 - Docker Desktop engine bu kontrolde kapali oldugu icin image build yeniden
   kosulamadi; CI iki image build'ini zorunlu tutar.
-- Faz 6 aciktir: gercek project/bootstrap apply, statik secret seed, Cloud Run
-  create, prefix-condition canary, private ingress negatif testleri ve rollback
-  provasi canli staging'de yapilmamistir.
+- Bootstrap canli uygulandi: private/uniform/versioned GCS state bucket remote
+  backend'e import edildi; WIF pool/provider, `github-actions-deployer` service
+  account ve yalniz `bnrks/Conduut` `main` ref binding'i olusturuldu. Apply
+  `4 added, 0 changed, 0 destroyed`, sonraki plan `No changes` verdi.
+- Faz 6'nin uygulama tarafi aciktir: foundation environment apply, statik
+  secret seed, Cloud Run create, prefix-condition canary, private ingress
+  negatif testleri ve rollback provasi yapilmamistir. Kullanici production/
+  Cloud Run rollout istemedigi icin bu kaynaklar bilincli olarak bekler.
 - `conduut-1` canli envanteri okundu: billing ve mevcut Firebase Web App aktif,
   `(default)` Firestore Native database `europe-west3` bolgesindedir. Gerekli
   yedi API etkinlestirildi. Tek-project tfvars ile apply'siz plan `40 add,
   0 change, 0 destroy` verdi; mevcut Firebase/Firestore plana girmedi.
+- GitHub staging deploy job'u `STAGING_DEPLOY_ENABLED=true` olmadikca calismaz;
+  flag hazirlik asamasinda unset kalir. `github-actions-deployer` henuz
+  project-level role almaz; yalniz WIF impersonation binding'i vardir.
 
 ## Hedef Sonuc
 

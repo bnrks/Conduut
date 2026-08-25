@@ -28,13 +28,14 @@ servislerinin image revision'ini gunceller.
    olarak kopyala. `bootstrap_project_id=conduut-1`,
    `github_repository=bnrks/Conduut` ve ayni project'te API sahipligini iki
    state'e bolmemek icin `manage_project_services=false` kullan.
-2. State bucket henuz yokken `bootstrap` root'unda `terraform init
-   -backend=false`, `terraform plan` ve ilk `terraform apply` ile local bootstrap
-   state kullan. Bucket olustuktan sonra `backend.hcl.example` dosyasini
-   gitignored `backend.hcl` olarak kopyala ve `terraform init -migrate-state
-   -backend-config=backend.hcl` ile bootstrap state'ini GCS'e tasi. Migration
-   tamamlanmadan local state dosyasini silme. Ciktilardaki WIF provider ve deploy
-   service account email'ini GitHub staging environment variable'larina yaz.
+2. Backend bucket Terraform'un kendi backend'i olacagi icin ilk kez GCP CLI ile
+   `europe-west3`, uniform bucket-level access, public access prevention ve
+   versioning acik olarak olustur. `backend.hcl.example` dosyasini gitignored
+   `backend.hcl` olarak kopyala; `terraform init -backend-config backend.hcl`
+   calistir ve bucket'i `google_storage_bucket.terraform_state` adresine import
+   et. Bundan sonra bootstrap plan/apply remote state kullanir. Ciktilardaki WIF
+   provider ve deploy service account email'ini GitHub staging environment
+   variable'larina yaz.
 3. Staging `backend.hcl` ve `terraform.tfvars` dosyalarini example'lardan
    olustur; ikisi de gitignored'dir. `terraform init
    -backend-config=backend.hcl` kullan. Mevcut Firebase/Firestore icin iki
@@ -56,6 +57,8 @@ servislerinin image revision'ini gunceller.
 
 ## Zorunlu GitHub staging variable'lari
 
+- `STAGING_DEPLOY_ENABLED` (`true` olmadikca push image/Cloud Run deploy job'u
+  calismaz; hazirlik asamasinda unset/false kalir)
 - `GCP_WORKLOAD_IDENTITY_PROVIDER`
 - `GCP_DEPLOY_SERVICE_ACCOUNT`
 - `GCP_PROJECT_ID`
@@ -71,6 +74,10 @@ servislerinin image revision'ini gunceller.
 
 Firebase web config public client configuration'dir. Platform API key, OAuth
 client secret, encryption key ve tenant n8n API key GitHub'a girmez.
+
+Bu foundation hazirligi Cloud Run rollout'u degildir. Kullanici urun deploy'una
+acik onay verene kadar `STAGING_DEPLOY_ENABLED` set edilmez ve
+`deploy_runtime_services=false` kalir.
 
 ## Canli dogrulama kapisi
 
@@ -89,5 +96,14 @@ disindaki bir secret'i okuyamamali veya silememelidir.
   bunu kullanmaz, ayri `staging-serverless-vpc` planlar.
 - Gercek project kimligiyle apply'siz plan sonucu `40 add, 0 change, 0 destroy`;
   Firebase, Firestore ve Cloud Run bu ilk planda degisiklik olarak yer almadi.
-- Ayni project bootstrap plan'i `5 add, 0 change, 0 destroy` verdi; apply
-  yapilmadi.
+- `conduut-1-terraform-state` bucket'i private/uniform/versioned olarak
+  olusturuldu, GCS backend'e import edildi ve remote state
+  `bootstrap/default.tfstate` altinda dogrulandi.
+- Exact bootstrap apply `4 added, 0 changed, 0 destroyed` ile WIF pool/provider,
+  `github-actions-deployer` service account ve yalniz `bnrks/Conduut` `main`
+  ref impersonation binding'ini olusturdu. Sonraki plan `No changes` verdi.
+- Deploy service account henuz project-level role almaz; yalniz kendi uzerindeki
+  `roles/iam.workloadIdentityUser` binding'i vardir. GitHub repository variable
+  listesi bostur ve `STAGING_DEPLOY_ENABLED` set edilmemistir.
+- Cloud Run service, image, VPC/NAT, Artifact Registry repository veya Secret
+  Manager container'i henuz olusturulmadi.
