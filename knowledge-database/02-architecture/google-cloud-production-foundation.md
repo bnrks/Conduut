@@ -29,18 +29,22 @@ Ilgili kararlar: [[adr-0023-google-cloud-secret-and-runtime-foundation]],
   backend'e import edildi; WIF pool/provider, `github-actions-deployer` service
   account ve yalniz `bnrks/Conduut` `main` ref binding'i olusturuldu. Apply
   `4 added, 0 changed, 0 destroyed`, sonraki plan `No changes` verdi.
-- Faz 4'un secret-only canli adimi tamamlandi: staging remote state, bes bos
+- Faz 4'un secret-only canli adimi tamamlandi: staging remote state, bes
   regional statik secret container'i, iki runtime service account ve sinirli
-  agent IAM binding'leri uygulandi. Sonraki plan `No changes` verdi; secret
-  version/degeri eklenmedi. Aktif kapsam DeepSeek, Google research, Google OAuth
+  agent IAM binding'leri uygulandi. Sonraki plan `No changes` verdi. Secret
+  degerleri Terraform/Git'e girmeden seed edildi; latest payload'lar yerel
+  kaynakla byte-level eslesti. CRLF'li ilk deneme version'lari disabled ve yedi
+  gunluk delayed destruction altindadir. Aktif kapsam DeepSeek, Google research, Google OAuth
   client ID/secret ve connection encryption key ile sinirlidir; kullanilmayan
   Anthropic, OpenAI ve OpenRouter container'lari kaldirildi. Staging Terraform
   root'u `CONDUUT_MODEL_PROFILE=deepseek` degerini zorunlu kilarken Google model
   anahtari yalniz research/judge yardimci yollarinda kullanilir.
-- Faz 6'nin uygulama tarafi aciktir: statik secret seed, Artifact Registry,
-  VPC/NAT, Cloud Run create, prefix-condition canary, private ingress negatif
+- Faz 6'nin runtime tarafi aciktir: Artifact Registry, VPC/NAT, Cloud Run create, private ingress negatif
   testleri ve rollback provasi yapilmamistir. Kullanici production/Cloud Run
   rollout istemedigi icin bu kaynaklar bilincli olarak bekler.
+- Secret IAM canary gecti: agent statik read ve tenant-prefix
+  create/add/read/delete yapabildi; prefix disi read `403` verdi. Gecici Token
+  Creator binding'i ve iki canary secret test sonunda kalmadi.
 - `conduut-1` canli envanteri okundu: billing ve mevcut Firebase Web App aktif,
   `(default)` Firestore Native database `europe-west3` bolgesindedir. Gerekli
   API'ler etkinlestirildi. Secret-only exact plan `35 add, 0 change, 0 destroy`

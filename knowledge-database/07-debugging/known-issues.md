@@ -5,11 +5,16 @@ Merkez: [[index]]
 ## Google Cloud foundation canli dogrulama kapilari (2026-08-25)
 
 - Bootstrap foundation ve secret-only application temeli uygulanmistir: GCS
-  remote state, WIF, deploy service account, bes bos secret container'i ve
+  remote state, WIF, deploy service account, bes seed edilmis secret container'i ve
   runtime service account/IAM temeli canlidir. Cloud Run, Artifact Registry
   repository ve staging VPC/NAT uygulanmamistir; `STAGING_DEPLOY_ENABLED` unset
-  kalir. Bos secret container'lari canli tenant IAM/ingress davranisinin kaniti
-  degildir.
+  kalir. Secret latest version'lari byte-level dogrulandi; tenant-prefix IAM
+  canary gecti. Bu kanit Cloud Run/private ingress davranisinin kaniti degildir.
+- Windows `gcloud.ps1` uzerinden `--data-file=-` stdin seed'i payload'a CRLF
+  ekledi. Hatalı ilk version'lar disabled ve yedi gunluk delayed destruction'a
+  alindi; dogru version'lar Secret Manager REST API'ye base64 byte payload ile
+  yazildi. Windows'ta static secret seed icin `gcloud.ps1` stdin yolu yeniden
+  kullanilmamalidir.
 - Tenant Secret Manager custom role'u hashed secret-name prefix condition ile
   sinirlidir. Parent project'te authorize edilen
   `secrets.create` bunun disinda, yalniz create izni veren kosulsuz ayri role

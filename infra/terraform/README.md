@@ -49,8 +49,12 @@ servislerinin image revision'ini gunceller.
    provisioning flag'leri acilmadan Terraform tarafindan etkinlestirilmez.
 4. Statik secret degerlerini yetkili operator olarak dogrudan Google Secret
    Manager'a ekle. Degerleri shell history, Git, CI output veya Terraform'a
-   koyma. Her gerekli secret'in en az bir enabled version'i oldugunu Secret
-   Manager metadata'sindan dogrula.
+   koyma. Windows'ta `gcloud.ps1 --data-file=-` kullanma; PowerShell stdin
+   koprusu payload'a CRLF ekleyebilir. GCP Console veya UTF-8 byte'larini
+   base64 payload olarak Secret Manager REST API'ye veren, degeri loglamayan
+   bir yol kullan. Her gerekli secret'in enabled version metadata'sini ve
+   readback payload'inin kaynakla byte-level esitligini degeri yazdirmadan
+   dogrula.
 5. Uygulama yayinina acik onay verildiginde
    `provision_artifact_registry=true` yapip repository plan/apply et. Agent ve
    web image'larini push et; tfvars image URI'lerini immutable tag/digest ile
@@ -118,14 +122,21 @@ disindaki bir secret'i okuyamamali veya silememelidir.
   listesi bostur ve `STAGING_DEPLOY_ENABLED` set edilmemistir.
 - Secret-only staging foundation uygulandi ve sonraki plan `No changes` verdi.
   Bes regional statik secret container'i tutulur: DeepSeek, Google research,
-  Google OAuth client ID/secret ve connection encryption key. Hicbirinde secret
-  version/deger yoktur. `staging-agent` ve `staging-web` service account'lari
-  olusturuldu; agent yalniz `roles/datastore.user`, iki sinirli custom secret
-  role'u ve bes secret-ozel accessor binding'i aldi. Kullanilmayan bos
+  Google OAuth client ID/secret ve connection encryption key. Degerler
+  Terraform/Git'e girmeden Secret Manager API ile seed edildi; her kasada
+  byte-level readback ile dogrulanan tek enabled version vardir. Ilk Windows
+  stdin denemesinin CRLF ekledigi hatali version'lar disabled ve yedi gunluk
+  delayed destruction altindadir. `staging-agent` ve `staging-web` service
+  account'lari olusturuldu; agent yalniz `roles/datastore.user`, iki sinirli
+  custom secret role'u ve bes secret-ozel accessor binding'i aldi. Kullanilmayan bos
   Anthropic, OpenAI ve OpenRouter container'lari kaldirildi. Staging runtime
   profili, kalan provider secret'lariyla tutarli olacak sekilde Terraform
   root'unda `deepseek` olarak sabitlenir; Google API key yalniz research/judge
   yardimci yollarina ayrilir.
+- Canli IAM canary gecti: `staging-agent` bes statik secret'i okuyabildi,
+  `conduut-staging-tenant-*` prefix'inde create/add/read/delete yapabildi ve
+  prefix disi secret read `403` ile reddedildi. Gecici impersonation binding'i
+  ve canary secret'lari test sonunda kaldirildi.
 - Cloud Run service, image, VPC/subnet/router/NAT veya Artifact Registry
   repository olusturulmadi. Deploy service account project-level role almadi;
   `STAGING_DEPLOY_ENABLED` unset kalir.

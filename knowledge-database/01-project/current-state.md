@@ -53,11 +53,15 @@ Artifact Registry repository ve staging VPC/NAT flag'lerle kapali tutulur.
 - Bootstrap foundation canlidir: `conduut-1-terraform-state` GCS remote backend,
   GitHub WIF pool/provider ve `github-actions-deployer` service account
   olusturuldu; WIF yalniz `bnrks/Conduut` `main` ref'ini kabul eder. Sonraki
-  bootstrap plan'i `No changes` verdi. Ayrica bes bos regional Secret Manager
+  bootstrap plan'i `No changes` verdi. Ayrica bes regional Secret Manager
   container'i, `staging-agent`/`staging-web` service account'lari ve sinirli
   agent IAM binding'leri olusturuldu; staging remote state dogrulandi ve sonraki
-  plan `No changes` verdi. Bes secret'in da version sayisi sifirdir; kullanilmayan
-  bos Anthropic, OpenAI ve OpenRouter container'lari kaldirildi. Cloud Run,
+  plan `No changes` verdi. Bes secret'in guncel version'lari Terraform/Git'e
+  deger yazmadan seed edildi ve byte-level readback ile dogrulandi. CRLF'li ilk
+  deneme version'lari disabled ve yedi gunluk delayed destruction altindadir;
+  kullanilmayan bos Anthropic, OpenAI ve OpenRouter container'lari kaldirildi.
+  `staging-agent` statik read, tenant-prefix create/add/read/delete ve prefix-disi
+  read-denied canary'lerini gecti; gecici binding/canary kaynaklari temizlendi. Cloud Run,
   Artifact Registry repository ve staging VPC/NAT olusturulmadi; workflow
   deploy'u `STAGING_DEPLOY_ENABLED=true` flag'ine baglidir. Flag/GitHub vars set
   edilmemistir; deploy service account project-level role almaz.

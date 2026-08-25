@@ -63,11 +63,18 @@ Conduut staging foundation Google Cloud uzerinde Terraform ile kurulacak:
 ## Uygulama Notu - 2026-08-25
 
 Bootstrap ve secret-only staging foundation `conduut-1` icinde uygulanmistir.
-Bes statik secret container'i deger/version olmadan, runtime service
-account'lari ve sinirli IAM ile tutulur: DeepSeek, Google research, Google OAuth
+Bes statik secret container'i runtime service account'lari ve sinirli IAM ile
+tutulur: DeepSeek, Google research, Google OAuth
 client ID/secret ve connection encryption key. Kullanilmayan bos Anthropic,
 OpenAI ve OpenRouter container'lari kaldirilmistir. Staging runtime model profili
 Terraform root'unda `deepseek` olarak sabitlenmistir; Google model anahtari
 research/judge yardimci yollarina ayrilir. Cloud Run, Artifact Registry
 repository, staging VPC/NAT ve deployer project role'u bilincli olarak
 olusturulmamistir; production karari degismemistir.
+
+Degerler Terraform/Git'e girmeden Secret Manager API ile seed edildi ve
+byte-level readback ile dogrulandi. Windows `gcloud.ps1` stdin koprusunun CRLF
+ekledigi ilk version'lar disabled edilip yedi gunluk delayed destruction'a
+alindi; dogru ikinci version'lar enabled'dir. `staging-agent` statik read,
+tenant-prefix create/add/read/delete ve prefix-disi read-denied canary'lerini
+gecti. Gecici Token Creator binding'i ve canary kaynaklari temizlendi.
