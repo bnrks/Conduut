@@ -63,11 +63,14 @@ servislerinin image revision'ini gunceller.
    incele ve staging'e apply et.
 7. Web public URL, agent internal ingress, web -> agent IAM/VPC cagrisi ve
    tenant secret canary testlerini tamamla.
-8. Bundan sonra `.github/workflows/staging-foundation.yml` WIF ile image push
-   edip mevcut Cloud Run servislerini gunceller; smoke failure onceki
-   revision'lara trafik rollback yapar.
+8. Canliya alma calismasi acildiginda GitHub Actions deploy workflow'u ayri bir
+   degisiklik olarak eklenir; WIF ile image push, Cloud Run update, smoke test ve
+   rollback o asamada uygulanir.
 
-## Zorunlu GitHub staging variable'lari
+## Gelecekteki GitHub staging variable'lari
+
+Repo su anda GitHub Actions workflow'u icermez. Asagidaki variable'lar yalniz
+uygulamayi canliya alma calismasi acildiginda olusturulacaktir:
 
 - `STAGING_DEPLOY_ENABLED` (`true` olmadikca push image/Cloud Run deploy job'u
   calismaz; hazirlik asamasinda unset/false kalir)
@@ -88,8 +91,8 @@ Firebase web config public client configuration'dir. Platform API key, OAuth
 client secret, encryption key ve tenant n8n API key GitHub'a girmez.
 
 Bu foundation hazirligi Cloud Run rollout'u degildir. Kullanici urun deploy'una
-acik onay verene kadar `STAGING_DEPLOY_ENABLED` set edilmez ve
-`deploy_runtime_services=false` kalir.
+acik onay verene kadar GitHub Actions workflow'u eklenmez,
+`STAGING_DEPLOY_ENABLED` set edilmez ve `deploy_runtime_services=false` kalir.
 
 ## Canli dogrulama kapisi
 
@@ -120,6 +123,9 @@ disindaki bir secret'i okuyamamali veya silememelidir.
 - Deploy service account henuz project-level role almaz; yalniz kendi uzerindeki
   `roles/iam.workloadIdentityUser` binding'i vardir. GitHub repository variable
   listesi bostur ve `STAGING_DEPLOY_ENABLED` set edilmemistir.
+- Repo GitHub Actions workflow'u icermez; ilk staging workflow'u kullanici
+  karariyla 2026-08-26'da kaldirildi. WIF kaynaklari gelecekteki canliya alma
+  adimi icin pasif foundation olarak kalir.
 - Secret-only staging foundation uygulandi ve sonraki plan `No changes` verdi.
   Bes regional statik secret container'i tutulur: DeepSeek, Google research,
   Google OAuth client ID/secret ve connection encryption key. Degerler

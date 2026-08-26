@@ -16,6 +16,12 @@ GitHub Actions ayni deklaratif gelistirme araci setini kurar. Bu hata deploy
 job'una ulasmadan validate asamasinda cikti; `STAGING_DEPLOY_ENABLED` kapali
 kaldigi icin herhangi bir GCP deploy islemi calismadi.
 
+**Guncel durum (2026-08-26):** Bu mail eski ve sonradan duzeltilen PR run'ina
+aitti. Takip eden PR ve `main` validate run'lari basarili oldu; deploy job'u
+skip edildi. Kullanici GitHub Actions'i simdilik istemedigi icin
+`.github/workflows/staging-foundation.yml` repodan kaldirildi. Yeni push/PR'larda
+bu workflow artik calismaz.
+
 ## Google Cloud foundation canli dogrulama kapilari (2026-08-25)
 
 - Bootstrap foundation ve secret-only application temeli uygulanmistir: GCS

@@ -12,9 +12,9 @@ plani [[google-cloud-production-foundation]] ile
 ve secret-only staging temeli canlidir; production/runtime kaynaklari kurulmus
 kabul edilmemelidir. Repo icinde `infra/terraform/bootstrap`,
 `infra/terraform/modules/conduut-environment`,
-`infra/terraform/environments/staging` ve
-`.github/workflows/staging-foundation.yml` iskeleti bulunur. Cloud Run,
-Artifact Registry repository ve staging VPC/NAT flag'lerle kapali tutulur.
+`infra/terraform/environments/staging` bulunur. Repo su anda GitHub Actions
+workflow'u icermez. Cloud Run, Artifact Registry repository ve staging VPC/NAT
+flag'lerle kapali tutulur.
 
 ## Calisan Parcalar
 
@@ -42,9 +42,10 @@ Artifact Registry repository ve staging VPC/NAT flag'lerle kapali tutulur.
   delayed-destruction rotation ve ADC/certificate Firebase init matrisi ile
   sertlesti. Web BFF agent cagrilari ortak server-only client'a tasindi; private
   Cloud Run agent icin `X-Serverless-Authorization` header destegi repo
-  seviyesinde vardir. Terraform bootstrap/staging modulleri ile WIF image deploy
-  workflow'u local validation'dan gecmistir; bootstrap ve secret-only apply
-  canlidir, uygulama deploy'u ve staging pilotu henuz yapilmamistir.
+  seviyesinde vardir. Terraform bootstrap/staging modulleri vardir; bootstrap ve
+  secret-only apply canlidir. Ilk WIF image deploy workflow'u dogrulanmis olsa da
+  kullanici karariyla repodan kaldirilmistir; uygulama deploy'u ve staging pilotu
+  henuz yapilmamistir.
 - Canli GCP foundation hazirligi: `conduut-1` billing/Firebase/Firestore
   envanteri dogrulandi; Firestore Native `(default)` database `europe-west3`
   bolgesindedir. Cloud Run, Artifact Registry, Secret Manager, Compute, IAM,
@@ -62,13 +63,12 @@ Artifact Registry repository ve staging VPC/NAT flag'lerle kapali tutulur.
   kullanilmayan bos Anthropic, OpenAI ve OpenRouter container'lari kaldirildi.
   `staging-agent` statik read, tenant-prefix create/add/read/delete ve prefix-disi
   read-denied canary'lerini gecti; gecici binding/canary kaynaklari temizlendi. Cloud Run,
-  Artifact Registry repository ve staging VPC/NAT olusturulmadi; workflow
-  deploy'u `STAGING_DEPLOY_ENABLED=true` flag'ine baglidir. Flag/GitHub vars set
-  edilmemistir; deploy service account project-level role almaz.
-- Kullanici karari: GitHub Actions staging/deploy konfigurasyonu simdi
-  yapilmayacak. GitHub environment variable'lari, deploy IAM rolleri ve
-  `STAGING_DEPLOY_ENABLED` ancak uygulamayi canliya alma calismasi acikca
-  baslatildiginda ayarlanacak.
+  Artifact Registry repository ve staging VPC/NAT olusturulmadi. GitHub Actions
+  workflow'u yoktur, GitHub variable'lari set edilmemistir ve deploy service
+  account project-level role almaz.
+- Kullanici karari: GitHub Actions simdi kullanilmayacak. Workflow,
+  environment variable'lari, deploy IAM rolleri ve deploy enable flag'i ancak
+  uygulamayi canliya alma calismasi acikca baslatildiginda eklenecek.
 
 ## Gercek Veriyle Bagli Olanlar
 
