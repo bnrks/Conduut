@@ -17,8 +17,8 @@ Ilgili kararlar: [[adr-0023-google-cloud-secret-and-runtime-foundation]],
 - Faz 0 tamamlandi: BYO branch kontrolleri gecti, `main` fast-forward edilip
   origin'e gonderildi ve foundation branch'i guncel `main`den acildi.
 - Faz 1-5'in repo temeli uygulandi: GSM/Firebase runtime hardening, ortak private
-  agent BFF client'i, Terraform bootstrap/staging modulleri ve WIF image deploy
-  workflow'u vardir.
+  agent BFF client'i ve Terraform bootstrap/staging modulleri vardir. Ilk WIF
+  image deploy workflow'u 2026-08-26 kullanici karariyla repodan kaldirildi.
 - Local kanit: agent Ruff/format ve 808 pytest, web ESLint/TypeScript, registry
   Ruff, Compose config, Terraform bootstrap/staging init+validate ve scoped
   credential-pattern taramasi gecti. ESLint'te yalniz onceki dort `<img>`
@@ -50,12 +50,11 @@ Ilgili kararlar: [[adr-0023-google-cloud-secret-and-runtime-foundation]],
   API'ler etkinlestirildi. Secret-only exact plan `35 add, 0 change, 0 destroy`
   ile uygulandi; mevcut Firebase/Firestore, Cloud Run, Artifact Registry
   repository ve staging network kaynaklari plana girmedi.
-- GitHub staging deploy job'u `STAGING_DEPLOY_ENABLED=true` olmadikca calismaz;
-  flag hazirlik asamasinda unset kalir. `github-actions-deployer` henuz
+- Repo su anda GitHub Actions workflow'u icermez. `github-actions-deployer`
   project-level role almaz; yalniz WIF impersonation binding'i vardir.
-- GitHub Actions canli deploy ayarlari kullanici karariyla ertelenmistir.
+- GitHub Actions canli deploy akisi kullanici karariyla ertelenmistir. Workflow,
   GitHub environment variable'lari, deploy service-account project rolleri ve
-  deploy enable flag'i yalniz uygulamayi canliya alma adiminda yapilandirilir;
+  deploy enable flag'i yalniz uygulamayi canliya alma adiminda eklenir;
   foundation hazirligi bu kapilari acmaz.
 - `deploy_runtime_services`, `provision_artifact_registry` ve
   `provision_networking` varsayilan olarak false'tur. Runtime acilacaksa network
