@@ -4,9 +4,15 @@ bower_components/
 *.jsonl
 *.jsonl.*
 logs/
+.tmp/
+.private/
 
 build/
 dist/
+.next/
+coverage/
+htmlcov/
+.coverage
 
 # Terraform local caches and state. Provider lock files remain tracked.
 .terraform/
@@ -32,20 +38,55 @@ __pycache__/
 .pytest_cache/
 pytest-cache-files-*/
 *.pyc
+.venv/
+venv/
 
 # Secrets / service accounts
-apps/agent/serviceAccount.json
+# Ignore every environment file while keeping publishable templates.
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Private keys, certificates, service-account exports, and local databases.
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.crt
+*.cer
+id_rsa
+id_ed25519
+*.db
+*.sqlite
+*.sqlite3
+**/serviceAccount*.json
+**/service-account*.json
+**/application_default_credentials.json
+.secrets/
+secrets/
 # Local encrypted n8n secret store and its machine-local key.
 apps/agent/.local/
 
 # Obsidian local workspace state
-knowledge-database/.obsidian/workspace.json
-knowledge-database/.obsidian/workspaces.json
+knowledge-database/.obsidian/
 knowledge-database/.trash/
+knowledge-database/*.base
 # claude-mem'in otomatik ürettiği boş stub'ı izleme (markdown artık genelde izlenir)
 knowledge-database/CLAUDE.md
 
-.env
+# Raw email exports can contain personal addresses, headers, and message bodies.
+*.eml
+
+# Local editor and operating-system state.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+.firebase/
+firebase-debug.log*
 
 # --- Refactor cleanup (2026-06-29): caches & binaries out of git ---
 # Ruff cache

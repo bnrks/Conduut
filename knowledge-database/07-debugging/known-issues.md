@@ -2,6 +2,22 @@
 
 Merkez: [[index]]
 
+## Public repository history cleanup (2026-09-06, cozuldu)
+
+Repository portfolio ve teknik referans amaciyla public paylasima hazirlandi.
+Gecmiste commitlenen root `.env`, `.claude/settings.local.json` ve Obsidian
+local state dosyalari tum yayinlanan branch history'sinden kontrollu rewrite ile
+cikarildi. Eski Google OAuth secret ve n8n API key kaynak sistemlerde
+rotate/iptal edildi; local connection encryption key yenilendi. Secret degerleri
+bu notta veya publish edilen dosyalarda tutulmaz.
+
+Root `.gitignore`; env dosyalari, service-account export'lari, private key ve
+certificate'lar, local database/state, raw email export'lari ve editor/cache
+dosyalarini kapsar. Publishable `.env.example` dosyalari placeholder disinda
+deger icermez. Release oncesi tum branch ref'leri path ve token-pattern
+taramasindan gecirilir; intentional fake redaction-test token'lari gercek secret
+olarak kabul edilmez.
+
 ## GCP foundation CI dev extra'sinda Ruff yoktu (2026-08-25, cozuldu)
 
 **Belirti:** PR #3 `staging-foundation` validate job'u agent kontrolunde

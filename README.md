@@ -1,14 +1,33 @@
 # Conduut
 
-Build and manage [n8n](https://n8n.io) workflow automations by **chatting with an AI agent** —
-no node graphs, no JSON. Describe the automation in plain language and the agent designs,
-validates, and (with your connected accounts) runs it. It can also perform one-off Gmail/Sheets
-actions directly, and surface run results as readable cards in a dashboard.
+Conduut is an AI-assisted operations layer for self-hosted
+[n8n](https://n8n.io). It helps users build workflows through conversation,
+validate and approve them safely, monitor executions, and repair failures.
 
-Status: **MVP.** Working today: chat → workflow generation, workflow dashboard (run/activate/batch),
-Google Gmail & Sheets (OAuth connections + direct actions), credential management. Not yet built:
-per-user n8n isolation, control plane, general OAuth proxy, billing, monitoring. See
+This repository is an **MVP and engineering case study**, not a hosted
+production service. It demonstrates the product and technical work behind an
+agentic automation system: native n8n workflow generation, deterministic JSON
+repair, sandbox and approval gates, execution evidence, credential handling,
+and a Next.js operations dashboard.
+
+Working today includes chat-based workflow generation, customer-owned n8n
+connection management, workflow run/activate/batch operations, execution
+history and repair handoff, Google Gmail and Sheets OAuth/direct actions, and
+credential management. Production hardening such as broader n8n version
+compatibility, network-level egress controls, billing, and monitoring remains
+out of scope. See
 [`knowledge-database/01-project/current-state.md`](knowledge-database/01-project/current-state.md).
+
+## Why this project exists
+
+n8n is powerful, but operating reliable automations still involves more than
+generating a graph. Conduut explores the layer around that graph: connecting a
+customer-owned instance, resolving credentials, validating risky changes,
+collecting execution evidence, and turning a failed run into a structured
+repair conversation.
+
+The repository is shared as a portfolio project and technical reference. It is
+not presented as a replacement for n8n's own AI or MCP capabilities.
 
 ## Repository layout
 
@@ -27,7 +46,7 @@ Monorepo:
 - **Frontend:** Next.js 16, React 19, Tailwind CSS 4, Firebase client auth, Zustand.
 - **Agent:** Python 3.12, FastAPI, Pydantic AI, Firestore (MVP persistence), HTTPX. LLMs are
   Conduut-managed via a tiered router (simple/medium/hard → fixed model per tier).
-- **Automation:** a single shared n8n instance (MVP); the agent talks to it over the REST API.
+- **Automation:** customer-owned n8n connections plus a shared local-development adapter; the agent talks to n8n over its public API.
 - **Infra:** Docker Compose.
 
 ## Getting started
@@ -35,9 +54,13 @@ Monorepo:
 **Prerequisites:** Docker, Python 3.12, Node + pnpm.
 
 **Secrets / config (not committed):**
-- `apps/agent/serviceAccount.json` — Firebase Admin credentials.
-- `apps/web/.env.local` — web env (see `apps/web`).
-- Root `.env` — optional Google OAuth (`CONDUUT_GOOGLE_OAUTH_CLIENT_ID/SECRET`, `CONDUUT_CONNECTION_ENCRYPTION_KEY`) and LLM provider keys.
+- Copy `.env.example` to `.env` for agent, n8n, OAuth, and LLM settings.
+- Copy `apps/web/.env.example` to `apps/web/.env.local` for the BFF target and Firebase web configuration.
+- `apps/agent/serviceAccount.json` contains Firebase Admin credentials and must remain local.
+
+Never commit real API keys, OAuth secrets, service-account exports, private keys,
+raw email exports, or local runtime data. The repository ignore rules cover the
+standard local paths, but review `git status` before every commit.
 
 **Registry data** (gitignored, generated from a running n8n — do this before building the agent):
 
@@ -75,3 +98,11 @@ docker compose config  # validate the compose file
 - **[`knowledge-database/index.md`](knowledge-database/index.md)** — persistent project memory:
   ADRs, architecture notes, feature docs, known issues.
 - **[`BRAND.md`](BRAND.md)** — colors, typography, logo.
+
+## Security and licensing
+
+Please do not include credentials or private data in issues, logs, screenshots,
+or example workflows. See [`SECURITY.md`](SECURITY.md) for reporting guidance.
+
+No open-source license is currently granted. The code is public for portfolio
+and evaluation purposes; reuse requires the copyright holder's permission.
