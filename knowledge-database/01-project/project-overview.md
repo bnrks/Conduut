@@ -34,6 +34,15 @@ dogrulama, calistirma ve izleme katmani olur. Managed per-user container modeli
 ertelenmistir. Bkz. [[customer-owned-n8n]],
 [[adr-0022-customer-owned-n8n]] ve [[system-architecture]].
 
+## Public Repository Positioning
+
+2026-09-06 itibariyla repository, hosted SaaS lansmani olarak degil;
+self-hosted n8n uzerinde agent, validation, credential ve execution-operations
+katmani denemesini gosteren bir portfolio/engineering case study olarak
+paylasilir. README, local shared n8n adapter'in production tenancy modeli
+olmadigini; production customer-owned rollout'un ise hala gated oldugunu acikca
+belirtmelidir.
+
 ## Marka Notlari
 
 - Marka adi: `Conduut`.

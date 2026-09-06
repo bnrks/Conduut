@@ -1,108 +1,181 @@
 # Conduut
 
-Conduut is an AI-assisted operations layer for self-hosted
-[n8n](https://n8n.io). It helps users build workflows through conversation,
-validate and approve them safely, monitor executions, and repair failures.
+**An AI-assisted operations layer for self-hosted [n8n](https://n8n.io).**
 
-This repository is an **MVP and engineering case study**, not a hosted
-production service. It demonstrates the product and technical work behind an
-agentic automation system: native n8n workflow generation, deterministic JSON
-repair, sandbox and approval gates, execution evidence, credential handling,
-and a Next.js operations dashboard.
+Conduut lets a user describe an automation in conversation, turns that intent
+into a native n8n workflow, validates the result before it is used, and makes
+the workflow, its credentials, and its execution history easier to operate.
 
-Working today includes chat-based workflow generation, customer-owned n8n
-connection management, workflow run/activate/batch operations, execution
-history and repair handoff, Google Gmail and Sheets OAuth/direct actions, and
-credential management. Production hardening such as broader n8n version
-compatibility, network-level egress controls, billing, and monitoring remains
-out of scope. See
-[`knowledge-database/01-project/current-state.md`](knowledge-database/01-project/current-state.md).
+> **Project status:** portfolio MVP and engineering case study — not a hosted
+> production service or a replacement for n8n's native AI/MCP capabilities.
 
-## Why this project exists
+## The problem it explores
 
-n8n is powerful, but operating reliable automations still involves more than
-generating a graph. Conduut explores the layer around that graph: connecting a
-customer-owned instance, resolving credentials, validating risky changes,
-collecting execution evidence, and turning a failed run into a structured
-repair conversation.
+Generating an automation graph is only one part of making an automation useful.
+Teams still need to connect their own n8n instance, handle credentials, review
+risky changes, test workflows safely, understand a failed execution, and turn
+that failure into a repair task.
 
-The repository is shared as a portfolio project and technical reference. It is
-not presented as a replacement for n8n's own AI or MCP capabilities.
+Conduut explores that operating layer around n8n. Its active product direction
+is **customer-owned n8n**: the customer controls their self-hosted n8n instance
+and Conduut connects through the public API.
 
-## Repository layout
+## What is implemented
 
-Monorepo:
+| Area | What Conduut demonstrates |
+| --- | --- |
+| Conversational builder | An agent turns a natural-language request into native n8n workflow JSON. |
+| Guarded workflow generation | Deterministic JSON repair, static semantic checks, sandbox previews, and approval gates before activation. |
+| Customer-owned n8n | Connect, check, rotate, disconnect, and resolve a user's selected n8n instance at request scope. |
+| Operations dashboard | Browse workflows, activate/deactivate, run with inputs, execute batches, and inspect output cards. |
+| Execution evidence | Read execution history, redact error details, and hand a failed run back to chat as structured repair context. |
+| Credentials and connections | Manage n8n credentials plus Google Gmail/Sheets OAuth connections; supported actions can attach the right credential. |
+| Direct actions and artifacts | Run selected Gmail/Sheets actions without creating a workflow and surface resulting Sheets/artifact previews. |
+| Usage visibility | Record completed agent-run usage events and show time-window/provider/model breakdowns. |
 
-| Path | What |
-|------|------|
-| `apps/web` | Next.js 16 frontend — chat UI, dashboard, auth, BFF API routes proxying the agent. |
-| `apps/agent` | FastAPI agent service — Pydantic AI runner, SSE streaming, Firestore, n8n tools, direct platform actions. |
-| `packages/n8n-registry` | Python package: n8n node / template / credential schema lookup used by the agent. |
-| `knowledge-database/` | Obsidian vault — persistent project memory (ADRs, architecture, current state). |
-| `docker-compose.yml`, `start-local-dev.bat` | Local orchestration. |
+## Architecture at a glance
 
-## Tech stack
-
-- **Frontend:** Next.js 16, React 19, Tailwind CSS 4, Firebase client auth, Zustand.
-- **Agent:** Python 3.12, FastAPI, Pydantic AI, Firestore (MVP persistence), HTTPX. LLMs are
-  Conduut-managed via a tiered router (simple/medium/hard → fixed model per tier).
-- **Automation:** customer-owned n8n connections plus a shared local-development adapter; the agent talks to n8n over its public API.
-- **Infra:** Docker Compose.
-
-## Getting started
-
-**Prerequisites:** Docker, Python 3.12, Node + pnpm.
-
-**Secrets / config (not committed):**
-- Copy `.env.example` to `.env` for agent, n8n, OAuth, and LLM settings.
-- Copy `apps/web/.env.example` to `apps/web/.env.local` for the BFF target and Firebase web configuration.
-- `apps/agent/serviceAccount.json` contains Firebase Admin credentials and must remain local.
-
-Never commit real API keys, OAuth secrets, service-account exports, private keys,
-raw email exports, or local runtime data. The repository ignore rules cover the
-standard local paths, but review `git status` before every commit.
-
-**Registry data** (gitignored, generated from a running n8n — do this before building the agent):
-
-```bash
-python packages/n8n-registry/scripts/fetch_nodes.py         # → data/nodes.json
-python packages/n8n-registry/scripts/fetch_credentials.py   # → data/credentials.json
+```text
+Browser
+  │  Next.js 16 dashboard, chat, and server-side BFF routes
+  ▼
+Conduut agent service
+  │  FastAPI · Firebase verification · Firestore · SSE · LLM router
+  ├──────────────► n8n public API
+  │                 customer-owned instance in production
+  │                 shared local adapter for development
+  ├──────────────► n8n registry
+  │                 node, template, and credential schema lookup
+  └──────────────► Firestore
+                    conversations, metadata, artifacts, usage events
 ```
 
-**Full stack (Docker):**
+The repository is a monorepo:
 
-```bash
-docker compose up          # web :3000 · agent :8100 · n8n :6180
+| Path | Responsibility |
+| --- | --- |
+| [`apps/web`](apps/web) | Next.js 16 / React 19 interface, Firebase client auth, and BFF routes. |
+| [`apps/agent`](apps/agent) | FastAPI agent, n8n provider/client layer, streaming, validation, and platform actions. |
+| [`packages/n8n-registry`](packages/n8n-registry) | Local n8n node/template/credential schema lookup package. |
+| [`knowledge-database`](knowledge-database/index.md) | Architecture notes, ADRs, scenarios, and current-state documentation. |
+| [`infra/terraform`](infra/terraform/README.md) | Secret-only Google Cloud foundation; runtime deployment remains intentionally disabled. |
+
+## Local development
+
+### Prerequisites
+
+- Docker Desktop with Docker Compose
+- Python 3.12+
+- Node.js LTS and pnpm
+- A Firebase project and a local Firebase Admin service-account JSON for
+  authenticated end-to-end flows
+- At least one supported LLM provider key if you want to use the agent
+
+### 1. Create local-only configuration
+
+PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+Copy-Item apps/web/.env.example apps/web/.env.local
 ```
 
-**Local dev with hot reload (Windows):**
+Fill in only the providers and integrations you intend to use. For an
+authenticated flow, save a Firebase Admin export as
+`apps/agent/serviceAccount.json`. These files are intentionally ignored by Git.
 
-```bat
-start-local-dev.bat        :: n8n (Docker) + agent (uvicorn :8100) + web (:3007)
+Never commit API keys, OAuth secrets, service accounts, private keys, raw email
+exports, or local runtime data.
+
+### 2. Start local n8n and build its registry data
+
+The agent image expects local n8n node and credential schemas. Start n8n first,
+then copy its generated schema cache:
+
+```powershell
+docker compose up -d n8n
+python packages/n8n-registry/scripts/fetch_nodes.py
+python packages/n8n-registry/scripts/fetch_credentials.py
 ```
 
-## Verification
+Both generated JSON files are ignored. Refresh them whenever the local n8n
+version changes.
 
-```bash
-cd apps/web            && pnpm lint && pnpm exec tsc --noEmit
-cd apps/agent          && ruff check . && ruff format --check . && pytest
-cd packages/n8n-registry && ruff check . && pytest
-docker compose config  # validate the compose file
+### 3. Start the stack
+
+```powershell
+docker compose up -d --build
+docker compose ps
 ```
 
-## Documentation
+Local endpoints:
 
-- **[`AGENTS.md`](AGENTS.md)** — canonical guide for contributors and coding agents (project
-  structure, rules, verification, operational notes). **Start here.**
-- **[`PROJECT.md`](PROJECT.md)** — long-term product & architecture vision (DB schema, flows, cost).
-- **[`knowledge-database/index.md`](knowledge-database/index.md)** — persistent project memory:
-  ADRs, architecture notes, feature docs, known issues.
-- **[`BRAND.md`](BRAND.md)** — colors, typography, logo.
+| Service | Address |
+| --- | --- |
+| Web | <http://localhost:3000> |
+| Agent health | <http://localhost:8100/health> |
+| n8n | <http://localhost:6180> |
 
-## Security and licensing
+On Windows, [`start-local-dev.bat`](start-local-dev.bat) is a faster development
+path: it runs only n8n in Docker and starts the agent and web app with reload.
 
-Please do not include credentials or private data in issues, logs, screenshots,
-or example workflows. See [`SECURITY.md`](SECURITY.md) for reporting guidance.
+### Verify changes
 
-No open-source license is currently granted. The code is public for portfolio
-and evaluation purposes; reuse requires the copyright holder's permission.
+```powershell
+Set-Location apps/web
+pnpm lint
+pnpm exec tsc --noEmit
+
+Set-Location ../agent
+ruff check .
+ruff format --check .
+pytest
+
+Set-Location ../../packages/n8n-registry
+ruff check .
+pytest
+```
+
+`docker compose config` is a useful final configuration check. The repository's
+automated workflow/deployment configuration is deliberately absent; this project
+does not deploy itself from GitHub.
+
+## Current scope and boundaries
+
+Conduut is deliberately specific about what it proves today.
+
+- The customer-owned n8n provider flow, dashboard operations, workflow
+  generation/repair, sandbox/evidence model, and selected Google integrations
+  are implemented in the MVP.
+- The shared n8n container exists only as a local-development adapter. It is not
+  the production tenancy model.
+- Production pilots with multiple public customer instances, broad n8n-version
+  compatibility, network-level egress controls, billing, monitoring, and a
+  general OAuth proxy are not complete.
+- Terraform documents a Google Cloud secret foundation, but Cloud Run, Artifact
+  Registry, VPC/NAT runtime infrastructure, and CI/CD deployment are not enabled.
+
+For the source-of-truth detail, see
+[`knowledge-database/01-project/current-state.md`](knowledge-database/01-project/current-state.md)
+and the customer-owned decision in
+[`ADR-0022`](knowledge-database/03-decisions/adr-0022-customer-owned-n8n.md).
+
+## Reading the project
+
+- [`AGENTS.md`](AGENTS.md) — contributor and coding-agent guide.
+- [`knowledge-database/index.md`](knowledge-database/index.md) — documentation graph and ADR index.
+- [`PROJECT.md`](PROJECT.md) — long-term product context; some managed-hosting
+  sections are explicitly historical rather than the active BYO direction.
+- [`SECURITY.md`](SECURITY.md) — responsible disclosure guidance.
+
+## Security
+
+Use GitHub's private vulnerability reporting flow for suspected security issues.
+Do not put credentials, access tokens, customer data, or raw execution payloads
+in public issues, screenshots, or example workflows.
+
+## License
+
+This code is public for portfolio and evaluation purposes. No open-source
+license is currently granted; reuse requires permission from the copyright
+holder.
