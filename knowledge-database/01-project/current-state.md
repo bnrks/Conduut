@@ -2,6 +2,21 @@
 
 Merkez: [[index]]
 
+## Public portfolio README (2026-09-06)
+
+Public repository yalniz sanitize edilmis `main` dalini tasir. README;
+urun yetenekleri, ornek istekler, Mermaid mimari semasi, engineering kararlarina
+kod baglantilari ve Windows local kurulum adimlariyla yenilendi. Varsayilan
+DeepSeek key ihtiyaci, registry `build_cards.py --n8n-version 1.121.3` adimi ve
+web `3007` / agent `8100` / n8n `6180` portlari aciklandi. Full Compose agent
+servisinin model-provider env ayarlarini tam iletmedigi ve sabit n8n development
+encryption key'i kullandigi README'de sinir olarak belirtildi. Bu yayin kontrolu
+canli servis testi veya production kabul kaniti degildir. Ilgili: [[known-issues]].
+
+Root `.env.example` icindeki web'e ait `AGENT_API_*` alanlari backend Settings
+okuyucusunda `extra_forbidden` uretiyordu. Bu alanlar `apps/web/.env.example`
+dosyasina tasindi; root ornek ayarlar gercek Settings modeliyle dogrulandi.
+
 Bu not, repo icin mevcut gercegi ozetler. Planlanan mimari icin
 [[system-architecture]] ve `PROJECT.md` kullanilabilir, fakat kod yazarken
 once bu not ve kaynak kod esas alinmalidir.
