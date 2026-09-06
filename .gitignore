@@ -1,4 +1,11 @@
 node_modules/
+# Local agent tooling and project notes.
+/.claude/
+/.codex/
+/knowledge-database/
+/*.md
+!/README.md
+!/SECURITY.md
 bower_components/
 *.log
 *.jsonl

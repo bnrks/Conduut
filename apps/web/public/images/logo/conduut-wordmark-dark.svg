@@ -1,7 +1,3 @@
-<svg viewBox="0 0 150 32" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Conduut">
-  <text x="0" y="26" font-family="Inter, sans-serif" font-size="28" font-weight="500" letter-spacing="-0.8">
-    <tspan fill="#FFFFFF">cond</tspan>
-    <tspan fill="#AFA9EC">uu</tspan>
-    <tspan fill="#FFFFFF">t</tspan>
-  </text>
+<svg viewBox="0 0 104 34" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Conduut">
+  <text x="2" y="27" font-family="Arial, sans-serif" font-size="28" font-weight="500" letter-spacing="-0.8"><tspan fill="#FFFFFF">cond</tspan><tspan fill="#AFA9EC">uu</tspan><tspan fill="#FFFFFF">t</tspan></text>
 </svg>

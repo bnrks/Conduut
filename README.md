@@ -66,15 +66,15 @@ The agent retrieves node knowledge, produces native n8n JSON, and passes it thro
 | `shared_dev` | Local development against the bundled n8n container | Developer-managed environment configuration |
 | `customer_owned` | Connect a user's own n8n server over its public API | Encrypted local files for development; Google Secret Manager required by production guards |
 
-See the [customer-owned n8n design](knowledge-database/02-architecture/customer-owned-n8n.md) for connection checks, instance boundaries, and rollout requirements.
+See the [provider resolver](apps/agent/src/n8n_provider.py) for connection checks and instance boundaries.
 
 ## Engineering decisions
 
 ### Native workflow JSON with deterministic repair
 
-The model works with n8n's native workflow representation. Schema lookup and repair code address recurring issues such as node wiring, AI sub-node connections, and runtime-input expressions. Earlier intermediate-representation approaches are preserved as historical design decisions.
+The model works with n8n's native workflow representation. Schema lookup and repair code address recurring issues such as node wiring, AI sub-node connections, and runtime-input expressions.
 
-Start with [workflow repair](apps/agent/src/agent/repair.py) and the [native JSON decision](knowledge-database/03-decisions/adr-0010-json-surface-repair-normalizer.md).
+Start with [workflow repair](apps/agent/src/agent/repair.py) and the [node registry](packages/n8n-registry/src/n8n_registry/).
 
 ### Execution evidence beyond a success flag
 
@@ -86,13 +86,13 @@ Explore [assurance](apps/agent/src/agent/assurance/), [sandbox implementation](a
 
 Instance resolution keeps n8n access tied to the authenticated user. Connection checks cover HTTPS targets, address validation, DNS handling, and supported versions. Drift checks help avoid overwriting changes made outside Conduut. Production network isolation and operational validation remain separate requirements.
 
-See the [provider resolver](apps/agent/src/n8n_provider.py), [secret store](apps/agent/src/secret_store.py), and [BYO architecture decision](knowledge-database/03-decisions/adr-0022-customer-owned-n8n.md).
+See the [provider resolver](apps/agent/src/n8n_provider.py) and [secret store](apps/agent/src/secret_store.py).
 
 ### Streaming conversations connected to operations
 
 Server-sent events carry incremental agent output and tool activity. The dashboard connects conversations to workflows, credentials, executions, artifacts, and usage. Failed executions become structured repair context.
 
-Explore the [agent implementation](apps/agent/src/agent/), [web application](apps/web/src/), and [execution-history design](knowledge-database/04-features/execution-history.md).
+Explore the [agent implementation](apps/agent/src/agent/), [web application](apps/web/src/), and [backend routes](apps/agent/src/routes/).
 
 ## Technology
 
@@ -117,9 +117,10 @@ packages/
   n8n-registry/        Schema lookup, workflow cards and retrieval index
 infra/
   terraform/           Cloud foundation configuration
-knowledge-database/    Architecture, decisions, scenarios and known issues
 docker-compose.yml    Local n8n, agent and web service definitions
 start-local-dev.bat   Windows development launcher
+README.md            Project overview and development guide
+SECURITY.md          Private vulnerability reporting policy
 ```
 
 ## Local development
@@ -156,7 +157,7 @@ Keep Firebase web and Admin configuration pointed at the same project, and allow
 
 The example selects `CONDUUT_MODEL_PROFILE=deepseek`, which needs `CONDUUT_DEEPSEEK_API_KEY`. Other profiles may use multiple providers. The separate API-auth research tool uses Google model access through `CONDUUT_GOOGLE_API_KEY`.
 
-For Google integrations, configure the OAuth consent screen, APIs, scopes, and redirect URI for your chosen local web origin. See [agent service documentation](knowledge-database/02-architecture/agent-service.md). Leave Google OAuth unset if you do not need these integrations.
+For Google integrations, configure the OAuth consent screen, APIs, scopes, and redirect URI for your chosen local web origin. The [backend routes](apps/agent/src/routes/) implement the OAuth flow. Leave Google OAuth unset if you do not need these integrations.
 
 ### 3. Start n8n and prepare the registry
 
@@ -216,7 +217,7 @@ python -m pytest packages/n8n-registry/tests
 docker compose config --quiet
 ```
 
-Automated tests cover parts of the system; they do not establish production readiness or successful execution against your accounts. See the [scenario bank](knowledge-database/06-testing/scenario-bank.md) for integration scenarios and acceptance evidence. Live checks require configured services and may make external changes.
+Automated tests cover parts of the system; they do not establish production readiness or successful execution against your accounts. Explore the [agent tests](apps/agent/tests/) and [registry tests](packages/n8n-registry/tests/). Live checks require configured services and may make external changes.
 
 ## Project status
 
@@ -227,14 +228,14 @@ The public repository is shared for portfolio review and technical exploration. 
 - **Compatibility baseline:** n8n `1.121.3` is pinned in this codebase. Treat it as a development compatibility target, not a recommendation to expose that version publicly; upgrades require compatibility and security review.
 - **Deployment:** Terraform foundation code is included. A production rollout and multi-instance pilot remain outstanding; GitHub Actions deployment automation is intentionally absent.
 
-The [current-state note](knowledge-database/01-project/current-state.md) and [known issues](knowledge-database/07-debugging/known-issues.md) distinguish implemented behavior from planned work. Historical notes and `PROJECT.md` include earlier designs; source code and current architecture decisions take precedence.
+The implementation and tests are the reference for current behavior. Internal project notes and local agent tooling are not included in the published file tree.
 
 ## Further reading
 
-- [Knowledge database](knowledge-database/index.md) — project documentation hub; notes are primarily in Turkish.
-- [Architecture decisions](knowledge-database/03-decisions/) — the choices and tradeoffs behind the implementation.
-- [Agent guide](AGENTS.md) — repository conventions and contribution workflow.
-- [Brand guide](BRAND.md) — visual identity and typography.
+- [Agent source](apps/agent/src/) — tools, service clients, validation, and persistence.
+- [Web source](apps/web/src/) — chat, dashboard, authentication, and API routes.
+- [Registry package](packages/n8n-registry/) — schema lookup and retrieval artifacts.
+- [Infrastructure](infra/terraform/) — cloud foundation configuration.
 
 ## Security and license
 
